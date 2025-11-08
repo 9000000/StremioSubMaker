@@ -3,7 +3,7 @@ const SubDLService = require('../services/subdl');
 const SubSourceService = require('../services/subsource');
 const PodnapisService = require('../services/podnapisi');
 const GeminiService = require('../services/gemini');
-const { parseStremioId } = require('../utils/subtitle');
+const { parseSRT, toSRT, parseStremioId } = require('../utils/subtitle');
 const { getLanguageName, getDisplayName } = require('../utils/languages');
 const { LRUCache } = require('lru-cache');
 
@@ -78,6 +78,54 @@ this subtitle again to see the result`;
   // Log the loading subtitle for debugging
   console.log('[Subtitles] Created loading subtitle with', srt.split('\n\n').length, 'entries');
   return srt;
+}
+
+// Helpers to build partial SRT with an end-of-file warning block
+function srtTimeToMs(t) {
+  // t like HH:MM:SS,mmm
+  const m = /^([0-9]{2}):([0-9]{2}):([0-9]{2}),([0-9]{3})$/.exec(String(t).trim());
+  if (!m) return 0;
+  const hh = parseInt(m[1], 10) || 0;
+  const mm = parseInt(m[2], 10) || 0;
+  const ss = parseInt(m[3], 10) || 0;
+  const ms = parseInt(m[4], 10) || 0;
+  return (((hh * 60 + mm) * 60) + ss) * 1000 + ms;
+}
+
+function msToSrtTime(ms) {
+  ms = Math.max(0, Math.floor(ms));
+  const hh = Math.floor(ms / 3600000); ms %= 3600000;
+  const mm = Math.floor(ms / 60000); ms %= 60000;
+  const ss = Math.floor(ms / 1000); const mmm = ms % 1000;
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  return `${pad(hh)}:${pad(mm)}:${pad(ss)},${String(mmm).padStart(3, '0')}`;
+}
+
+function buildPartialSrtWithTail(mergedSrt) {
+  try {
+    const entries = parseSRT(mergedSrt);
+    if (!entries || entries.length === 0) return null;
+    const reindexed = entries.map((e, idx) => ({ id: idx + 1, timecode: e.timecode, text: (e.text || '').trim() }))
+                             .filter(e => e.timecode && e.text);
+    const last = reindexed[reindexed.length - 1];
+    let end = '00:00:00,000';
+    if (last && typeof last.timecode === 'string') {
+      const parts = last.timecode.split('-->');
+      if (parts[1]) end = parts[1].trim();
+    }
+    // Ensure tail starts at or after last end
+    const tailStartMs = srtTimeToMs(end);
+    const tailStart = msToSrtTime(tailStartMs);
+    const tail = {
+      id: reindexed.length + 1,
+      timecode: `${tailStart} --> 04:00:00,000`,
+      text: 'TRANSLATION IN PROGRESS\nReload this subtitle later to get more'
+    };
+    const full = [...reindexed, tail];
+    return toSRT(full);
+  } catch (e) {
+    return null;
+  }
 }
 
 // Create a concise error subtitle when a source file looks invalid/corrupted
@@ -894,9 +942,16 @@ async function handleTranslation(sourceFileId, targetLanguage, config) {
     const status = translationStatus.get(cacheKey);
     if (status && status.inProgress) {
       const elapsedTime = Math.floor((Date.now() - status.startedAt) / 1000);
-      console.log(`[Translation] In-progress existing translation key=${cacheKey} (elapsed ${elapsedTime}s); returning loading SRT`);
+      console.log(`[Translation] In-progress existing translation key=${cacheKey} (elapsed ${elapsedTime}s); attempting partial SRT`);
+      try {
+        const partial = readFromTemp(cacheKey);
+        if (partial && typeof partial.content === 'string' && partial.content.length > 0) {
+          console.log('[Translation] Serving partial SRT from temp cache');
+          return partial.content;
+        }
+      } catch (_) {}
       const loadingMsg = createLoadingSubtitle();
-      console.log(`[Translation] Loading SRT size=${loadingMsg.length}`);
+      console.log(`[Translation] No partial available, returning loading SRT (size=${loadingMsg.length})`);
       return loadingMsg;
     }
 
@@ -1031,13 +1086,71 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
       }
 
       if (useChunking) {
-        console.log('[Translation] Using chunked translation (large file)');
-        translatedContent = await gemini.translateSubtitleInChunks(
+        console.log('[Translation] Using chunked translation with progressive updates');
+        const soFar = [];
+        const savePartial = () => {
+          const merged = soFar.join('\n\n');
+          const partialSrt = buildPartialSrtWithTail(merged);
+          if (partialSrt && partialSrt.length > 0) {
+            saveToTemp(cacheKey, {
+              content: partialSrt,
+              // expire after 6 hours; final will overwrite permanent cache
+              expiresAt: Date.now() + 6 * 60 * 60 * 1000
+            });
+          }
+        };
+        translatedContent = await gemini.translateSubtitleInChunksWithProgress(
           sourceContent,
           'detected source language',
           targetLangName,
-          config.translationPrompt
+          config.translationPrompt,
+          null,
+          async ({ index, total, translatedChunk }) => {
+            soFar.push(translatedChunk);
+            // Save partial on each chunk completion
+            savePartial();
+          }
         );
+      } else if (config && config.advancedSettings && config.advancedSettings.enableStreaming === true) {
+        console.log('[Translation] Using token-level streaming with progressive updates');
+        let buffer = '';
+        let lastWrite = 0;
+        const flushPartial = () => {
+          const cleaned = gemini.cleanTranslatedSubtitle(buffer);
+          const partialSrt = buildPartialSrtWithTail(cleaned);
+          if (partialSrt && partialSrt.length > 0) {
+            saveToTemp(cacheKey, {
+              content: partialSrt,
+              expiresAt: Date.now() + 6 * 60 * 60 * 1000
+            });
+          }
+        };
+        try {
+          await gemini.translateSubtitleStream(
+            sourceContent,
+            'detected source language',
+            targetLangName,
+            config.translationPrompt,
+            (delta) => {
+              buffer += delta;
+              const now = Date.now();
+              if (now - lastWrite > 800) {
+                lastWrite = now;
+                flushPartial();
+              }
+            }
+          );
+          // Stream ended; set final content
+          translatedContent = gemini.cleanTranslatedSubtitle(buffer);
+        } catch (e) {
+          console.warn('[Translation] Streaming failed, falling back to non-streaming:', e.message);
+          translatedContent = await gemini.translateSubtitle(
+            sourceContent,
+            'detected source language',
+            targetLangName,
+            config.translationPrompt
+          );
+        }
       } else {
         translatedContent = await gemini.translateSubtitle(
           sourceContent,

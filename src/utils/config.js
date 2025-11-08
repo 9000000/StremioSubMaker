@@ -286,6 +286,8 @@ function validateConfig(config) {
  * @param {string} baseUrl - Base URL of the addon server (optional)
  * @returns {Object} - Stremio addon manifest
  */
+const { version } = require('./version');
+
 function buildManifest(config, baseUrl = '') {
   const sourceLanguageNames = config.sourceLanguages
     .map(code => code.toUpperCase())
@@ -304,7 +306,7 @@ function buildManifest(config, baseUrl = '') {
 
   return {
     id: 'com.stremio.subtranslator',
-    version: '1.0.0',
+    version: version,
     name: 'SubMaker - Subtitle Translator',
     description: `Fetches subtitles from OpenSubtitles and translates them using Gemini AI.\n\nSource languages: ${sourceLanguageNames}\nTarget languages: ${targetLanguageNames}`,
 

@@ -484,6 +484,126 @@ class GeminiService {
   }
 
   /**
+   * Translate subtitle in chunks with a progress callback for partial updates.
+   * Callers can persist partial merged outputs between chunks.
+   * @param {string} subtitleContent
+   * @param {string} sourceLanguage
+   * @param {string} targetLanguage
+   * @param {string|null} customPrompt
+   * @param {number|null} targetTokensPerChunk
+   * @param {(info: { index:number, total:number, translatedChunk:string })=>Promise<void>|void} [onChunk]
+   * @returns {Promise<string>} - Full translated SRT
+   */
+  async translateSubtitleInChunksWithProgress(subtitleContent, sourceLanguage, targetLanguage, customPrompt = null, targetTokensPerChunk = null, onChunk = null) {
+    // Reuse chunking strategy from translateSubtitleInChunks but notify per-chunk
+    targetTokensPerChunk = targetTokensPerChunk !== null ? targetTokensPerChunk : this.chunkSize;
+    try {
+      // Split by subtitle entries (separated by double newlines)
+      // Handle both Unix (\n) and Windows (\r\n) line endings
+      const entries = subtitleContent.split(/(\r?\n){2,}/);
+      const validEntries = entries.filter(entry => entry && entry.trim() && !entry.match(/^(\r?\n)+$/));
+
+      const chunks = [];
+      const effectiveTarget = targetTokensPerChunk;
+      let currentChunk = [];
+      let currentChunkTokens = 0;
+      for (const entry of validEntries) {
+        const entryTokens = this.estimateTokenCount(entry);
+        if (entryTokens > effectiveTarget * 1.5) {
+          if (currentChunk.length > 0) {
+            chunks.push(currentChunk.join('\n\n'));
+            currentChunk = [];
+            currentChunkTokens = 0;
+          }
+          chunks.push(entry);
+          continue;
+        }
+        if (currentChunkTokens + entryTokens > effectiveTarget * 1.2 && currentChunk.length > 0) {
+          chunks.push(currentChunk.join('\n\n'));
+          currentChunk = [entry];
+          currentChunkTokens = entryTokens;
+        } else {
+          currentChunk.push(entry);
+          currentChunkTokens += entryTokens;
+        }
+      }
+      if (currentChunk.length > 0) chunks.push(currentChunk.join('\n\n'));
+
+      const translatedChunks = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkText = chunks[i];
+        const translated = await this.translateSubtitle(
+          chunkText,
+          sourceLanguage,
+          targetLanguage,
+          customPrompt
+        );
+        translatedChunks.push(translated);
+        if (typeof onChunk === 'function') {
+          try { await onChunk({ index: i, total: chunks.length, translatedChunk: translated }); } catch (_) {}
+        }
+        if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 500));
+      }
+
+      const merged = translatedChunks.join('\n\n');
+      return this.cleanTranslatedSubtitle(merged);
+    } catch (error) {
+      console.error('[Gemini] translateSubtitleInChunksWithProgress error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Experimental: token-level streaming using Gemini stream endpoint.
+   * Caller should buffer deltas and persist only complete SRT blocks.
+   * @param {string} subtitleContent
+   * @param {string} sourceLanguage
+   * @param {string} targetLanguage
+   * @param {string|null} customPrompt
+   * @param {(delta:string)=>void} onDelta
+   */
+  async translateSubtitleStream(subtitleContent, sourceLanguage, targetLanguage, customPrompt, onDelta) {
+    const systemPrompt = customPrompt || this.getDefaultPrompt();
+    const prompt = `${systemPrompt}\n\nSource Language: ${sourceLanguage}\nTarget Language: ${targetLanguage}\n\nPlease translate the following SRT subtitle file to ${targetLanguage}. Maintain the exact SRT format with timing codes and sequence numbers. Only translate the text content, keep all timestamps and formatting intact.\n\nSubtitle content:\n${subtitleContent}`;
+
+    const url = `${this.baseUrl}/models/${this.model}:streamGenerateContent`;
+    try {
+      const response = await axios.post(
+        url,
+        { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, topK: 40, topP: 0.95, maxOutputTokens: this.maxOutputTokens || 65536 } },
+        { params: { key: this.apiKey }, responseType: 'stream', headers: { 'Content-Type': 'application/json' }, timeout: this.timeout || 600000 }
+      );
+
+      await new Promise((resolve, reject) => {
+        let buffer = '';
+        response.data.on('data', (chunk) => {
+          const data = chunk.toString('utf8');
+          buffer += data;
+          const lines = buffer.split(/\r?\n/);
+          buffer = lines.pop();
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            const jsonStr = trimmed.startsWith('data:') ? trimmed.substring(5).trim() : trimmed;
+            try {
+              const obj = JSON.parse(jsonStr);
+              const delta = obj?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+              if (delta && typeof onDelta === 'function') onDelta(delta);
+            } catch (_) {
+              if (typeof onDelta === 'function') onDelta(trimmed);
+            }
+          }
+        });
+        response.data.on('end', resolve);
+        response.data.on('error', reject);
+      });
+    } catch (error) {
+      console.error('[Gemini] Streaming translation error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Estimate token count (conservative estimation)
    * @param {string} text - Text to estimate
    * @returns {number} - Estimated token count

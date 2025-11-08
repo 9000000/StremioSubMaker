@@ -9,14 +9,16 @@ const crypto = require('crypto');
  */
 class SessionManager {
     constructor(options = {}) {
-        this.maxSessions = options.maxSessions || 1000;
+        // If maxSessions is not provided or invalid, leave cache unbounded by count
+        this.maxSessions = (Number.isFinite(options.maxSessions) && options.maxSessions > 0)
+            ? options.maxSessions
+            : null;
         this.maxAge = options.maxAge || 90 * 24 * 60 * 60 * 1000; // 90 days (3 months) default
         this.persistencePath = options.persistencePath || path.join(process.cwd(), 'data', 'sessions.json');
         this.autoSaveInterval = options.autoSaveInterval || 5 * 60 * 1000; // 5 minutes
 
-        // Initialize LRU cache
-        this.cache = new LRUCache({
-            max: this.maxSessions,
+        // Initialize LRU cache (no max count by default)
+        const cacheOptions = {
             ttl: this.maxAge,
             updateAgeOnGet: true, // Refresh TTL on access (sliding expiration)
             updateAgeOnHas: false,
@@ -24,7 +26,11 @@ class SessionManager {
             dispose: (value, key) => {
                 console.log(`[SessionManager] Session expired: ${key}`);
             }
-        });
+        };
+        if (this.maxSessions) {
+            cacheOptions.max = this.maxSessions;
+        }
+        this.cache = new LRUCache(cacheOptions);
 
         // Auto-save timer
         this.saveTimer = null;
@@ -149,13 +155,13 @@ class SessionManager {
      * @returns {Object} Statistics
      */
     getStats() {
-        return {
-            activeSessions: this.cache.size,
-            maxSessions: this.maxSessions,
-            maxAge: this.maxAge,
-            persistencePath: this.persistencePath
-        };
-    }
+            return {
+                activeSessions: this.cache.size,
+                maxSessions: this.maxSessions || null,
+                maxAge: this.maxAge,
+                persistencePath: this.persistencePath
+            };
+        }
 
     /**
      * Save sessions to disk

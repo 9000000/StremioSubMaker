@@ -51,6 +51,7 @@ Translate from {source_language} to {target_language}.`;
     // State management
     let currentConfig = parseConfigFromUrl();
     let allLanguages = [];
+    let isFirstRun = false;
     let modelsFetchTimeout = null;
     let lastFetchedApiKey = null;
 
@@ -68,6 +69,8 @@ Translate from {source_language} to {target_language}.`;
         const cachedConfig = loadConfigFromCache();
         const urlConfig = parseConfigFromUrl();
         const hasExplicitUrlConfig = new URLSearchParams(window.location.search).has('config');
+        // Determine if this is the user's first config run
+        isFirstRun = !cachedConfig && !hasExplicitUrlConfig;
 
         if (cachedConfig && !hasExplicitUrlConfig) {
             // Use cached config - this is the most common case
@@ -77,6 +80,18 @@ Translate from {source_language} to {target_language}.`;
             currentConfig = urlConfig;
         }
         // else: currentConfig already initialized from parseConfigFromUrl() at top
+
+        // On first run, start all subtitle providers disabled by default
+        if (isFirstRun) {
+            const defaults = getDefaultConfig();
+            currentConfig = { ...defaults };
+            currentConfig.subtitleProviders = {
+                opensubtitles: { ...(defaults.subtitleProviders?.opensubtitles || {}), enabled: false },
+                subdl: { ...(defaults.subtitleProviders?.subdl || {}), enabled: false },
+                subsource: { ...(defaults.subtitleProviders?.subsource || {}), enabled: false },
+                podnapisi: { ...(defaults.subtitleProviders?.podnapisi || {}), enabled: false }
+            };
+        }
 
         await loadLanguages();
         setupEventListeners();
@@ -273,9 +288,10 @@ Translate from {source_language} to {target_language}.`;
                 const languages = await response.json();
                 console.log(`[Languages] Successfully loaded ${languages.length} languages`);
 
-                // Filter out special fake languages (like ___upload for File Translation)
-                allLanguages = languages.filter(lang => !lang.code.startsWith('___'));
-                console.log(`[Languages] After filtering: ${allLanguages.length} languages`);
+                // Filter out special fake languages (like ___upload for File Translation) and dedupe variants
+                const filtered = languages.filter(lang => !lang.code.startsWith('___'));
+                allLanguages = dedupeLanguagesForUI(filtered);
+                console.log(`[Languages] After filtering/dedup: ${allLanguages.length} languages`);
 
                 renderLanguageGrid('sourceLanguages', 'selectedSourceLanguages', allLanguages);
                 renderLanguageGrid('targetLanguages', 'selectedTargetLanguages', allLanguages);
@@ -307,6 +323,42 @@ Translate from {source_language} to {target_language}.`;
             name: lastError.name
         });
         showAlert(`Failed to load languages after ${maxRetries} attempts: ${lastError.message}. Please refresh the page.`, 'error');
+    }
+
+    // Normalize/dedupe languages for UI (e.g., merge ptbr/pt-br/pob into one 'pob')
+    function dedupeLanguagesForUI(languages) {
+        const byName = new Map();
+        const preferCode = (name) => {
+            if (name === 'Portuguese (Brazil)') return 'pob';
+            return null;
+        };
+
+        languages.forEach((lang) => {
+            let { code, name } = lang;
+            const normalizedName = (name || '').toLowerCase();
+            const normalizedCode = (code || '').toLowerCase();
+
+            // Normalize PT-BR variants by name or code
+            if (normalizedName.includes('portuguese') && normalizedName.includes('brazil')) {
+                name = 'Portuguese (Brazil)';
+                code = 'pob';
+            } else if (normalizedCode === 'ptbr' || normalizedCode === 'pt-br') {
+                name = 'Portuguese (Brazil)';
+                code = 'pob';
+            }
+
+            if (!byName.has(name)) {
+                byName.set(name, { ...lang, code, name });
+            } else {
+                const preferred = preferCode(name);
+                const existing = byName.get(name);
+                if (preferred && existing.code !== preferred) {
+                    byName.set(name, { ...existing, code: preferred, name });
+                }
+            }
+        });
+
+        return Array.from(byName.values());
     }
 
     function renderLanguageGrid(gridId, selectedId, languages) {

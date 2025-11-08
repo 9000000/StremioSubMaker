@@ -1158,6 +1158,18 @@
         .modal::-webkit-scrollbar-thumb:hover {
             background: var(--primary-light);
         }
+
+        .version-badge {
+            display: inline-block;
+            background: var(--surface-light);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 0.15rem 0.6rem;
+            font-size: 0.8rem;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+        }
     </style>
 </head>
 <body>
@@ -1166,7 +1178,7 @@
             <div class="logo">
                 <img src="logo.png" alt="SubMaker Logo" style="width: 80px; height: 80px; border-radius: 20px;">
             </div>
-            <h1>SubMaker</h1>
+            <h1>SubMaker <span id="version-badge" class="version-badge" style="display:none;"></span></h1>
             <p class="subtitle">AI-Powered Subtitle Translation</p>
         </div>
 
@@ -1183,6 +1195,35 @@
                 <p><strong>5.</strong> Click "Save Configuration" and install the addon in Stremio!</p>
             </div>
         </div>
+
+        <script>
+        (function(){
+            try {
+                fetch('/api/session-stats', { cache: 'no-store' })
+                    .then(function(r){ return r.ok ? r.json() : null; })
+                    .then(function(d){
+                        if (!d || !d.version) return;
+
+                        // Show version badge
+                        var el = document.getElementById('version-badge');
+                        if (el) { el.textContent = 'v' + d.version; el.style.display = 'inline-block'; }
+
+                        // Cache-bust static assets
+                        var logo = document.querySelector('.logo img');
+                        if (logo && logo.src && logo.src.indexOf('?v=') === -1) {
+                            logo.src = logo.src + (logo.src.indexOf('?') === -1 ? '?v=' : '&v=') + d.version;
+                        }
+                        var scripts = document.querySelectorAll('script[src]');
+                        scripts.forEach(function(s){
+                            if (/config\.js(\?.*)?$/i.test(s.getAttribute('src')) && s.src.indexOf('?v=') === -1) {
+                                s.src = s.src + (s.src.indexOf('?') === -1 ? '?v=' : '&v=') + d.version;
+                            }
+                        });
+                    })
+                    .catch(function(){});
+            } catch (_) {}
+        })();
+        </script>
 
         <form id="configForm">
             <!-- No Translation Mode Toggle -->

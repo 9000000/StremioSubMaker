@@ -13,6 +13,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const { parseConfig, getDefaultConfig, buildManifest } = require('./src/utils/config');
+const { version } = require('./src/utils/version');
 const { getAllLanguages, getLanguageName } = require('./src/utils/languages');
 const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, hasCachedTranslation, purgeTranslationCache } = require('./src/handlers/subtitles');
 const GeminiService = require('./src/services/gemini');
@@ -28,8 +29,8 @@ const { getSessionManager } = require('./src/utils/sessionManager');
 const PORT = process.env.PORT || 7001;
 
 // Initialize session manager with environment-based configuration
+// Note: maxSessions is intentionally not set (unbounded by default)
 const sessionManager = getSessionManager({
-    maxSessions: parseInt(process.env.MAX_SESSIONS) || 1000,
     maxAge: parseInt(process.env.SESSION_MAX_AGE) || 90 * 24 * 60 * 60 * 1000, // 90 days (3 months)
     autoSaveInterval: parseInt(process.env.SESSION_SAVE_INTERVAL) || 5 * 60 * 1000, // 5 minutes
     persistencePath: process.env.SESSION_PERSISTENCE_PATH || path.join(process.cwd(), 'data', 'sessions.json')
@@ -148,6 +149,12 @@ app.use(compression({
     threshold: 1024, // Only compress responses larger than 1KB
     level: 6 // Compression level (0-9, 6 is a good balance)
 }));
+
+// Expose version on all responses
+app.use((req, res, next) => {
+    try { res.setHeader('X-SubMaker-Version', version); } catch (_) {}
+    next();
+});
 
 // Security: Restrict CORS to prevent browser-based CSRF attacks
 // Stremio native clients don't send Origin headers, so we block browser requests for sensitive API routes
@@ -378,7 +385,7 @@ app.post('/api/update-session/:token', async (req, res) => {
 app.get('/api/session-stats', (req, res) => {
     try {
         const stats = sessionManager.getStats();
-        res.json(stats);
+        res.json({ ...stats, version });
     } catch (error) {
         console.error('[Session API] Error getting stats:', error);
         res.status(500).json({ error: 'Failed to get session statistics' });
@@ -716,6 +723,18 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
             background-clip: text;
         }
 
+        .version-badge {
+            display: inline-block;
+            background: #2A3247;
+            color: #9AA0A6;
+            border: 1px solid #2A3247;
+            border-radius: 999px;
+            padding: 0.15rem 0.6rem;
+            font-size: 0.8rem;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+        }
+
         .subtitle-header {
             text-align: center;
             margin-bottom: 2rem;
@@ -764,7 +783,7 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
 </head>
 <body>
     <div class="container">
-        <h1>Translate to ${targetLangName}</h1>
+        <h1>Translate to ${targetLangName} <span class="version-badge">v${version}</span></h1>
         <div class="subtitle-header">Select a ${sourceLangs} subtitle to translate</div>
         ${subtitles.length > 0 ? subtitleOptions : `<div class="no-subtitles">No ${sourceLangs} subtitles available</div>`}
     </div>
@@ -1310,6 +1329,7 @@ app.listen(PORT, () => {
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
     `);
+    console.log(`[Startup] Version: v${version}`);
 });
 
 module.exports = app;

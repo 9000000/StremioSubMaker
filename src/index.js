@@ -3,6 +3,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const SubtitleHandler = require('./subtitleHandler');
+const { version } = require('./utils/version');
 const GeminiAPI = require('./gemini');
 const { getAllLanguages } = require('./languages');
 
@@ -26,7 +27,7 @@ function parseConfig(configString) {
 function createManifest(config = {}) {
   return {
     id: 'org.stremio.subtitletranslator',
-    version: '1.0.0',
+    version: version,
     name: 'Subtitle Translator',
     description: 'Fetches subtitles from OpenSubtitles and translates them using AI',
     resources: ['subtitles'],

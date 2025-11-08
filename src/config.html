@@ -645,5 +645,32 @@
         // Initialize
         loadLanguages();
     </script>
+
+    <script>
+    (function(){
+        try {
+            fetch('/api/session-stats', { cache: 'no-store' })
+                .then(function(r){ return r.ok ? r.json() : null; })
+                .then(function(d){
+                    if (d && d.version) {
+                        var h1 = document.querySelector('.header h1');
+                        if (h1) {
+                            var span = document.createElement('span');
+                            span.textContent = 'v' + d.version;
+                            span.style.display = 'inline-block';
+                            span.style.padding = '4px 8px';
+                            span.style.marginLeft = '8px';
+                            span.style.borderRadius = '12px';
+                            span.style.border = '1px solid #e0e0e0';
+                            span.style.fontSize = '0.8em';
+                            span.style.color = '#555';
+                            h1.appendChild(span);
+                        }
+                    }
+                })
+                .catch(function(){});
+        } catch (_) {}
+    })();
+    </script>
 </body>
 </html>
