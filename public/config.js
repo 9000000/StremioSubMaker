@@ -1404,8 +1404,9 @@ Translate from {source_language} to {target_language}.`;
             return;
         }
 
-        // Use current origin (works for both localhost and remote access)
-        const baseUrl = window.location.origin;
+        // Use current origin if in production, otherwise use localhost
+        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const baseUrl = isLocalhost ? 'http://localhost:7001' : window.location.origin;
         const installUrl = `${baseUrl}/addon/${configToken}/manifest.json`;
 
         console.log('Configuration saved!');

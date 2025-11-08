@@ -103,10 +103,19 @@ function computeConfigHash(configStr) {
     }
 }
 
-// Helper: Check if request is from localhost
+// Helper: Check if request is from localhost or private network
 function isLocalhost(req) {
     const host = req.get('host') || '';
-    return host.startsWith('localhost') || host.startsWith('127.0.0.1');
+    const hostname = host.split(':')[0]; // Extract hostname without port
+
+    return (
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        // Private network ranges (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+        hostname.startsWith('192.168.') ||
+        hostname.startsWith('10.') ||
+        /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname)
+    );
 }
 
 // Security: Add security headers

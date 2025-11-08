@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## 1.0.1 - Progressive translation updates
+## 1.0.1 - Progressive translation updates & Network fix
 
 - Progressive subtitle updates during AI translation:
   - Save partial translated SRT after each chunk
@@ -12,3 +12,4 @@ All notable changes to this project will be documented in this file.
 - UI and API improvements:
   - Version badge added to configuration and translation selector pages
   - `/api/session-stats` now includes `version`
+- **Bug Fix:** Fixed addon URL generation for private network access (192.168.x.x, 10.x.x.x, 172.16-31.x.x ranges now properly recognized as local, preventing incorrect HTTPS URLs)
