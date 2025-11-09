@@ -34,7 +34,7 @@ Auto-sync subtitles in development!
 
 - **Node.js** 18+ ([Download](https://nodejs.org))
 - **Gemini API Key** ([Get one free](https://makersuite.google.com/app/apikey))
-- **OpenSubtitles** account for higher limits ([Sign up](https://www.opensubtitles.com/en/newuser))
+- **OpenSubtitles** account for higher limits ([Sign up](https://www.opensubtitles.com/en/newuser)) and add your key to a `.env` file via `OPENSUBTITLES_API_KEY=...` (this may be the only `.env` entry you need).
 - **SubSource API Key** ([Get one free](https://subsource.net/api-docs))
 - **SubDL API Key** ([Get one free](https://subdl.com/panel/api)) 
 
@@ -46,21 +46,31 @@ git clone https://github.com/xtremexq/StremioSubMaker.git
 cd StremioSubMaker
 npm install
 
+# Create .env file with your OpenSubtitles API key
+# Option 1: Create a new file called `.env` in the project root and add:
+#   OPENSUBTITLES_API_KEY=your_api_key_here
+# Option 2: Use command line (PowerShell, bash, or terminal)
+#   echo "OPENSUBTITLES_API_KEY=your_api_key_here" > .env
+
 # Start the server
 npm start
 
-# Open configuration page
-open http://localhost:7001
+# Open configuration page in your browser
+# On macOS/Linux: open http://localhost:7001
+# On Windows: start http://localhost:7001
+# Or manually visit: http://localhost:7001
 ```
 
 ### Configure & Install
 
-1. **Add your API keys** (required)
-2. **Select source languages** (where to fetch subtitles from)
-3. **Select target languages** (what to translate to)
-4. **Click "Install in Stremio"** or copy the URL
+1. **Add Subtitle Sources API keys** (required)
+2. **Add Gemini API Key** (required)
+3. **Select source languages** (where to fetch subtitles from)
+4. **Select target languages** (what to translate to)
+5. **Click "Install in Stremio"** or copy the URL
 
-That's it! Fetched languages and translation buttons (Make [Language]) will now appear in your Stremio subtitle menu.
+That's it! 
+Fetched languages and translation buttons (Make [Language]) will now appear in your Stremio subtitle menu.
 
 ---
 
@@ -68,12 +78,12 @@ That's it! Fetched languages and translation buttons (Make [Language]) will now 
 
 ```
 ┌─────────────────────────────────────────────┐
-│  1. Watch content in Stremio                │
-│  2. Subtitles appear with "Make [Language]" │
-│  3. Click → Select source subtitle          │
-│  4. AI translates in ~1 to 3 minutes        │
-│  5. Reselect the translated subtitles       │
-│  6. Next time? Instant! (cached on DB)      │
+│  1. Watch content in Stremio                		│
+│  2. Subtitles appear with "Make [Language]" 		│
+│  3. Click → Select source subtitle          		│
+│  4. AI translates in ~1 to 3 minutes        		│
+│  5. Reselect the translated subtitles       		│
+│  6. Next time? Instant! (cached on DB)      		│
 └─────────────────────────────────────────────┘
 ```
 
@@ -148,6 +158,13 @@ Languages to **translate to** (unlimited)
 2. **Check JavaScript console** - Look for errors (F12)
 3. **Disable browser extensions** - Some block localStorage
 4. **Try incognito mode** - Eliminate cache/extension issues
+
+### No Subtitles Loading?
+
+Stremio sometimes randomly stops sending subtitle requests to addons after installation. If no other subtitle addons load either:
+1. Try streaming different titles or files
+2. Restart Stremio
+3. It should resume working normally
 
 ---
 

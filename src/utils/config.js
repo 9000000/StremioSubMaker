@@ -201,12 +201,11 @@ function getDefaultConfig() {
     geminiApiKey: '',
     geminiModel: '',
     translationPrompt: DEFAULT_TRANSLATION_PROMPT,
-    opensubtitlesApiKey: '',
     subtitleProviders: {
       opensubtitles: {
         enabled: true,
-        username: '', // For account authentication (optional, for higher limits)
-        password: ''   // For account authentication (optional, for higher limits)
+        username: '', // OpenSubtitles account username (required)
+        password: ''   // OpenSubtitles account password (required)
       },
       subdl: {
         enabled: true,
@@ -234,7 +233,13 @@ function getDefaultConfig() {
     fileTranslationEnabled: false, // enable file upload translation feature
     // Minimum size for a subtitle file to be considered valid (bytes)
     // Prevents attempting to load/translate obviously broken files
-    minSubtitleSizeBytes: 200
+    minSubtitleSizeBytes: 200,
+    advancedSettings: {
+      maxOutputTokens: 65536,
+      chunkSize: 12000,
+      translationTimeout: 600, // seconds
+      maxRetries: 5
+    }
   };
 }
 
@@ -305,7 +310,7 @@ function buildManifest(config, baseUrl = '') {
   const background = baseUrl ? `${baseUrl}/background.svg` : 'https://i.imgur.com/5qJc5Y5.png';
 
   return {
-    id: 'com.stremio.subtranslator',
+    id: 'com.stremio.submaker',
     version: version,
     name: 'SubMaker - Subtitle Translator',
     description: `Fetches subtitles from OpenSubtitles and translates them using Gemini AI.\n\nSource languages: ${sourceLanguageNames}\nTarget languages: ${targetLanguageNames}`,

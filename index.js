@@ -1,3 +1,6 @@
+// Load environment variables from .env file FIRST (before anything else)
+require('dotenv').config();
+
 // Load logger utility first to intercept all console methods with timestamps
 require('./src/utils/logger');
 
@@ -15,7 +18,7 @@ const crypto = require('crypto');
 const { parseConfig, getDefaultConfig, buildManifest } = require('./src/utils/config');
 const { version } = require('./src/utils/version');
 const { getAllLanguages, getLanguageName } = require('./src/utils/languages');
-const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, hasCachedTranslation, purgeTranslationCache } = require('./src/handlers/subtitles');
+const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, createLoadingSubtitle, readFromPartialCache, readFromTemp, hasCachedTranslation, purgeTranslationCache, translationStatus } = require('./src/handlers/subtitles');
 const GeminiService = require('./src/services/gemini');
 const {
     validateRequest,
@@ -29,8 +32,9 @@ const { getSessionManager } = require('./src/utils/sessionManager');
 const PORT = process.env.PORT || 7001;
 
 // Initialize session manager with environment-based configuration
-// Note: maxSessions is intentionally not set (unbounded by default)
+// Limit to 50,000 sessions to prevent unbounded memory growth while allowing for production scale
 const sessionManager = getSessionManager({
+    maxSessions: parseInt(process.env.SESSION_MAX_SESSIONS) || 50000, // Limit to 50k concurrent sessions
     maxAge: parseInt(process.env.SESSION_MAX_AGE) || 90 * 24 * 60 * 60 * 1000, // 90 days (3 months)
     autoSaveInterval: parseInt(process.env.SESSION_SAVE_INTERVAL) || 5 * 60 * 1000, // 5 minutes
     persistencePath: process.env.SESSION_PERSISTENCE_PATH || path.join(process.cwd(), 'data', 'sessions.json')
@@ -64,25 +68,37 @@ const firstClickTracker = new LRUCache({
  * @returns {Promise} - Promise result
  */
 async function deduplicate(key, fn) {
+    // Helper: Create short key hash for logging (first 8 chars of SHA1)
+    const shortKey = (() => {
+        try {
+            return crypto.createHash('sha1').update(String(key)).digest('hex').slice(0, 8);
+        } catch (_) {
+            const s = String(key || '');
+            return s.length > 12 ? s.slice(0, 12) + '…' : s;
+        }
+    })();
+
     // Check if request is already in flight
     const cached = inFlightRequests.get(key);
     if (cached) {
-        // Don't log here - let caller handle logging for clearer context
-        return cached.promise;
+        console.log(`[Dedup] Returning cached promise for duplicate request: ${shortKey}`);
+        const result = await cached.promise;
+        console.log(`[Dedup] Duplicate request completed with result length: ${result ? result.length : 'undefined/null'}`);
+        return result;
     }
 
     // Create new promise and cache it
-    console.log(`[Dedup] Starting new operation for: ${key}`);
+    console.log(`[Dedup] Starting new operation: ${shortKey}`);
     const promise = fn();
 
     inFlightRequests.set(key, { promise });
 
     try {
         const result = await promise;
-        console.log(`[Dedup] Operation completed successfully: ${key}`);
+        console.log(`[Dedup] Operation completed: ${shortKey}, result length: ${result ? result.length : 'undefined/null'}`);
         return result;
     } catch (error) {
-        console.error(`[Dedup] Operation failed: ${key}`, error.message);
+        console.error(`[Dedup] Operation failed: ${shortKey}`, error.message);
         throw error;
     } finally {
         // Clean up immediately after completion
@@ -116,6 +132,63 @@ function isLocalhost(req) {
         hostname.startsWith('10.') ||
         /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname)
     );
+}
+
+/**
+ * Safety check for 5-click cache reset during active translation
+ * Prevents cache reset if ALL 5 clicks meet BOTH conditions:
+ * 1. All 5 clicks are for the same subtitle (sourceFileId)
+ * 2. All 5 clicks are from the same user (config hash)
+ * AND translation is currently in progress
+ *
+ * @param {string} clickKey - The click tracker key (includes config and fileId)
+ * @param {string} sourceFileId - The subtitle file ID
+ * @param {string} configHash - The user's config hash
+ * @param {string} targetLang - The target language
+ * @returns {boolean} - True if the 5-click cache reset should be BLOCKED
+ */
+function shouldBlockCacheReset(clickKey, sourceFileId, configHash, targetLang) {
+    try {
+        // Extract user hash from the click key
+        // Format: translate-click:${configStr}:${sourceFileId}:${targetLang}
+        const clickEntry = firstClickTracker.get(clickKey);
+
+        if (!clickEntry || !clickEntry.times || clickEntry.times.length < 5) {
+            return false; // Not enough clicks yet
+        }
+
+        // Get the translation status to check if translation is in progress
+        // The status key format is: ${sourceFileId}_${targetLanguage} (optionally with __u_${userHash})
+        // This translationStatus cache is imported from subtitles.js and shared across the app
+        const baseCacheKey = `${sourceFileId}_${targetLang}`;
+        const userScopedCacheKey = `${baseCacheKey}__u_${configHash}`;
+
+        // Try both the user-scoped key and the base key
+        let status = translationStatus.get(userScopedCacheKey);
+        if (!status) {
+            status = translationStatus.get(baseCacheKey);
+        }
+
+        // If no translation status found, it's not in progress
+        if (!status) {
+            return false;
+        }
+
+        // Check if translation is actively in progress
+        if (!status.inProgress) {
+            return false; // Translation not in progress, allow reset
+        }
+
+        // Validate that all 5 clicks are for the SAME subtitle and SAME user
+        // The clickKey already includes the sourceFileId and configStr (which is used to compute configHash)
+        // So if we got here with the same clickKey, it means all 5 clicks are for the same subtitle and user
+
+        console.log(`[SafetyBlock] Blocking cache reset: Translation is in progress for ${sourceFileId} (user: ${configHash}, target: ${targetLang})`);
+        return true; // BLOCK the cache reset
+    } catch (e) {
+        console.warn('[SafetyBlock] Error checking cache reset safety:', e.message);
+        return false; // On error, allow the reset to proceed
+    }
 }
 
 // Security: Add security headers
@@ -564,6 +637,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
         const dedupKey = `translate:${configStr}:${sourceFileId}:${targetLang}`;
 
         // Unusual purge: if same translated subtitle is loaded 5 times in < 10s, purge and retrigger
+        // SAFETY BLOCK: Only purge if translation is NOT currently in progress
         try {
             const clickKey = `translate-click:${configStr}:${sourceFileId}:${targetLang}`;
             const now = Date.now();
@@ -575,14 +649,21 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
             firstClickTracker.set(clickKey, entry);
 
             if (entry.times.length >= 5) {
-                // Reset the counter immediately to avoid loops
-                firstClickTracker.set(clickKey, { times: [] });
-                const hadCache = hasCachedTranslation(sourceFileId, targetLang, config);
-                if (hadCache) {
-                    console.log(`[PurgeTrigger] 5 rapid loads detected (<10s) for ${sourceFileId}/${targetLang}. Purging cache and re-triggering translation.`);
-                    purgeTranslationCache(sourceFileId, targetLang, config);
+                // SAFETY CHECK: Block cache reset if translation is in progress for same subtitle and same user
+                const shouldBlock = shouldBlockCacheReset(clickKey, sourceFileId, config.__configHash, targetLang);
+
+                if (shouldBlock) {
+                    console.log(`[PurgeTrigger] 5 rapid loads detected but BLOCKED: Translation in progress for ${sourceFileId}/${targetLang} (user: ${config.__configHash})`);
                 } else {
-                    console.log(`[PurgeTrigger] 5 rapid loads detected but no cached translation found for ${sourceFileId}/${targetLang}. Skipping purge.`);
+                    // Reset the counter immediately to avoid loops
+                    firstClickTracker.set(clickKey, { times: [] });
+                    const hadCache = hasCachedTranslation(sourceFileId, targetLang, config);
+                    if (hadCache) {
+                        console.log(`[PurgeTrigger] 5 rapid loads detected (<10s) for ${sourceFileId}/${targetLang}. Purging cache and re-triggering translation.`);
+                        purgeTranslationCache(sourceFileId, targetLang, config);
+                    } else {
+                        console.log(`[PurgeTrigger] 5 rapid loads detected but no cached translation found for ${sourceFileId}/${targetLang}. Skipping purge.`);
+                    }
                 }
             }
         } catch (e) {
@@ -593,15 +674,56 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
         const isAlreadyInFlight = inFlightRequests.has(dedupKey);
 
         if (isAlreadyInFlight) {
-            console.log(`[Translation] Duplicate request detected for ${sourceFileId} to ${targetLang} - waiting for in-flight translation`);
+            console.log(`[Translation] Duplicate request detected for ${sourceFileId} to ${targetLang} - checking for partial results`);
+
+            const baseKey = `${sourceFileId}_${targetLang}`;
+
+            // For duplicate requests, check partial cache FIRST (in-flight translations)
+            const partialCached = readFromPartialCache(baseKey);
+            if (partialCached && typeof partialCached.content === 'string' && partialCached.content.length > 0) {
+                console.log(`[Translation] Found in-flight partial in partial cache for ${sourceFileId} (${partialCached.content.length} chars)`);
+                res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+                res.setHeader('Pragma', 'no-cache');
+                return res.send(partialCached.content);
+            }
+
+            // Then check temp cache for bypass cache behavior (user-controlled config)
+            const bypass = config.bypassCache === true;
+            const tempEnabled = !config.tempCache || config.tempCache.enabled !== false;
+            const userHash = (config && typeof config.__configHash === 'string' && config.__configHash.length > 0) ? config.__configHash : '';
+            const tempCacheKey = (bypass && tempEnabled && userHash) ? `${baseKey}__u_${userHash}` : baseKey;
+
+            const tempCached = readFromTemp(tempCacheKey);
+            if (tempCached && typeof tempCached.content === 'string' && tempCached.content.length > 0) {
+                console.log(`[Translation] Found bypass cache result for ${sourceFileId} (${tempCached.content.length} chars)`);
+                res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+                res.setHeader('Pragma', 'no-cache');
+                return res.send(tempCached.content);
+            }
+
+            // No partial yet, serve loading message
+            console.log(`[Translation] No partial found yet, serving loading message to duplicate request for ${sourceFileId}`);
+            const loadingMsg = createLoadingSubtitle();
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            return res.send(loadingMsg);
         } else {
             console.log(`[Translation] New request to translate ${sourceFileId} to ${targetLang}`);
         }
 
-        // Deduplicate translation requests
+        // Deduplicate translation requests - handles the first request
         const subtitleContent = await deduplicate(dedupKey, () =>
             handleTranslation(sourceFileId, targetLang, config)
         );
+
+        // Validate content before processing
+        if (!subtitleContent || typeof subtitleContent !== 'string') {
+            console.error(`[Translation] Invalid subtitle content returned: ${typeof subtitleContent}, value: ${subtitleContent}`);
+            return res.status(500).send('Translation returned invalid content');
+        }
 
         // Check if this is a loading message or actual translation
         const isLoadingMessage = subtitleContent.includes('Please wait while the selected subtitle is being translated') ||
@@ -613,17 +735,16 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
 
         // Don't use 'attachment' for loading messages - we want them to display inline
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        
+
         // Disable caching for loading messages so Stremio can poll for updates
         if (isLoadingMessage) {
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.setHeader('Cache-Control', 'no-cache, must-revalidate');
             res.setHeader('Pragma', 'no-cache');
-            res.setHeader('Expires', '0');
             console.log(`[Translation] Set no-cache headers for loading message`);
         } else {
             res.setHeader('Content-Disposition', `attachment; filename="translated_${targetLang}.srt"`);
         }
-        
+
         res.send(subtitleContent);
         console.log(`[Translation] Response sent successfully for ${sourceFileId}`);
 
@@ -847,7 +968,7 @@ function generateFileTranslationPage(videoId, configStr, config) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>File Translation</title>
+    <title>Translate SRT</title>
     <style>
         * {
             margin: 0;
@@ -1078,8 +1199,8 @@ function generateFileTranslationPage(videoId, configStr, config) {
 </head>
 <body>
     <div class="container">
-        <h1>📁 File Translation</h1>
-        <div class="subtitle-header">Upload your subtitle file and translate it</div>
+        <h1>📁 Translate SRT</h1>
+        <div class="subtitle-header">Upload your .srt subtitle and translate it</div>
 
         <div class="info-box">
             <strong>How to use:</strong>
@@ -1237,6 +1358,9 @@ app.use('/addon/:config', (req, res, next) => {
         : (req.get('x-forwarded-proto') || 'https');
     const addonUrl = `${protocol}://${host}/addon/${config}`;
 
+    // Track if response has ended to prevent double-calling res.end()
+    let responseEnded = false;
+
     // Intercept both res.json() and res.end() to replace {{ADDON_URL}} placeholder
     const originalJson = res.json;
     res.json = function(obj) {
@@ -1248,10 +1372,30 @@ app.use('/addon/:config', (req, res, next) => {
 
     const originalEnd = res.end;
     res.end = function(chunk, encoding) {
+        // Prevent res.end() from being called multiple times
+        if (responseEnded) {
+            console.warn('[Server] res.end() called multiple times on response');
+            return;
+        }
+        responseEnded = true;
+
+        // Handle string chunks
         if (chunk && typeof chunk === 'string') {
             // Replace {{ADDON_URL}} with actual addon URL
             chunk = chunk.replace(/\{\{ADDON_URL\}\}/g, addonUrl);
         }
+        // Handle Buffer chunks (convert to string, replace, convert back)
+        else if (chunk && Buffer.isBuffer(chunk)) {
+            try {
+                let str = chunk.toString('utf-8');
+                str = str.replace(/\{\{ADDON_URL\}\}/g, addonUrl);
+                chunk = Buffer.from(str, 'utf-8');
+            } catch (e) {
+                console.error('[Server] Failed to process buffer chunk:', e.message);
+                // Continue with original chunk if processing fails
+            }
+        }
+
         originalEnd.call(this, chunk, encoding);
     };
 
@@ -1319,14 +1463,43 @@ app.use('/addon/:config', (req, res, next) => {
     }
 });
 
-// Error handling middleware
+// Error handling middleware - Route-specific handlers
+// Error handler for /addon/:config/subtitle/* routes (returns SRT format)
+app.use('/addon/:config/subtitle', (error, req, res, next) => {
+    console.error('[Server] Subtitle Error:', error.message);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.status(500).end('ERROR: Subtitle unavailable\n\n');
+});
+
+// Error handler for /addon/:config/translate/* routes (returns SRT format)
+app.use('/addon/:config/translate', (error, req, res, next) => {
+    console.error('[Server] Translation Error:', error.message);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.status(500).end('ERROR: Translation unavailable\n\n');
+});
+
+// Error handler for /addon/:config/translate-selector/* routes (returns HTML format)
+app.use('/addon/:config/translate-selector', (error, req, res, next) => {
+    console.error('[Server] Translation Selector Error:', error.message);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(500).end('<html><body><p>Error: Failed to load subtitle selector</p></body></html>');
+});
+
+// Error handler for /addon/:config/file-translate/* routes (returns redirect/HTML format)
+app.use('/addon/:config/file-translate', (error, req, res, next) => {
+    console.error('[Server] File Translation Error:', error.message);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.status(500).end('<html><body><p>Error: Failed to load file translation page</p></body></html>');
+});
+
+// Default error handler for manifest/router and other routes (JSON responses)
 app.use((error, req, res, next) => {
-    console.error('[Server] Error:', error);
+    console.error('[Server] General Error:', error.message);
     res.status(500).json({ error: 'Internal server error' });
 });
 
-// Start server
-app.listen(PORT, () => {
+// Start server and setup graceful shutdown
+const server = app.listen(PORT, () => {
     console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
@@ -1339,6 +1512,9 @@ app.listen(PORT, () => {
 ╚═══════════════════════════════════════════════════════════╝
     `);
     console.log(`[Startup] Version: v${version}`);
+
+    // Setup graceful shutdown handlers now that server is running
+    sessionManager.setupShutdownHandlers(server);
 });
 
 module.exports = app;

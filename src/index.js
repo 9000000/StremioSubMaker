@@ -26,7 +26,7 @@ function parseConfig(configString) {
 // Create addon manifest
 function createManifest(config = {}) {
   return {
-    id: 'org.stremio.subtitletranslator',
+    id: 'com.stremio.submaker',
     version: version,
     name: 'Subtitle Translator',
     description: 'Fetches subtitles from OpenSubtitles and translates them using AI',

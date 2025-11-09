@@ -12,10 +12,18 @@ const fileIdSchema = Joi.string()
   .required();
 
 // Validate language code (ISO-639-2 or ISO-639-1)
+// Strict schema used for URL params where we expect codes
 const languageCodeSchema = Joi.string()
   .pattern(/^[a-z]{2,3}(-[a-zA-Z]{2})?$/)
   .min(2)
   .max(10)
+  .required();
+
+// More permissive language schema for file translation API
+// Accepts BCP-47-like tags or human-readable names (e.g., 'pt-BR', 'zh-Hant', 'English', 'Brazilian Portuguese', 'es-419')
+const looseLanguageSchema = Joi.string()
+  .min(1)
+  .max(50)
   .required();
 
 // Validate video ID (Stremio format: tt0133093 or tt0133093:1:1)
@@ -111,7 +119,7 @@ const translationSelectorParamsSchema = Joi.object({
  */
 const fileTranslationBodySchema = Joi.object({
   content: subtitleContentSchema,
-  targetLanguage: languageCodeSchema,
+  targetLanguage: looseLanguageSchema,
   configStr: configStringSchema,
 });
 
@@ -120,6 +128,7 @@ module.exports = {
   validateRequest,
   fileIdSchema,
   languageCodeSchema,
+  looseLanguageSchema,
   videoIdSchema,
   subtitleContentSchema,
   configStringSchema,

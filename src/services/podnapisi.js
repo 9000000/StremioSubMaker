@@ -220,7 +220,6 @@ class PodnapisService {
           podnapisi_id: podnapisi_id_for_download  // Store URL path for download
         };
 
-        console.log(`[Podnapisi] Found subtitle: ${subtitle.name} (${originalLang}) - ID: ${fileId}`);
         subtitles.push(subtitle);
       } catch (error) {
         console.error('[Podnapisi] Error parsing subtitle entry:', error.message);
@@ -228,7 +227,23 @@ class PodnapisService {
       }
     }
 
-    return subtitles;
+    // Limit to 20 results per language to control response size
+    const MAX_RESULTS_PER_LANGUAGE = 20;
+    const groupedByLanguage = {};
+
+    for (const sub of subtitles) {
+      const lang = sub.languageCode || 'unknown';
+      if (!groupedByLanguage[lang]) {
+        groupedByLanguage[lang] = [];
+      }
+      if (groupedByLanguage[lang].length < MAX_RESULTS_PER_LANGUAGE) {
+        groupedByLanguage[lang].push(sub);
+      }
+    }
+
+    const limitedSubtitles = Object.values(groupedByLanguage).flat();
+    console.log(`[Podnapisi] Found ${subtitles.length} subtitles total, limited to ${limitedSubtitles.length} (max ${MAX_RESULTS_PER_LANGUAGE} per language)`);
+    return limitedSubtitles;
   }
 
   /**

@@ -8,8 +8,9 @@ const { getLanguageName, getISO639_1 } = require('./languages');
 class SubtitleHandler {
   constructor(config) {
     this.config = config;
-    this.opensubtitlesAPI = config.opensubtitlesApiKey
-      ? new OpenSubtitlesAPI(config.opensubtitlesApiKey)
+    // OpenSubtitles requires username/password authentication
+    this.opensubtitlesAPI = config.subtitleProviders?.opensubtitles
+      ? new OpenSubtitlesAPI(config.subtitleProviders.opensubtitles)
       : null;
     this.geminiAPI = config.geminiApiKey
       ? new GeminiAPI(config.geminiApiKey)

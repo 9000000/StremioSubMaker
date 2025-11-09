@@ -9,9 +9,25 @@ const { LRUCache } = require('lru-cache');
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+
+// Redact/noise-reduce helper for logging large cache keys
+function shortKey(v) {
+  try {
+    return crypto.createHash('sha1').update(String(v)).digest('hex').slice(0, 8);
+  } catch (_) {
+    const s = String(v || '');
+    return s.length > 12 ? s.slice(0, 12) + '…' : s;
+  }
+}
 
 // Track per-user concurrent translations (limit enforcement)
-const userTranslationCounts = new Map(); // key: userHash, value: number in-progress
+// Use LRUCache with max 50k users and a 24h TTL so stale counts expire naturally
+const userTranslationCounts = new LRUCache({
+  max: 50000, // Max 50k unique users tracked
+  ttl: 24 * 60 * 60 * 1000, // 24 hours - auto-cleanup stale entries
+  updateAgeOnGet: false,
+});
 const MAX_CONCURRENT_TRANSLATIONS_PER_USER = 3;
 
 // Security: LRU cache for in-progress translations (max 500 entries)
@@ -28,10 +44,20 @@ const inFlightSearches = new LRUCache({
   updateAgeOnGet: false,
 });
 
+// Security: In-flight translation requests to prevent duplicate translations (max 500 entries)
+// Maps cacheKey -> Promise that all simultaneous requests will wait for
+const inFlightTranslations = new LRUCache({
+  max: 500,
+  ttl: 30 * 60 * 1000, // 30 minutes
+  updateAgeOnGet: false,
+});
+
 // Directory for persistent translation cache (disk-only)
 const CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'translations');
-// Directory for temporary translation cache (disk-only, TTL-based)
+// Directory for temporary translation cache (disk-only, TTL-based) - for user bypass cache config
 const TEMP_CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'translations_temp');
+// Directory for partial translation cache during chunking/streaming - separate from user config
+const PARTIAL_CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'translations_partial');
 
 // Security: Maximum cache size (20GB)
 const MAX_CACHE_SIZE_BYTES = 20 * 1024 * 1024 * 1024; // 20GB
@@ -50,31 +76,17 @@ const cacheMetrics = {
 };
 
 /**
- * Create a loading subtitle with multiple messages
+ * Create a single-cue loading subtitle that explains partial loading
  * @returns {string} - SRT formatted loading subtitle
  */
 function createLoadingSubtitle() {
   const srt = `1
-00:00:00,000 --> 00:00:05,000
+00:00:00,000 --> 04:00:00,000
 TRANSLATION IN PROGRESS
-Please wait, this may take 1-10 minutes
-Depending on selected model and file size
+Subtitles load progressively during translation.
+Please wait ~1-3 minutes and reselect this subtitle.
+Partial results will appear as they are ready.`;
 
-2
-00:00:05,001 --> 00:00:10,000
-Your subtitle is being translated...
-This happens in the background
-
-3
-00:00:10,001 --> 00:00:15,000
-Pro models take longer than flash and lite
-Movies take longer than tv episodes
-
-4
-00:00:15,001 --> 04:00:00,000
-Please wait 1-10 minutes. Then, select
-this subtitle again to see the result`;
-  
   // Log the loading subtitle for debugging
   console.log('[Subtitles] Created loading subtitle with', srt.split('\n\n').length, 'entries');
   return srt;
@@ -103,10 +115,28 @@ function msToSrtTime(ms) {
 
 function buildPartialSrtWithTail(mergedSrt) {
   try {
+    if (!mergedSrt || typeof mergedSrt !== 'string' || mergedSrt.trim().length === 0) {
+      return null; // Nothing to work with
+    }
+
     const entries = parseSRT(mergedSrt);
-    if (!entries || entries.length === 0) return null;
+    if (!entries || entries.length === 0) {
+      // If we have raw text but no valid SRT entries yet, still return something
+      // so users see progress instead of a loading screen
+      // Append a loading indicator
+      const lineCount = mergedSrt.split('\n').length + 10;
+      return `${mergedSrt}\n\n${lineCount}\n00:00:00,000 --> 04:00:00,000\nTRANSLATION IN PROGRESS\nReload this subtitle later to get more`;
+    }
+
     const reindexed = entries.map((e, idx) => ({ id: idx + 1, timecode: e.timecode, text: (e.text || '').trim() }))
                              .filter(e => e.timecode && e.text);
+
+    if (reindexed.length === 0) {
+      // No valid entries after filtering, but we have content - append loading tail
+      const lineCount = mergedSrt.split('\n').length + 10;
+      return `${mergedSrt}\n\n${lineCount}\n00:00:00,000 --> 04:00:00,000\nTRANSLATION IN PROGRESS\nReload this subtitle later to get more`;
+    }
+
     const last = reindexed[reindexed.length - 1];
     let end = '00:00:00,000';
     if (last && typeof last.timecode === 'string') {
@@ -124,6 +154,12 @@ function buildPartialSrtWithTail(mergedSrt) {
     const full = [...reindexed, tail];
     return toSRT(full);
   } catch (e) {
+    console.warn('[Subtitles] Error building partial SRT with tail:', e.message);
+    // As fallback, if we have content, append a simple loading tail
+    if (mergedSrt && typeof mergedSrt === 'string' && mergedSrt.trim().length > 0) {
+      const lineCount = mergedSrt.split('\n').length + 10;
+      return `${mergedSrt}\n\n${lineCount}\n00:00:00,000 --> 04:00:00,000\nTRANSLATION IN PROGRESS\nReload this subtitle later to get more`;
+    }
     return null;
   }
 }
@@ -385,7 +421,7 @@ function saveToDisk(cacheKey, cachedData) {
   }
 }
 
-// Save translation to temporary disk cache
+// Save translation to temporary disk cache (for user-controlled bypass cache config)
 function saveToTemp(cacheKey, cachedData) {
   try {
     const safeKey = sanitizeCacheKey(cacheKey);
@@ -402,6 +438,117 @@ function saveToTemp(cacheKey, cachedData) {
     cacheMetrics.diskWrites++;
   } catch (error) {
     console.error('[Temp Cache] Failed to save translation to temp:', error.message);
+  }
+}
+
+// Save partial translation result during chunking/streaming (separate from user bypass config)
+function saveToPartialCache(cacheKey, cachedData) {
+  try {
+    const safeKey = sanitizeCacheKey(cacheKey);
+    const filePath = path.join(PARTIAL_CACHE_DIR, `${safeKey}.json`);
+
+    // Ensure partial cache directory exists
+    if (!fs.existsSync(PARTIAL_CACHE_DIR)) {
+      fs.mkdirSync(PARTIAL_CACHE_DIR, { recursive: true });
+    }
+
+    const resolvedPath = path.resolve(filePath);
+    const resolvedCacheDir = path.resolve(PARTIAL_CACHE_DIR);
+    if (!resolvedPath.startsWith(resolvedCacheDir)) {
+      console.error(`[Partial Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
+      return;
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(cachedData, null, 2), 'utf8');
+    cacheMetrics.diskWrites++;
+  } catch (error) {
+    console.error('[Partial Cache] Failed to save partial translation:', error.message);
+  }
+}
+
+// Async version of saveToPartialCache with write queue to prevent blocking
+const writeQueue = [];
+let isProcessingQueue = false;
+
+async function saveToPartialCacheAsync(cacheKey, cachedData) {
+  return new Promise((resolve) => {
+    writeQueue.push({ cacheKey, cachedData, resolve });
+    if (!isProcessingQueue) {
+      processWriteQueue();
+    }
+  });
+}
+
+async function processWriteQueue() {
+  if (writeQueue.length === 0) {
+    isProcessingQueue = false;
+    return;
+  }
+
+  isProcessingQueue = true;
+  const { cacheKey, cachedData, resolve } = writeQueue.shift();
+
+  try {
+    const safeKey = sanitizeCacheKey(cacheKey);
+    const filePath = path.join(PARTIAL_CACHE_DIR, `${safeKey}.json`);
+
+    // Ensure partial cache directory exists
+    if (!fs.existsSync(PARTIAL_CACHE_DIR)) {
+      fs.mkdirSync(PARTIAL_CACHE_DIR, { recursive: true });
+    }
+
+    const resolvedPath = path.resolve(filePath);
+    const resolvedCacheDir = path.resolve(PARTIAL_CACHE_DIR);
+    if (!resolvedPath.startsWith(resolvedCacheDir)) {
+      console.error(`[Partial Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
+      resolve();
+      processWriteQueue();
+      return;
+    }
+
+    await fs.promises.writeFile(filePath, JSON.stringify(cachedData, null, 2), 'utf8');
+    cacheMetrics.diskWrites++;
+    resolve();
+  } catch (error) {
+    console.error('[Partial Cache] Failed to save partial translation (async):', error.message);
+    resolve();
+  }
+
+  // Continue processing next item in queue
+  processWriteQueue();
+}
+
+// Read partial translation result during chunking/streaming
+function readFromPartialCache(cacheKey) {
+  try {
+    const safeKey = sanitizeCacheKey(cacheKey);
+    const filePath = path.join(PARTIAL_CACHE_DIR, `${safeKey}.json`);
+
+    const resolvedPath = path.resolve(filePath);
+    const resolvedCacheDir = path.resolve(PARTIAL_CACHE_DIR);
+    if (!resolvedPath.startsWith(resolvedCacheDir)) {
+      console.error(`[Partial Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
+      return null;
+    }
+
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf8');
+    const cached = JSON.parse(content);
+
+    // Check if partial has expired (default 1 hour TTL for in-flight partials)
+    if (!cached.expiresAt || Date.now() > cached.expiresAt) {
+      try { fs.unlinkSync(filePath); } catch (_) {}
+      return null;
+    }
+
+    cacheMetrics.diskReads++;
+    return cached;
+  } catch (error) {
+    console.error(`[Partial Cache] Failed to read from partial for key ${cacheKey}:`, error.message);
+    return null;
   }
 }
 
@@ -555,6 +702,203 @@ async function deduplicateSearch(key, fn) {
 }
 
 /**
+ * Extract quality tier and release group from filename
+ * @param {string} filename - The filename to parse
+ * @returns {Object} - Object with quality tier, resolution, codec, and release group
+ */
+function parseReleaseMetadata(filename) {
+  const lower = filename.toLowerCase();
+
+  // Resolution detection (highest priority for sync)
+  let resolution = null;
+  if (lower.includes('4k') || lower.includes('2160p')) resolution = '4k';
+  else if (lower.includes('1080p')) resolution = '1080p';
+  else if (lower.includes('720p')) resolution = '720p';
+  else if (lower.includes('480p')) resolution = '480p';
+
+  // Quality tier detection (lower tier = more specific, more likely to sync)
+  let qualityTier = 0;
+  if (lower.includes('webrip')) qualityTier = 1; // Most specific/common for subs
+  else if (lower.includes('bluray') || lower.includes('bdrip')) qualityTier = 2;
+  else if (lower.includes('hdtv')) qualityTier = 3;
+  else if (lower.includes('dvdrip')) qualityTier = 4;
+  else if (lower.includes('ts') || lower.includes('telesync')) qualityTier = 5;
+
+  // Codec detection
+  let codec = null;
+  if (lower.includes('x265') || lower.includes('h.265') || lower.includes('h265')) codec = 'x265';
+  else if (lower.includes('x264') || lower.includes('h.264') || lower.includes('h264')) codec = 'x264';
+
+  // Extract release group (usually at end, after last dash or bracket)
+  let releaseGroup = null;
+  const groupMatch = filename.match(/[-_]([A-Z0-9]{2,})\s*$/i);
+  if (groupMatch) {
+    releaseGroup = groupMatch[1].toLowerCase();
+  }
+
+  return { resolution, qualityTier, codec, releaseGroup };
+}
+
+/**
+ * Calculate filename match score for a subtitle
+ * Prioritizes sync probability: exact releases > quality matches > partial matches
+ * @param {string} streamFilename - The stream/video filename from Stremio
+ * @param {string} subtitleName - The subtitle name from provider
+ * @returns {number} - Match score (higher = better match = more likely to sync)
+ */
+function calculateFilenameMatchScore(streamFilename, subtitleName) {
+  if (!streamFilename || !subtitleName) return 0;
+
+  const stream = streamFilename.toLowerCase();
+  const subtitle = subtitleName.toLowerCase();
+
+  // Exact string match is perfect
+  if (stream === subtitle) {
+    return 10000;
+  }
+
+  let score = 0;
+
+  // Parse metadata from both filenames
+  const streamMeta = parseReleaseMetadata(streamFilename);
+  const subtitleMeta = parseReleaseMetadata(subtitleName);
+
+  // Extract core title (everything before year/resolution)
+  const getTitleBase = (filename) => {
+    return filename
+      .replace(/\b(19|20)\d{2}\b.*/, '') // Remove year and everything after
+      .replace(/[_\-\.]/g, ' ')
+      .trim()
+      .toLowerCase();
+  };
+
+  const streamTitle = getTitleBase(streamFilename);
+  const subtitleTitle = getTitleBase(subtitleName);
+
+  // CRITICAL: Title must match (very high penalty if it doesn't)
+  const titleMatch = subtitleTitle.includes(streamTitle) || streamTitle.includes(subtitleTitle);
+  if (!titleMatch) {
+    return 0; // Completely different movie/show
+  }
+  score += 500; // Base score for title match
+
+  // RELEASE GROUP MATCHING (highest priority for sync)
+  // If both have release groups and they match = very likely to sync
+  if (streamMeta.releaseGroup && subtitleMeta.releaseGroup) {
+    if (streamMeta.releaseGroup === subtitleMeta.releaseGroup) {
+      score += 3000; // Exact release group match = very high probability
+    } else {
+      score -= 100; // Different release groups = lower probability
+    }
+  }
+
+  // QUALITY TIER MATCHING (second priority)
+  // Lower tier (more specific) quality markers are better
+  if (streamMeta.qualityTier > 0 && subtitleMeta.qualityTier > 0) {
+    const tierDifference = Math.abs(streamMeta.qualityTier - subtitleMeta.qualityTier);
+    if (tierDifference === 0) {
+      score += 1500; // Same quality tier = very likely to match
+    } else if (tierDifference === 1) {
+      score += 700; // Adjacent quality tier (acceptable match)
+    } else {
+      score -= 300; // Very different quality tiers (less likely to match)
+    }
+  }
+
+  // RESOLUTION MATCHING (third priority)
+  // Exact resolution match is good, but 1080p subs work on 720p streams
+  if (streamMeta.resolution && subtitleMeta.resolution) {
+    if (streamMeta.resolution === subtitleMeta.resolution) {
+      score += 1000; // Perfect resolution match
+    } else {
+      // Resolution compatibility: 1080p/720p are compatible, but penalize mismatches
+      const streamRes = parseInt(streamMeta.resolution);
+      const subtitleRes = parseInt(subtitleMeta.resolution);
+
+      if ((streamRes === 720 && subtitleRes === 1080) ||
+          (streamRes === 1080 && subtitleRes === 720)) {
+        score += 400; // 720p/1080p cross-match (still works)
+      } else if (streamRes < subtitleRes) {
+        score += 200; // Higher quality subtitle on lower res stream (works)
+      } else {
+        score -= 200; // Lower quality subtitle on higher res stream (mismatch)
+      }
+    }
+  }
+
+  // CODEC MATCHING (bonus for matching codec)
+  if (streamMeta.codec && subtitleMeta.codec) {
+    if (streamMeta.codec === subtitleMeta.codec) {
+      score += 300; // Same codec = good sign
+    }
+  }
+
+  // TOKEN-BASED MATCHING for other distinguishing factors
+  // Split by separators and match tokens
+  const streamTokens = stream
+    .replace(/\.[^.]+$/, '') // Remove extension
+    .split(/[_\-\.\s]+/)
+    .filter(t => t.length > 2); // Only meaningful tokens
+
+  const subtitleTokens = subtitle
+    .replace(/\.[^.]+$/, '')
+    .split(/[_\-\.\s]+/)
+    .filter(t => t.length > 2);
+
+  // Match tokens (especially year, season/episode numbers)
+  let tokenMatches = 0;
+  for (const token of streamTokens) {
+    if (/^\d+$/.test(token) && subtitleTokens.includes(token)) {
+      // Numeric tokens (year, season, episode) are very important
+      tokenMatches += 2;
+    } else if (subtitleTokens.includes(token)) {
+      tokenMatches += 1;
+    }
+  }
+
+  if (tokenMatches > 0) {
+    score += tokenMatches * 100;
+  }
+
+  // PENALTY: If subtitle has minimal info (very short), it's less likely to be accurate match
+  if (subtitleTokens.length < 2) {
+    score *= 0.5;
+  }
+
+  // BONUS: If subtitle name is very similar in structure/length, it's probably the right one
+  const tokenRatio = Math.min(streamTokens.length, subtitleTokens.length) /
+                     Math.max(streamTokens.length, subtitleTokens.length);
+  if (tokenRatio > 0.7) {
+    score *= 1.2; // Similar structure = good sign
+  }
+
+  return Math.max(0, Math.round(score));
+}
+
+/**
+ * Sort subtitles by filename match score
+ * @param {Array} subtitles - Array of subtitle objects
+ * @param {string} streamFilename - Stream filename from Stremio
+ * @returns {Array} - Sorted subtitles (best matches first)
+ */
+function rankSubtitlesByFilename(subtitles, streamFilename) {
+  if (!streamFilename || subtitles.length === 0) {
+    return subtitles;
+  }
+
+  const withScores = subtitles.map(sub => ({
+    ...sub,
+    _matchScore: calculateFilenameMatchScore(streamFilename, sub.name || '')
+  }));
+
+  // Sort by match score descending (highest first)
+  withScores.sort((a, b) => b._matchScore - a._matchScore);
+
+  // Remove the temporary score property before returning
+  return withScores.map(({ _matchScore, ...rest }) => rest);
+}
+
+/**
  * Create subtitle handler for Stremio addon
  * @param {Object} config - Addon configuration
  * @returns {Function} - Handler function
@@ -564,7 +908,7 @@ function createSubtitleHandler(config) {
     try {
       console.log('[Subtitles] Handler called with args:', JSON.stringify(args));
 
-      const { type, id } = args;
+      const { type, id, extra } = args;
       const videoInfo = parseStremioId(id);
 
       if (!videoInfo) {
@@ -573,6 +917,12 @@ function createSubtitleHandler(config) {
       }
 
       console.log('[Subtitles] Video info:', videoInfo);
+
+      // Extract stream filename for matching
+      const streamFilename = extra?.filename || '';
+      if (streamFilename) {
+        console.log('[Subtitles] Stream filename for matching:', streamFilename);
+      }
 
       // Get all languages (source + target) for searching
       // This way users can find subtitles already in target languages and use them directly
@@ -678,19 +1028,39 @@ function createSubtitleHandler(config) {
       const normalizedAllLangs = new Set([...new Set(allLanguages.map(lang => normalizeLanguageCode(lang)))]);
 
       // Filter results to only allowed languages
-      const filteredFoundSubtitles = foundSubtitles.filter(sub => sub.languageCode && normalizedAllLangs.has(sub.languageCode));
+      let filteredFoundSubtitles = foundSubtitles.filter(sub => sub.languageCode && normalizedAllLangs.has(sub.languageCode));
+
+      // Rank subtitles by filename match before creating response lists
+      // This ensures the best matches appear first in Stremio UI
+      if (streamFilename) {
+        filteredFoundSubtitles = rankSubtitlesByFilename(filteredFoundSubtitles, streamFilename);
+        console.log('[Subtitles] Ranked subtitles by filename match');
+      }
 
       // Convert to Stremio subtitle format
-       const stremioSubtitles = filteredFoundSubtitles.map(sub => {
-        const subtitle = {
-          id: `${sub.fileId}`,
-          lang: sub.languageCode, // Must be ISO-639-2 (3-letter code)
-          url: `{{ADDON_URL}}/subtitle/${sub.fileId}/${sub.languageCode}.srt`
-        };
+      // Validate required fields before creating response objects
+      const stremioSubtitles = filteredFoundSubtitles
+        .filter(sub => {
+          // Validate required fields exist and have valid values
+          if (!sub.fileId || typeof sub.fileId !== 'string') {
+            console.warn('[Subtitles] Skipping subtitle: missing or invalid fileId', sub);
+            return false;
+          }
+          if (!sub.languageCode || typeof sub.languageCode !== 'string') {
+            console.warn('[Subtitles] Skipping subtitle: missing or invalid languageCode', sub);
+            return false;
+          }
+          return true;
+        })
+        .map(sub => {
+          const subtitle = {
+            id: `${sub.fileId}`,
+            lang: sub.languageCode, // Must be ISO-639-2 (3-letter code)
+            url: `{{ADDON_URL}}/subtitle/${sub.fileId}/${sub.languageCode}.srt`
+          };
 
-        console.log('[Subtitles] Formatted subtitle:', JSON.stringify(subtitle));
-        return subtitle;
-      });
+          return subtitle;
+        });
 
             // Add translation buttons for each target language
        // Normalize and deduplicate target languages
@@ -702,7 +1072,7 @@ function createSubtitleHandler(config) {
         return normalized;
       }))];
 
-      // Create translation entries: for each target language, create entries for ALL source language subtitles
+      // Create translation entries: for each target language, create entries for top source language subtitles only
       // First, filter out target language subtitles to get only source language subtitles
       const sourceSubtitles = filteredFoundSubtitles.filter(sub =>
         config.sourceLanguages.some(sourceLang => {
@@ -713,14 +1083,20 @@ function createSubtitleHandler(config) {
 
       console.log(`[Subtitles] Found ${sourceSubtitles.length} source language subtitles for translation`);
 
-      // For each target language, create a translation entry for each source subtitle
+      // Limit to top 15 source subtitles for translation to reduce response size
+      // This prevents massive multiplication: 15 sources × 5 target languages = 75 translation entries
+      // Without limit: 60+ sources × 5 languages = 300+ entries causing UI slowdown
+      const MAX_SOURCE_SUBS_FOR_TRANSLATION = 15;
+      const topSourceSubtitles = sourceSubtitles.slice(0, MAX_SOURCE_SUBS_FOR_TRANSLATION);
+
+      // For each target language, create a translation entry for each top source subtitle
       const translationEntries = [];
       for (const targetLang of normalizedTargetLangs) {
         const baseName = getLanguageName(targetLang);
         const displayName = `Make ${baseName}`;
         console.log(`[Subtitles] Creating translation entries for ${displayName} (${targetLang})`);
 
-        for (const sourceSub of sourceSubtitles) {
+        for (const sourceSub of topSourceSubtitles) {
           const translationEntry = {
             id: `translate_${sourceSub.fileId}_to_${targetLang}`,
             lang: displayName, // Display as "Make Language" in Stremio UI
@@ -730,25 +1106,25 @@ function createSubtitleHandler(config) {
         }
       }
 
-      console.log(`[Subtitles] Created ${translationEntries.length} translation entries`);
+      console.log(`[Subtitles] Created ${translationEntries.length} translation options (top ${MAX_SOURCE_SUBS_FOR_TRANSLATION})`);
 
-      // Add fake "File Translation" entry if enabled in config
+      // Add fake "Translate SRT" entry if enabled in config
       let allSubtitles = [...stremioSubtitles, ...translationEntries];
 
       if (config.fileTranslationEnabled === true) {
         const fileUploadEntry = {
           id: 'file_upload',
-          lang: 'Upload Sub',
+          lang: 'Translate SRT',
           url: `{{ADDON_URL}}/file-translate/${id}`
         };
         allSubtitles = [fileUploadEntry, ...allSubtitles];
-        console.log('[Subtitles] File translation is enabled, added file upload entry');
+        console.log('[Subtitles] Translate SRT is enabled, added entry');
       } else {
         console.log('[Subtitles] File translation is disabled');
       }
 
-      console.log(`[Subtitles] Returning ${stremioSubtitles.length} subtitles and ${translationEntries.length} translation entries`);
-      console.log('[Subtitles] Full response:', JSON.stringify({ subtitles: allSubtitles }, null, 2));
+      const totalResponseItems = stremioSubtitles.length + translationEntries.length + (config.fileTranslationEnabled === true ? 1 : 0);
+      console.log(`[Subtitles] Returning ${totalResponseItems} items (${stremioSubtitles.length} subs + ${translationEntries.length} opts)`);
 
       return {
         subtitles: allSubtitles
@@ -892,7 +1268,8 @@ Or try a different subtitle from the list`;
 }
 
 /**
- * Handle translation request
+ * Handle translation request with race-condition protection
+ * Prevents multiple simultaneous translation requests for the same subtitle/language pair
  * @param {string} sourceFileId - Source subtitle file ID
  * @param {string} targetLanguage - Target language code
  * @param {Object} config - Addon configuration
@@ -938,15 +1315,51 @@ async function handleTranslation(sourceFileId, targetLanguage, config) {
     cacheMetrics.misses++;
     console.log('[Translation] Cache miss key=', cacheKey, '— not cached');
 
-    // Check if translation is in progress (scope to same key used for caching)
+    // === RACE CONDITION PROTECTION ===
+    // Check if there's already an in-flight request for this exact key
+    // All simultaneous requests will share the same promise
+    const inFlightPromise = inFlightTranslations.get(cacheKey);
+    if (inFlightPromise) {
+      console.log(`[Translation] Detected in-flight translation for key=${cacheKey}; checking for partial results`);
+      try {
+        // DON'T WAIT for completion - immediately return available partials instead
+        // Check disk cache first (in case it just completed)
+        const cachedResult = readFromDisk(cacheKey);
+        if (cachedResult) {
+          console.log('[Translation] Final result already cached; returning it');
+          cacheMetrics.hits++;
+          return cachedResult.content;
+        }
+
+        // Check partial cache (most common case - translation in progress)
+        // Partials are saved to PARTIAL_CACHE_DIR, not TEMP_CACHE_DIR
+        const partialResult = readFromPartialCache(cacheKey);
+        if (partialResult && typeof partialResult.content === 'string' && partialResult.content.length > 0) {
+          console.log(`[Translation] Returning partial result (${partialResult.content.length} chars) without waiting for completion`);
+          return partialResult.content;
+        }
+
+        // No cached/partial result yet - return loading message and let user retry
+        const loadingMsg = createLoadingSubtitle();
+        console.log(`[Translation] No partial result yet for duplicate request; returning loading message`);
+        return loadingMsg;
+      } catch (err) {
+        console.warn(`[Translation] Error checking partials for duplicate request (${cacheKey}):`, err.message);
+        // Return loading message on any error
+        const loadingMsg = createLoadingSubtitle();
+        return loadingMsg;
+      }
+    }
+
+    // Check if translation is in progress (for backward compatibility)
     const status = translationStatus.get(cacheKey);
     if (status && status.inProgress) {
       const elapsedTime = Math.floor((Date.now() - status.startedAt) / 1000);
       console.log(`[Translation] In-progress existing translation key=${cacheKey} (elapsed ${elapsedTime}s); attempting partial SRT`);
       try {
-        const partial = readFromTemp(cacheKey);
+        const partial = readFromPartialCache(cacheKey);
         if (partial && typeof partial.content === 'string' && partial.content.length > 0) {
-          console.log('[Translation] Serving partial SRT from temp cache');
+          console.log('[Translation] Serving partial SRT from partial cache');
           return partial.content;
         }
       } catch (_) {}
@@ -967,14 +1380,21 @@ async function handleTranslation(sourceFileId, targetLanguage, config) {
     console.log('[Translation] Not cached and not in-progress; starting translation key=', cacheKey);
     translationStatus.set(cacheKey, { inProgress: true, startedAt: Date.now(), userHash: effectiveUserHash });
     userTranslationCounts.set(effectiveUserHash, currentCount + 1);
-    
-    // Start translation in background (don't await)
-    performTranslation(sourceFileId, targetLanguage, config, cacheKey, effectiveUserHash).catch(error => {
+
+    // Create a promise for this translation that all simultaneous requests will wait for
+    const translationPromise = performTranslation(sourceFileId, targetLanguage, config, cacheKey, effectiveUserHash);
+    inFlightTranslations.set(cacheKey, translationPromise);
+
+    // Start translation in background (don't await here)
+    translationPromise.catch(error => {
       console.error('[Translation] Background translation failed:', error.message);
       // Mark as failed so it can be retried
       try {
         translationStatus.delete(cacheKey);
       } catch (_) {}
+    }).finally(() => {
+      // Clean up the in-flight promise when done
+      inFlightTranslations.delete(cacheKey);
     });
 
     // Return loading message immediately
@@ -1078,51 +1498,84 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
     console.log(`[Translation] Expected output tokens ~${expectedOutputTokens} (model output cap ~${modelOutputCap})`);
 
     // Translate with automatic fallback to chunking
-          let translatedContent;
-      // Always chunk files above 25k tokens for reliability across all models
-      const useChunking = estimatedTokens > 25000;
-      if (useChunking) {
-        console.log('[Translation] Preemptively using chunked translation (file size > 25k tokens)');
-      }
+    let translatedContent;
+    // Chunk files above 25k tokens (chunks will be ~12k tokens each for faster progressive updates)
+    const useChunking = estimatedTokens > 25000;
+    if (useChunking) {
+      console.log('[Translation] Using chunked translation (file size > 25k tokens, chunks ~12k each) for progressive updates');
+    } else {
+      console.log(`[Translation] File size ${estimatedTokens} tokens <= 25k, using streaming for progressive updates`);
+    }
 
-      if (useChunking) {
-        console.log('[Translation] Using chunked translation with progressive updates');
+    if (useChunking) {
+        console.log('[Translation] Using chunked translation with per-chunk streaming for progressive updates');
         const soFar = [];
-        const savePartial = () => {
+        let lastFlush = Date.now(); // Initialize to now so first partial respects 10s interval
+        let flushCount = 0;
+        // Tiered flush intervals: 10s, 60s, 180s, then 300s for all subsequent
+        const flushIntervals = [10000, 60000, 180000, 300000];
+        const getFlushInterval = () => flushIntervals[Math.min(flushCount, flushIntervals.length - 1)];
+        const savePartial = async () => {
           const merged = soFar.join('\n\n');
+          console.log(`[Translation] Saving partial: ${soFar.length} chunks merged (${merged.length} chars)`);
           const partialSrt = buildPartialSrtWithTail(merged);
           if (partialSrt && partialSrt.length > 0) {
-            saveToTemp(cacheKey, {
+            flushCount++;
+            const nextInterval = getFlushInterval();
+            console.log(`[Translation] Partial SRT built successfully (${partialSrt.length} chars), saving to partial cache (flush #${flushCount}, next flush in ${nextInterval / 1000}s)`);
+            await saveToPartialCacheAsync(cacheKey, {
               content: partialSrt,
-              // expire after 6 hours; final will overwrite permanent cache
-              expiresAt: Date.now() + 6 * 60 * 60 * 1000
+              // expire after 1 hour; final will overwrite with persistent cache
+              expiresAt: Date.now() + 60 * 60 * 1000
             });
+          } else {
+            console.log('[Translation] Partial SRT is null/empty, not saving to cache');
           }
         };
-        translatedContent = await gemini.translateSubtitleInChunksWithProgress(
+        translatedContent = await gemini.translateSubtitleInChunksWithStreaming(
           sourceContent,
           'detected source language',
           targetLangName,
           config.translationPrompt,
           null,
-          async ({ index, total, translatedChunk }) => {
-            soFar.push(translatedChunk);
-            // Save partial on each chunk completion
-            savePartial();
+          async ({ index, total, translatedChunk, isDelta }) => {
+            if (isDelta) {
+              // Token-level delta - add to current chunk buffer and flush at tiered intervals
+              soFar[index] = (soFar[index] || '') + translatedChunk;
+              const now = Date.now();
+              const currentInterval = getFlushInterval();
+              if (now - lastFlush > currentInterval) {
+                lastFlush = now;
+                await savePartial();
+              }
+            } else {
+              // Full chunk completed - always save
+              soFar[index] = translatedChunk;
+              console.log(`[Translation] Chunk ${index + 1}/${total} completed via streaming (${translatedChunk.length} chars)`);
+              await savePartial();
+            }
           }
         );
-      } else if (config && config.advancedSettings && config.advancedSettings.enableStreaming === true) {
+      } else {
+        // Use streaming for smaller files (< 12k tokens) for faster progressive updates
         console.log('[Translation] Using token-level streaming with progressive updates');
         let buffer = '';
-        let lastWrite = 0;
-        const flushPartial = () => {
+        let lastWrite = Date.now(); // Initialize to now so first partial respects 10s interval
+        let flushCount = 0;
+        // Tiered flush intervals: 10s, 60s, 180s, then 300s for all subsequent
+        const flushIntervals = [10000, 60000, 180000, 300000];
+        const getFlushInterval = () => flushIntervals[Math.min(flushCount, flushIntervals.length - 1)];
+        const flushPartial = async () => {
           const cleaned = gemini.cleanTranslatedSubtitle(buffer);
           const partialSrt = buildPartialSrtWithTail(cleaned);
           if (partialSrt && partialSrt.length > 0) {
-            saveToTemp(cacheKey, {
+            flushCount++;
+            const nextInterval = getFlushInterval();
+            await saveToPartialCacheAsync(cacheKey, {
               content: partialSrt,
-              expiresAt: Date.now() + 6 * 60 * 60 * 1000
+              expiresAt: Date.now() + 60 * 60 * 1000
             });
+            console.log(`[Translation] Regular streaming flush #${flushCount} (${partialSrt.length} chars), next flush in ${nextInterval / 1000}s`);
           }
         };
         try {
@@ -1134,30 +1587,52 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
             (delta) => {
               buffer += delta;
               const now = Date.now();
-              if (now - lastWrite > 800) {
+              const currentInterval = getFlushInterval();
+              if (now - lastWrite > currentInterval) {
                 lastWrite = now;
-                flushPartial();
+                // Queue flush async without awaiting (callback must return immediately)
+                flushPartial().catch(err => console.error('[Translation] Async flush error:', err.message));
               }
             }
           );
-          // Stream ended; set final content
+          // Stream ended; flush any remaining buffer and set final content
+          if (buffer.length > 0) {
+            await flushPartial();
+          }
+          console.log(`[Translation] Stream completed with ${flushCount} progressive updates (${buffer.length} final chars)`);
           translatedContent = gemini.cleanTranslatedSubtitle(buffer);
         } catch (e) {
-          console.warn('[Translation] Streaming failed, falling back to non-streaming:', e.message);
-          translatedContent = await gemini.translateSubtitle(
-            sourceContent,
-            'detected source language',
-            targetLangName,
-            config.translationPrompt
-          );
+          console.warn('[Translation] Streaming failed, falling back to chunking:', e.message);
+          // Fallback to chunking if streaming fails
+          const soFar = [];
+          const savePartial = async () => {
+            const merged = soFar.join('\n\n');
+            console.log(`[Translation] Fallback chunking: Saving partial with ${soFar.length} chunks (${merged.length} chars)`);
+            const partialSrt = buildPartialSrtWithTail(merged);
+            if (partialSrt && partialSrt.length > 0) {
+              await saveToPartialCacheAsync(cacheKey, {
+                content: partialSrt,
+                expiresAt: Date.now() + 60 * 60 * 1000
+              });
+            }
+          };
+          try {
+            translatedContent = await gemini.translateSubtitleInChunksWithProgress(
+              sourceContent,
+              'detected source language',
+              targetLangName,
+              config.translationPrompt,
+              null,
+              async ({ index, total, translatedChunk }) => {
+                soFar.push(translatedChunk);
+                await savePartial();
+              }
+            );
+          } catch (chunkError) {
+            console.error('[Translation] Both streaming and chunking failed:', chunkError.message);
+            throw chunkError;
+          }
         }
-      } else {
-        translatedContent = await gemini.translateSubtitle(
-          sourceContent,
-          'detected source language',
-          targetLangName,
-          config.translationPrompt
-        );
       }
 
     console.log('[Translation] Background translation completed successfully');
@@ -1342,6 +1817,10 @@ module.exports = {
   handleSubtitleDownload,
   handleTranslation,
   getAvailableSubtitlesForTranslation,
+  createLoadingSubtitle, // Export for loading message in translation endpoint
+  readFromPartialCache, // Export for checking in-flight partial results during duplicate requests
+  readFromTemp, // Export for checking bypass cache during duplicate requests
+  translationStatus, // Export for safety block to check if translation is in progress
   /**
    * Check if a translated subtitle exists in permanent cache
    * Mirrors the cache key logic used in handleTranslation (without bypass)
@@ -1390,6 +1869,17 @@ module.exports = {
         }
       } catch (e) {
         console.warn(`[Purge] Failed removing temp cache for ${baseKey}:`, e.message);
+      }
+
+      // Delete partial cache file (in-flight translations)
+      try {
+        const partialPath = path.join(PARTIAL_CACHE_DIR, `${safeKey}.json`);
+        if (fs.existsSync(partialPath)) {
+          fs.unlinkSync(partialPath);
+          console.log(`[Purge] Removed partial cache for ${safeKey}`);
+        }
+      } catch (e) {
+        console.warn(`[Purge] Failed removing partial cache for ${baseKey}:`, e.message);
       }
 
       // Clear in-progress status so a fresh translation can start

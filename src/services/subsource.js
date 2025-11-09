@@ -289,11 +289,8 @@ class SubSourceService {
 
         // Log subtitle structure for debugging if ID is missing
         if (!subtitleId) {
-          console.error('[SubSource] WARNING: Subtitle missing ID field. Available fields:', Object.keys(sub));
-          console.error('[SubSource] Full subtitle object:', JSON.stringify(sub));
+          console.error('[SubSource] WARNING: Subtitle missing ID field');
         }
-
-        console.log(`[SubSource] Found subtitle: ${sub.name || sub.release_name || 'Unknown'} (${originalLang}) - File ID: ${fileId}`);
 
         return {
           id: fileId,
@@ -316,8 +313,23 @@ class SubSourceService {
         };
       });
 
-      console.log(`[SubSource] Found ${subtitles.length} subtitles total`);
-      return subtitles;
+      // Limit to 20 results per language to control response size
+      const MAX_RESULTS_PER_LANGUAGE = 20;
+      const groupedByLanguage = {};
+
+      for (const sub of subtitles) {
+        const lang = sub.languageCode || 'unknown';
+        if (!groupedByLanguage[lang]) {
+          groupedByLanguage[lang] = [];
+        }
+        if (groupedByLanguage[lang].length < MAX_RESULTS_PER_LANGUAGE) {
+          groupedByLanguage[lang].push(sub);
+        }
+      }
+
+      const limitedSubtitles = Object.values(groupedByLanguage).flat();
+      console.log(`[SubSource] Found ${subtitles.length} subtitles total, limited to ${limitedSubtitles.length} (max ${MAX_RESULTS_PER_LANGUAGE} per language)`);
+      return limitedSubtitles;
 
     } catch (error) {
       console.error('[SubSource] Search error:', error.message);
@@ -381,12 +393,20 @@ class SubSourceService {
       // Check if response is a ZIP file or direct SRT content
       const contentType = response.headers['content-type'] || '';
       const responseBody = response.data;
+      const responseBuffer = Buffer.isBuffer(responseBody) ? responseBody : Buffer.from(responseBody);
 
-      if (contentType.includes('application/zip') ||
+      // Check for ZIP file by magic bytes (PK signature) in addition to content-type
+      // This handles cases where content-type header is missing or incorrect
+      const isZipByMagicBytes = responseBuffer.length > 4 &&
+        responseBuffer[0] === 0x50 && responseBuffer[1] === 0x4B && // PK
+        responseBuffer[2] === 0x03 && responseBuffer[3] === 0x04;   // \x03\x04
+
+      if (isZipByMagicBytes || contentType.includes('application/zip') ||
           contentType.includes('application/x-zip')) {
         // Handle ZIP file
         const JSZip = require('jszip');
-        const zip = await JSZip.loadAsync(Buffer.from(responseBody), { base64: false });
+        console.log('[SubSource] Detected ZIP file format (checking contents)');
+        const zip = await JSZip.loadAsync(responseBuffer, { base64: false });
 
         // Find the first .srt file in the ZIP
         const srtFile = Object.keys(zip.files).find(filename => filename.toLowerCase().endsWith('.srt'));
@@ -399,9 +419,16 @@ class SubSourceService {
         console.log('[SubSource] Subtitle downloaded and extracted successfully from ZIP');
         return subtitleContent;
       } else {
-        // Direct SRT content
+        // Direct SRT content - decode as UTF-8
         console.log('[SubSource] Subtitle downloaded successfully');
-        return Buffer.from(responseBody).toString('utf-8');
+        const content = responseBuffer.toString('utf-8');
+
+        // Validate that the decoded content looks like SRT (contains timecodes or text)
+        if (!content || content.trim().length === 0) {
+          throw new Error('Downloaded subtitle content is empty');
+        }
+
+        return content;
       }
 
     } catch (error) {

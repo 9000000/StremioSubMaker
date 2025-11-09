@@ -3,6 +3,23 @@ const { parseSRT, toSRT } = require('../utils/subtitle');
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
+// Normalize human-readable target language names for Gemini prompts
+function normalizeTargetName(name) {
+  let n = String(name || '').trim();
+  const rules = [
+    [/^Portuguese\s*\(Brazil\)$/i, 'Brazilian Portuguese'],
+    [/^Spanish\s*\(Latin America\)$/i, 'Latin American Spanish'],
+    [/^Chinese\s*\(Simplified\)$/i, 'Simplified Chinese'],
+    [/^Chinese\s*\(Traditional\)$/i, 'Traditional Chinese'],
+    [/^Portuguese\s*\(Portugal\)$/i, 'European Portuguese'],
+    [/^Portuguese\s*\(European\)$/i, 'European Portuguese']
+  ];
+  for (const [re, out] of rules) {
+    if (re.test(n)) return out;
+  }
+  return n;
+}
+
 // Strict prompt - preserves structure exactly as given
 const STRICT_TRANSLATION_PROMPT = `Translate the following subtitles while:
 
@@ -12,7 +29,7 @@ const STRICT_TRANSLATION_PROMPT = `Translate the following subtitles while:
 4. Preserving any formatting tags or special characters
 5. Ensuring translations are contextually accurate for film/TV dialogue
 
-Translate from {source_language} to {target_language}.
+Translate to {target_language}.
 
 Do NOT include acknowledgements, explanations, notes or alternative translations.
 
@@ -27,7 +44,7 @@ const NATURAL_TRANSLATION_PROMPT = `Please translate the following subtitles whi
 4. Preserving any formatting tags or special characters
 5. Ensuring translations are contextually accurate for film/TV dialogue
 
-Translate from {source_language} to {target_language}.
+Translate to {target_language}.
 
 Do NOT include acknowledgements, explanations, notes or alternative translations.
 
@@ -44,8 +61,8 @@ class GeminiService {
 
           // Advanced settings with defaults
       this.maxOutputTokens = advancedSettings.maxOutputTokens || 65536;
-      // Chunk size for splitting large subtitles (target 25k tokens per chunk for efficiency)
-      this.chunkSize = advancedSettings.chunkSize || 25000;
+      // Chunk size for splitting large subtitles (target 12k tokens per chunk for faster progressive updates)
+      this.chunkSize = advancedSettings.chunkSize || 12000;
       this.timeout = (advancedSettings.translationTimeout || 600) * 1000; // Convert to milliseconds
       this.maxRetries = advancedSettings.maxRetries !== undefined ? advancedSettings.maxRetries : 5;
       // Thinking budget for Gemini 2.5 models - reserves tokens for internal reasoning
@@ -184,15 +201,16 @@ class GeminiService {
    * @param {string} customPrompt - Custom translation prompt (optional)
    * @returns {Promise<string>} - Translated subtitle content
    */
-  async translateSubtitle(subtitleContent, sourceLanguage, targetLanguage, customPrompt = null) {
+async translateSubtitle(subtitleContent, sourceLanguage, targetLanguage, customPrompt = null) {
     return this.retryWithBackoff(async () => {
       try {
-        console.log(`[Gemini] Translating from ${sourceLanguage} to ${targetLanguage}`);
+        // Normalize target language to a human-readable form
+        const normalizedTarget = normalizeTargetName(targetLanguage);
+        console.log(`[Gemini] Translating to ${normalizedTarget}`);
 
       // Prepare the prompt
       const systemPrompt = (customPrompt || DEFAULT_TRANSLATION_PROMPT)
-        .replace('{source_language}', sourceLanguage)
-        .replace('{target_language}', targetLanguage);
+        .replace('{target_language}', normalizedTarget);
 
       const userPrompt = `${systemPrompt}\n\nSubtitles to translate:\n\n${subtitleContent}`;
 
@@ -362,6 +380,7 @@ class GeminiService {
    */
   async translateSubtitleInChunks(subtitleContent, sourceLanguage, targetLanguage, customPrompt = null, targetTokensPerChunk = null) {
     targetTokensPerChunk = targetTokensPerChunk !== null ? targetTokensPerChunk : this.chunkSize;
+    const normalizedTarget = normalizeTargetName(targetLanguage);
     try {
               console.log('[Gemini] Starting chunked translation');
   
@@ -459,7 +478,7 @@ class GeminiService {
         const totalTokens = this.estimateTokenCount(composed);
         const contextTokens = totalTokens - chunkTokens;
         console.log(`[Gemini] Translating chunk ${i + 1}/${chunks.length}: ${chunkTokens} chunk + ${contextTokens} context = ${totalTokens} total tokens`);
-        const translated = await this.translateSubtitle(composed, sourceLanguage, targetLanguage, customPrompt);
+        const translated = await this.translateSubtitle(composed, sourceLanguage, normalizedTarget, customPrompt);
         translatedChunks.push(translated);
 
         // Small delay to avoid rate limiting
@@ -495,6 +514,7 @@ class GeminiService {
    * @returns {Promise<string>} - Full translated SRT
    */
   async translateSubtitleInChunksWithProgress(subtitleContent, sourceLanguage, targetLanguage, customPrompt = null, targetTokensPerChunk = null, onChunk = null) {
+    const normalizedTarget = normalizeTargetName(targetLanguage);
     // Reuse chunking strategy from translateSubtitleInChunks but notify per-chunk
     targetTokensPerChunk = targetTokensPerChunk !== null ? targetTokensPerChunk : this.chunkSize;
     try {
@@ -554,6 +574,108 @@ class GeminiService {
   }
 
   /**
+   * Translate subtitle in chunks with token-level streaming per chunk for progressive updates.
+   * Best for large files (>25k tokens) - streams each chunk for faster progressive delivery.
+   * Each chunk uses streaming which provides token-level updates as they arrive.
+   * @param {string} subtitleContent
+   * @param {string} sourceLanguage
+   * @param {string} targetLanguage
+   * @param {string|null} customPrompt
+   * @param {number|null} targetTokensPerChunk
+   * @param {(info: { index:number, total:number, translatedChunk:string, isDelta?:boolean })=>Promise<void>|void} [onChunk] - Called with full chunk on completion, or with isDelta:true for token updates
+   * @returns {Promise<string>} - Full translated SRT
+   */
+  async translateSubtitleInChunksWithStreaming(subtitleContent, sourceLanguage, targetLanguage, customPrompt = null, targetTokensPerChunk = null, onChunk = null) {
+    const normalizedTarget = normalizeTargetName(targetLanguage);
+    targetTokensPerChunk = targetTokensPerChunk !== null ? targetTokensPerChunk : this.chunkSize;
+    try {
+      // Split by subtitle entries
+      const entries = subtitleContent.split(/(\r?\n){2,}/);
+      const validEntries = entries.filter(entry => entry && entry.trim() && !entry.match(/^(\r?\n)+$/));
+
+      const chunks = [];
+      const effectiveTarget = targetTokensPerChunk;
+      let currentChunk = [];
+      let currentChunkTokens = 0;
+
+      for (const entry of validEntries) {
+        const entryTokens = this.estimateTokenCount(entry);
+        if (entryTokens > effectiveTarget * 1.5) {
+          if (currentChunk.length > 0) {
+            chunks.push(currentChunk.join('\n\n'));
+            currentChunk = [];
+            currentChunkTokens = 0;
+          }
+          chunks.push(entry);
+          continue;
+        }
+        if (currentChunkTokens + entryTokens > effectiveTarget * 1.2 && currentChunk.length > 0) {
+          chunks.push(currentChunk.join('\n\n'));
+          currentChunk = [entry];
+          currentChunkTokens = entryTokens;
+        } else {
+          currentChunk.push(entry);
+          currentChunkTokens += entryTokens;
+        }
+      }
+      if (currentChunk.length > 0) chunks.push(currentChunk.join('\n\n'));
+
+      console.log(`[Gemini] Streaming chunks: Split into ${chunks.length} chunks for streaming translation`);
+
+      const translatedChunks = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkText = chunks[i];
+        console.log(`[Gemini] Streaming chunk ${i + 1}/${chunks.length}: ${this.estimateTokenCount(chunkText)} tokens`);
+
+        // Use streaming for each chunk to get progressive per-chunk updates
+        let chunkBuffer = '';
+        await this.translateSubtitleStream(
+          chunkText,
+          sourceLanguage,
+          normalizedTarget,
+          customPrompt,
+          (delta) => {
+            chunkBuffer += delta;
+            // Forward token deltas to the callback so handler can flush partials
+            if (typeof onChunk === 'function') {
+              try {
+                onChunk({ index: i, total: chunks.length, translatedChunk: delta, isDelta: true });
+              } catch (_) {}
+            }
+          }
+        );
+
+        const translated = this.cleanTranslatedSubtitle(chunkBuffer);
+        translatedChunks.push(translated);
+
+        // Notify completion of full chunk
+        if (typeof onChunk === 'function') {
+          try {
+            await onChunk({ index: i, total: chunks.length, translatedChunk: translated, isDelta: false });
+          } catch (_) {}
+        }
+
+        // Small delay between chunks to avoid rate limiting
+        if (i < chunks.length - 1) {
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+
+      console.log(`[Gemini] All chunks streamed and translated (${chunks.length} chunks)`);
+      const merged = translatedChunks.join('\n\n');
+      const parsed = parseSRT(merged);
+      if (parsed.length > 0) {
+        const reindexed = parsed.map((e, idx) => ({ id: idx + 1, timecode: e.timecode, text: (e.text || '').trim() })).filter(e => e.timecode && e.text);
+        return toSRT(reindexed);
+      }
+      return merged;
+    } catch (error) {
+      console.error('[Gemini] Streaming chunks translation error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Experimental: token-level streaming using Gemini stream endpoint.
    * Caller should buffer deltas and persist only complete SRT blocks.
    * @param {string} subtitleContent
@@ -563,38 +685,104 @@ class GeminiService {
    * @param {(delta:string)=>void} onDelta
    */
   async translateSubtitleStream(subtitleContent, sourceLanguage, targetLanguage, customPrompt, onDelta) {
-    const systemPrompt = customPrompt || this.getDefaultPrompt();
-    const prompt = `${systemPrompt}\n\nSource Language: ${sourceLanguage}\nTarget Language: ${targetLanguage}\n\nPlease translate the following SRT subtitle file to ${targetLanguage}. Maintain the exact SRT format with timing codes and sequence numbers. Only translate the text content, keep all timestamps and formatting intact.\n\nSubtitle content:\n${subtitleContent}`;
+    const systemPrompt = customPrompt || DEFAULT_TRANSLATION_PROMPT;
+    const normalizedTarget = normalizeTargetName(targetLanguage);
+    const userPrompt = `${systemPrompt}\n\nSubtitles to translate:\n\n${subtitleContent}`.replace('{target_language}', normalizedTarget);
 
+    // Estimate tokens to set appropriate output limit
+    const estimatedInputTokens = this.estimateTokenCount(userPrompt);
+    const limits = await this.getModelLimits();
+    const modelOutputCap = typeof limits.outputTokenLimit === 'number' ? limits.outputTokenLimit : this.maxOutputTokens;
+    const safetyMargin = Math.floor(modelOutputCap * 0.05);
+    const thinkingReserve = this.thinkingBudget > 0 ? this.thinkingBudget : 0;
+    const availableForOutput = Math.max(1024, Math.min(this.maxOutputTokens, modelOutputCap - safetyMargin - thinkingReserve));
+
+    console.log(`[Gemini] Stream: Estimated input tokens: ${estimatedInputTokens}, output limit: ${availableForOutput}`);
+
+    // Gemini streaming API requires SSE format and alt=sse parameter
     const url = `${this.baseUrl}/models/${this.model}:streamGenerateContent`;
+    console.log('[Gemini] Starting stream request to:', url);
+
     try {
       const response = await axios.post(
         url,
-        { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, topK: 40, topP: 0.95, maxOutputTokens: this.maxOutputTokens || 65536 } },
-        { params: { key: this.apiKey }, responseType: 'stream', headers: { 'Content-Type': 'application/json' }, timeout: this.timeout || 600000 }
+        {
+          contents: [{ parts: [{ text: userPrompt }] }],
+          generationConfig: {
+            temperature: 0.8,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: availableForOutput + thinkingReserve,
+            thinkingConfig: {
+              thinkingBudget: this.thinkingBudget
+            }
+          }
+        },
+        {
+          params: {
+            key: this.apiKey,
+            alt: 'sse' // Server-Sent Events format for streaming
+          },
+          responseType: 'stream',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream'
+          },
+          timeout: this.timeout || 600000,
+          httpAgent: new (require('http')).Agent({ keepAlive: true }),
+          httpsAgent: new (require('https')).Agent({ keepAlive: true })
+        }
       );
+      console.log('[Gemini] Stream response received, status:', response.status);
 
       await new Promise((resolve, reject) => {
         let buffer = '';
+        let deltaCount = 0;
         response.data.on('data', (chunk) => {
           const data = chunk.toString('utf8');
           buffer += data;
           const lines = buffer.split(/\r?\n/);
-          buffer = lines.pop();
+          // Keep incomplete line in buffer for next chunk
+          buffer = lines.pop() || '';
+
           for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed) continue;
-            const jsonStr = trimmed.startsWith('data:') ? trimmed.substring(5).trim() : trimmed;
+
+            // With alt=sse, lines are prefixed with "data: "
+            let jsonStr = trimmed;
+            if (trimmed.startsWith('data:')) {
+              jsonStr = trimmed.substring(5).trim();
+            }
+
+            if (!jsonStr) continue;
+
             try {
               const obj = JSON.parse(jsonStr);
-              const delta = obj?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-              if (delta && typeof onDelta === 'function') onDelta(delta);
-            } catch (_) {
-              if (typeof onDelta === 'function') onDelta(trimmed);
+              // Gemini API returns text in candidates[0].content.parts[0].text
+              const delta = obj?.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (typeof delta === 'string' && delta.length > 0) {
+                if (typeof onDelta === 'function') {
+                  try {
+                    onDelta(delta);
+                  } catch (e) {
+                    console.warn('[Gemini] Error in onDelta callback:', e.message);
+                  }
+                }
+                deltaCount++;
+              }
+            } catch (parseError) {
+              // Silently skip lines that aren't valid JSON (e.g., empty SSE markers)
+              if (jsonStr.length > 0 && jsonStr !== '{}' && !jsonStr.startsWith('[')) {
+                console.debug('[Gemini] Failed to parse stream line (non-critical):', jsonStr.substring(0, 80));
+              }
             }
           }
         });
-        response.data.on('end', resolve);
+        response.data.on('end', () => {
+          console.log(`[Gemini] Stream ended with ${deltaCount} deltas received`);
+          resolve();
+        });
         response.data.on('error', reject);
       });
     } catch (error) {

@@ -352,11 +352,15 @@
             <form id="configForm">
                 <!-- OpenSubtitles API -->
                 <div class="section">
-                    <div class="section-title">OpenSubtitles API</div>
+                    <div class="section-title">OpenSubtitles Account</div>
                     <div class="form-group">
-                        <label for="opensubtitlesApiKey">API Key</label>
-                        <input type="text" id="opensubtitlesApiKey" placeholder="Enter your OpenSubtitles API key" required>
-                        <div class="info-text">Get your API key from <a href="https://www.opensubtitles.com/en/consumers" target="_blank">OpenSubtitles</a></div>
+                        <label for="opensubtitlesUsername">Username</label>
+                        <input type="text" id="opensubtitlesUsername" placeholder="Enter your OpenSubtitles username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="opensubtitlesPassword">Password</label>
+                        <input type="password" id="opensubtitlesPassword" placeholder="Enter your OpenSubtitles password" required>
+                        <div class="info-text">Account required for OpenSubtitles. Get one at <a href="https://www.opensubtitles.com/" target="_blank">OpenSubtitles</a></div>
                     </div>
                 </div>
 
@@ -663,7 +667,7 @@
                             span.style.borderRadius = '12px';
                             span.style.border = '1px solid #e0e0e0';
                             span.style.fontSize = '0.8em';
-                            span.style.color = '#555';
+                            span.style.color = '#000000';
                             h1.appendChild(span);
                         }
                     }

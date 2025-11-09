@@ -207,17 +207,18 @@ const languageMap = {
   'zha': { code1: 'za', name: 'Zhuang' },
   'zul': { code1: 'zu', name: 'Zulu' },
 
-  // Special cases for regional variants
-  'pob': { code1: 'pb', name: 'Portuguese (Brazil)', isCustom: true },
-  'ptbr': { code1: 'pb', name: 'Portuguese (Brazil)', isCustom: true },
-  'pt-br': { code1: 'pb', name: 'Portuguese (Brazil)', isCustom: true },
+  // Special cases for regional variants (per OpenSubtitles API)
+  'pob': { code1: 'pt-br', name: 'Portuguese (Brazilian)', isCustom: true },
+  'ptbr': { code1: 'pt-br', name: 'Portuguese (Brazilian)', isCustom: true },
+  'pt-br': { code1: 'pt-br', name: 'Portuguese (Brazilian)', isCustom: true },
   'spn': { code1: 'sx', name: 'Spanish (Latin America)', isCustom: true },
   'mne': { code1: 'me', name: 'Montenegrin', isCustom: true },
-  'zht': { code1: 'zh', name: 'Chinese (Traditional)', isCustom: true },
-  'zhs': { code1: 'zh', name: 'Chinese (Simplified)', isCustom: true },
+  'zht': { code1: 'zh-tw', name: 'Chinese (traditional)', isCustom: true },
+  'zhs': { code1: 'zh-cn', name: 'Chinese (simplified)', isCustom: true },
+  'ze': { code1: 'ze', name: 'Chinese bilingual', isCustom: true },
 
-  // Special fake language for file upload/translation feature
-  'Upload Sub': { code1: '__', name: 'Upload Sub', isCustom: true }
+  // Special fake language for file upload/translation feature (display-only)
+  'Translate SRT': { code1: '__', name: 'Translate SRT', isCustom: true }
 };
 
 // Reverse mapping for ISO-639-1 to ISO-639-2

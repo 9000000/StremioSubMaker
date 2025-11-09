@@ -4,15 +4,16 @@
 
     /**
      * Default API Keys Configuration
-     * 
+     *
      * This is the centralized location for all default API keys in the frontend.
      * To remove or update API keys, simply modify this object.
-     * 
+     *
      * IMPORTANT: These are default fallback keys. Users should provide their own keys.
+     *
+     * NOTE: OpenSubtitles uses username/password authentication only (no API keys)
      */
     const DEFAULT_API_KEYS = {
         // Do not ship real keys in the client bundle
-        OPENSUBTITLES: '',
         SUBDL: '',
         SUBSOURCE: '',
         PODNAPISI: '',
@@ -30,7 +31,7 @@
 4. Preserving any formatting tags or special characters
 5. Ensuring translations are contextually accurate for film/TV dialogue
 
-Translate from {source_language} to {target_language}.`;
+Translate to {target_language}.`;
 
     const NATURAL_TRANSLATION_PROMPT = `You are a professional subtitle translator. Translate the following subtitles while:
 
@@ -46,7 +47,7 @@ Translate from {source_language} to {target_language}.`;
 
 This is an automatic system, you must return ONLY the subtitles output/file.
 
-Translate from {source_language} to {target_language}.`;
+Translate to {target_language}.`;
 
     // State management
     let currentConfig = parseConfigFromUrl();
@@ -93,6 +94,11 @@ Translate from {source_language} to {target_language}.`;
             };
         }
 
+        // Normalize any legacy PT-BR codes in saved config to canonical 'pob'
+        currentConfig.sourceLanguages = normalizeLanguageCodes(currentConfig.sourceLanguages || []);
+        currentConfig.targetLanguages = normalizeLanguageCodes(currentConfig.targetLanguages || []);
+        currentConfig.noTranslationLanguages = normalizeLanguageCodes(currentConfig.noTranslationLanguages || []);
+
         await loadLanguages();
         setupEventListeners();
         loadConfigToForm();
@@ -107,6 +113,28 @@ Translate from {source_language} to {target_language}.`;
 
         // Show instructions modal on first visit
         showInstructionsModalIfNeeded();
+
+        // Quick Start banner: show only on first run
+        try {
+            var qs = document.getElementById('quickStartBanner');
+            if (qs) {
+                if (isFirstRun) {
+                    qs.style.display = 'flex';
+                } else {
+                    // Remove from DOM to avoid layout space
+                    qs.remove();
+                }
+            }
+        } catch (_) {}
+    }
+
+    function normalizeLanguageCodes(codes) {
+        if (!Array.isArray(codes)) return [];
+        return codes.map(c => {
+            const lc = String(c || '').toLowerCase();
+            if (lc === 'ptbr' || lc === 'pt-br') return 'pob';
+            return lc;
+        });
     }
 
     // Modal management functions
@@ -253,7 +281,7 @@ Translate from {source_language} to {target_language}.`;
             fileTranslationEnabled: false, // enable file upload translation feature
             advancedSettings: {
                 maxOutputTokens: 65536,
-                chunkSize: 10000,
+                chunkSize: 12000,
                 translationTimeout: 600, // seconds
                 maxRetries: 5
             }
@@ -556,10 +584,10 @@ Translate from {source_language} to {target_language}.`;
             toggleProviderConfig('opensubtitlesConfig', e.target.checked);
         });
 
-        // Cache UI toggle
-        document.getElementById('cacheEnabled').addEventListener('change', updateCacheUI);
+        // Cache UI toggle - handles mutual exclusivity
+        document.getElementById('cacheEnabled').addEventListener('change', handleCacheEnabledToggle);
 
-        // Bypass UI toggle
+        // Bypass UI toggle - handles mutual exclusivity
         const bypassToggle = document.getElementById('bypassCache');
         if (bypassToggle) {
             bypassToggle.addEventListener('change', handleBypassToggle);
@@ -664,7 +692,7 @@ Translate from {source_language} to {target_language}.`;
             return;
         }
 
-        // Caching is disabled: bypass is enabled; if bypass is checked, disable the caching toggle
+        // Caching is disabled: bypass is enabled
         if (bypassInput) {
             bypassInput.disabled = false;
         }
@@ -678,16 +706,42 @@ Translate from {source_language} to {target_language}.`;
         }
     }
 
+    function handleCacheEnabledToggle(e) {
+        const cacheEnabled = e.target.checked;
+        const bypassInput = document.getElementById('bypassCache');
+
+        if (cacheEnabled) {
+            // When enabling cache, auto-uncheck and disable bypass
+            if (bypassInput) {
+                bypassInput.checked = false;
+                bypassInput.disabled = true;
+            }
+        } else {
+            // When disabling cache, auto-enable bypass (enforce mutual exclusivity)
+            if (bypassInput) {
+                bypassInput.checked = true;
+                bypassInput.disabled = false;
+            }
+        }
+        updateCacheUI();
+    }
+
     function handleBypassToggle(e) {
         const bypass = e.target.checked;
         const cacheEnabledInput = document.getElementById('cacheEnabled');
+
         if (bypass) {
+            // When enabling bypass, auto-uncheck and disable cache
             if (cacheEnabledInput) {
                 cacheEnabledInput.checked = false;
                 cacheEnabledInput.disabled = true;
             }
         } else {
-            if (cacheEnabledInput) cacheEnabledInput.disabled = false;
+            // When disabling bypass, auto-enable cache (enforce mutual exclusivity)
+            if (cacheEnabledInput) {
+                cacheEnabledInput.checked = true;
+                cacheEnabledInput.disabled = false;
+            }
         }
         updateCacheUI();
     }
@@ -1176,7 +1230,7 @@ Translate from {source_language} to {target_language}.`;
         }
 
         // OpenSubtitles
-        const opensubtitlesEnabled = currentConfig.subtitleProviders?.opensubtitles?.enabled !== false;
+        const opensubtitlesEnabled = (isFirstRun ? false : (currentConfig.subtitleProviders?.opensubtitles?.enabled !== false));
         document.getElementById('enableOpenSubtitles').checked = opensubtitlesEnabled;
 
         // Load user credentials (optional)
@@ -1188,14 +1242,14 @@ Translate from {source_language} to {target_language}.`;
         toggleProviderConfig('opensubtitlesConfig', opensubtitlesEnabled);
 
         // SubDL
-        const subdlEnabled = currentConfig.subtitleProviders?.subdl?.enabled !== false;
+        const subdlEnabled = (isFirstRun ? false : (currentConfig.subtitleProviders?.subdl?.enabled !== false));
         document.getElementById('enableSubDL').checked = subdlEnabled;
         document.getElementById('subdlApiKey').value = 
             currentConfig.subtitleProviders?.subdl?.apiKey || DEFAULT_API_KEYS.SUBDL;
         toggleProviderConfig('subdlConfig', subdlEnabled);
 
         // SubSource
-        const subsourceEnabled = currentConfig.subtitleProviders?.subsource?.enabled !== false;
+        const subsourceEnabled = (isFirstRun ? false : (currentConfig.subtitleProviders?.subsource?.enabled !== false));
         document.getElementById('enableSubSource').checked = subsourceEnabled;
         document.getElementById('subsourceApiKey').value =
             currentConfig.subtitleProviders?.subsource?.apiKey || DEFAULT_API_KEYS.SUBSOURCE;

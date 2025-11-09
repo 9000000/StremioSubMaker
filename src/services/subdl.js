@@ -49,7 +49,7 @@ class SubDLService {
       // Convert ISO-639-2 codes to SubDL format (uppercase codes)
       // SubDL uses uppercase 2-letter codes with special cases like BR_PT
       const subdlLanguageMap = {
-        'eng': 'EN', 'spa': 'ES', 'fre': 'FR', 'fra': 'FR', 'ger': 'DE', 'deu': 'DE',
+        'eng': 'EN', 'spa': 'ES', 'spn': 'ES', 'fre': 'FR', 'fra': 'FR', 'ger': 'DE', 'deu': 'DE',
         'por': 'PT', 'pob': 'BR_PT', 'pt-br': 'BR_PT', 'ptbr': 'BR_PT',
         'ita': 'IT', 'rus': 'RU', 'jpn': 'JA', 'chi': 'ZH', 'zho': 'ZH',
         'kor': 'KO', 'ara': 'AR', 'dut': 'NL', 'nld': 'NL', 'pol': 'PL',
@@ -107,25 +107,21 @@ class SubDLService {
         params: queryParams
       });
 
-      console.log('[SubDL] API Response status:', response.status);
-      console.log('[SubDL] API Response data structure:', JSON.stringify(response.data, null, 2).substring(0, 1000));
-
       if (!response.data || response.data.status !== true || !response.data.subtitles || response.data.subtitles.length === 0) {
         console.log('[SubDL] No subtitles found in response');
         return [];
       }
 
       const subtitles = response.data.subtitles.map(sub => {
-        console.log('[SubDL] Raw subtitle object:', JSON.stringify(sub, null, 2));
-        
+
         const originalLang = sub.lang || 'en';
         const normalizedLang = this.normalizeLanguageCode(originalLang);
-        
+
         // SubDL provides IDs in the URL field: /subtitle/3028156-3032428.zip
         // Extract sd_id and subtitle_id from the URL
         let sdId = null;
         let subtitleId = null;
-        
+
         if (sub.url) {
           // Parse URL like "/subtitle/3028156-3032428.zip"
           const urlMatch = sub.url.match(/\/subtitle\/(\d+)-(\d+)\.zip/);
@@ -134,10 +130,8 @@ class SubDLService {
             subtitleId = urlMatch[2];
           }
         }
-        
-        const fileId = `subdl_${sdId}_${subtitleId}`;
 
-        console.log(`[SubDL] Found subtitle: ${sub.release_name || sub.name || 'Unknown'} (${originalLang}) - SD_ID: ${sdId}, Subtitle_ID: ${subtitleId}, File ID: ${fileId}`);
+        const fileId = `subdl_${sdId}_${subtitleId}`;
 
         return {
           id: fileId,
@@ -161,8 +155,23 @@ class SubDLService {
         };
       });
 
-      console.log(`[SubDL] Found ${subtitles.length} subtitles total`);
-      return subtitles;
+      // Limit to 20 results per language to control response size
+      const MAX_RESULTS_PER_LANGUAGE = 20;
+      const groupedByLanguage = {};
+
+      for (const sub of subtitles) {
+        const lang = sub.languageCode || 'unknown';
+        if (!groupedByLanguage[lang]) {
+          groupedByLanguage[lang] = [];
+        }
+        if (groupedByLanguage[lang].length < MAX_RESULTS_PER_LANGUAGE) {
+          groupedByLanguage[lang].push(sub);
+        }
+      }
+
+      const limitedSubtitles = Object.values(groupedByLanguage).flat();
+      console.log(`[SubDL] Found ${subtitles.length} subtitles total, limited to ${limitedSubtitles.length} (max ${MAX_RESULTS_PER_LANGUAGE} per language)`);
+      return limitedSubtitles;
 
     } catch (error) {
       console.error('[SubDL] Search error:', error.message);

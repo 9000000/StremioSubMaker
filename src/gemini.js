@@ -2,6 +2,22 @@ const axios = require('axios');
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
+function normalizeTargetName(name) {
+  let n = String(name || '').trim();
+  const rules = [
+    [/^Portuguese\s*\(Brazil\)$/i, 'Brazilian Portuguese'],
+    [/^Spanish\s*\(Latin America\)$/i, 'Latin American Spanish'],
+    [/^Chinese\s*\(Simplified\)$/i, 'Simplified Chinese'],
+    [/^Chinese\s*\(Traditional\)$/i, 'Traditional Chinese'],
+    [/^Portuguese\s*\(Portugal\)$/i, 'European Portuguese'],
+    [/^Portuguese\s*\(European\)$/i, 'European Portuguese']
+  ];
+  for (const [re, out] of rules) {
+    if (re.test(n)) return out;
+  }
+  return n;
+}
+
 class GeminiAPI {
   constructor(apiKey) {
     this.apiKey = apiKey;
@@ -53,12 +69,14 @@ class GeminiAPI {
     try {
       const systemPrompt = customPrompt || this.getDefaultPrompt();
 
+      // Normalize target language to a human-readable form (handle common regional variants)
+      const normalizedTarget = normalizeTargetName(targetLang);
+
       const prompt = `${systemPrompt}
 
-Source Language: ${sourceLang}
-Target Language: ${targetLang}
+Target Language: ${normalizedTarget}
 
-Please translate the following SRT subtitle file to ${targetLang}. Maintain the exact SRT format with timing codes and sequence numbers. Only translate the text content, keep all timestamps and formatting intact.
+Please translate the following SRT subtitle file to ${normalizedTarget}. Maintain the exact SRT format with timing codes and sequence numbers. Only translate the text content, keep all timestamps and formatting intact.
 
 Subtitle content:
 ${subtitleContent}`;

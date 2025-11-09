@@ -17,6 +17,9 @@ class SessionManager {
         this.persistencePath = options.persistencePath || path.join(process.cwd(), 'data', 'sessions.json');
         this.autoSaveInterval = options.autoSaveInterval || 5 * 60 * 1000; // 5 minutes
 
+        // Ensure data directory exists
+        this.ensureDataDir();
+
         // Initialize LRU cache (no max count by default)
         const cacheOptions = {
             ttl: this.maxAge,
@@ -45,9 +48,21 @@ class SessionManager {
 
         // Start auto-save interval
         this.startAutoSave();
+    }
 
-        // Graceful shutdown handler
-        this.setupShutdownHandlers();
+    /**
+     * Ensure data directory exists
+     */
+    ensureDataDir() {
+        try {
+            const dir = path.dirname(this.persistencePath);
+            if (!require('fs').existsSync(dir)) {
+                require('fs').mkdirSync(dir, { recursive: true });
+                console.log(`[SessionManager] Created data directory: ${dir}`);
+            }
+        } catch (err) {
+            console.error('[SessionManager] Failed to create data directory:', err.message);
+        }
     }
 
     /**
@@ -275,21 +290,44 @@ class SessionManager {
 
     /**
      * Setup graceful shutdown handlers
+     * @param {http.Server} server - Express server instance to close
      */
-    setupShutdownHandlers() {
+    setupShutdownHandlers(server) {
         const shutdown = async (signal) => {
             console.log(`[SessionManager] Received ${signal}, saving sessions...`);
+
+            // Clear the auto-save timer
+            if (this.saveTimer) {
+                clearInterval(this.saveTimer);
+                console.log('[SessionManager] Cleared auto-save timer');
+            }
+
             try {
                 await this.saveToDisk();
                 console.log('[SessionManager] Sessions saved successfully');
             } catch (err) {
                 console.error('[SessionManager] Failed to save sessions on shutdown:', err);
             }
+
+            // Close the server if provided
+            if (server) {
+                server.close(() => {
+                    console.log('[SessionManager] Server closed');
+                    process.exit(0);
+                });
+
+                // Force exit after 5 seconds if graceful shutdown takes too long
+                setTimeout(() => {
+                    console.warn('[SessionManager] Forcefully exiting after 5s timeout');
+                    process.exit(1);
+                }, 5000);
+            } else {
+                process.exit(0);
+            }
         };
 
         process.on('SIGTERM', () => shutdown('SIGTERM'));
         process.on('SIGINT', () => shutdown('SIGINT'));
-        process.on('beforeExit', () => shutdown('beforeExit'));
     }
 
     /**

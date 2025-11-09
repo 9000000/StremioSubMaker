@@ -1161,14 +1161,19 @@
 
         .version-badge {
             display: inline-block;
-            background: var(--surface-light);
-            color: var(--text-secondary);
-            border: 1px solid var(--border);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white !important;
+            -webkit-text-fill-color: white !important;
+            border: none;
             border-radius: 999px;
-            padding: 0.15rem 0.6rem;
-            font-size: 0.8rem;
-            margin-left: 0.5rem;
+            padding: 0.35rem 0.85rem;
+            font-size: 0.85rem;
+            font-weight: 700;
+            margin-left: 0.75rem;
             vertical-align: middle;
+            box-shadow: 0 4px 12px rgba(8, 164, 213, 0.4);
+            letter-spacing: 0.5px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
         }
     </style>
 </head>
@@ -1184,7 +1189,7 @@
 
         <div id="alertContainer"></div>
 
-        <div class="info-banner">
+        <div class="info-banner" id="quickStartBanner" style="display: none;">
             <div class="info-banner-icon">🚀</div>
             <div class="info-banner-content">
                 <h3>Quick Start Guide</h3>
@@ -1275,26 +1280,6 @@
                         </div>
                     </div>
 
-                    <!-- SubDL -->
-                    <div class="form-group" style="padding: 1.5rem 0; border-bottom: 1px solid var(--border);">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
-                            <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-                                <span style="font-size: 1.5rem;">📋</span>
-                                <div>
-                                    <strong style="display: block;">SubDL</strong>
-                                    <span class="label-description" style="margin: 0;">Get your free API key from <a href="https://subdl.com" target="_blank" style="color: var(--primary-light);">SubDL.com</a></span>
-                                </div>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="enableSubDL" checked>
-                                <span class="toggle-slider"></span>
-                            </label>
-                        </div>
-                        <div id="subdlConfig">
-                            <input type="text" id="subdlApiKey" placeholder="Enter SubDL API key">
-                        </div>
-                    </div>
-
                     <!-- SubSource -->
                     <div class="form-group" style="padding: 1.5rem 0; border-bottom: 1px solid var(--border);">
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
@@ -1312,6 +1297,26 @@
                         </div>
                         <div id="subsourceConfig">
                             <input type="text" id="subsourceApiKey" placeholder="Enter SubSource API key">
+                        </div>
+                    </div>
+
+                    <!-- SubDL -->
+                    <div class="form-group" style="padding: 1.5rem 0; border-bottom: 1px solid var(--border);">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                            <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="font-size: 1.5rem;">📋</span>
+                                <div>
+                                    <strong style="display: block;">SubDL</strong>
+                                    <span class="label-description" style="margin: 0;">Get your free API key from <a href="https://subdl.com" target="_blank" style="color: var(--primary-light);">SubDL.com</a></span>
+                                </div>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="enableSubDL" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div id="subdlConfig">
+                            <input type="text" id="subdlApiKey" placeholder="Enter SubDL API key">
                         </div>
                     </div>
 
@@ -1483,8 +1488,8 @@
                     <div class="form-group">
                         <label>
                             <input type="checkbox" id="fileTranslationEnabled">
-                            Enable File Translation
-                            <span class="label-description">Show "📁 File Translation" option in subtitle list to upload and translate your own subtitle files.</span>
+                            Enable "Translate SRT"
+                            <span class="label-description">Show the "Translate SRT" option in the subtitles list to upload and translate your own .srt files.</span>
                         </label>
                     </div>
 
@@ -1597,21 +1602,21 @@
         </div>
     </div>
 
-    <!-- File Translation Instructions Modal -->
+    <!-- Translate SRT Instructions Modal -->
     <div class="modal-overlay" id="fileTranslationModal">
         <div class="modal">
             <div class="modal-header">
-                <h2>📁 File Translation Instructions</h2>
+                <h2>📁 Translate SRT Instructions</h2>
                 <div class="modal-close" id="closeFileTranslationBtn">×</div>
             </div>
             <div class="modal-content">
-                <h3>📤 How to Use "Upload Subtitles" for Translation:</h3>
+                <h3>📤 How to Use "Translate SRT":</h3>
                 <ol>
                     <li>Enable it on the config page before installing.</li>
-                    <li>Click <strong>"Upload Sub"</strong> on the subtitles list when streaming.</li>
+                    <li>Click <strong>"Translate SRT"</strong> in the subtitles list when streaming.</li>
                     <li>Right-click the stream or select the three-dots menu and click <strong>"Download Subtitles"</strong></li>
                     <li>A webpage will open on your browser.</li>
-                    <li>Upload the subtitle file you'd like to translate. It'll use your Gemini API key.</li>
+                    <li>Upload the .srt file you'd like to translate. It will use your Gemini API key.</li>
                     <li>When it's done, download the translated subtitles and drag it to Stremio.</li>
                 </ol>
             </div>
