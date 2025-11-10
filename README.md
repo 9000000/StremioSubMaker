@@ -48,9 +48,9 @@ npm install
 
 # Create .env file with your OpenSubtitles API key (NECESSARY FOR OPENSUBTITLES)
 # Option 1: Create a new file called `.env` in the project root and add:
-#   OPENSUBTITLES_API_KEY=your_api_key_here
+# OPENSUBTITLES_API_KEY=your_api_key_here
 # Option 2: Use command line (PowerShell, bash, or terminal)
-echo "OPENSUBTITLES_API_KEY=your_api_key_here" > .env
+# echo "OPENSUBTITLES_API_KEY=your_api_key_here" > .env
 
 # Start the server
 npm start
