@@ -1,0 +1,28 @@
+version: '3.8'
+
+# Local development setup without Redis (uses filesystem storage)
+services:
+  stremio-submaker:
+    build: .
+    container_name: stremio-submaker-local
+    ports:
+      - "${PORT:-7000}:7000"
+    environment:
+      # Application configuration
+      - PORT=7000
+
+      # Storage configuration - Use filesystem (default)
+      - STORAGE_TYPE=filesystem
+
+      # API Keys (configure these in your .env file)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENSUBTITLES_API_KEY=${OPENSUBTITLES_API_KEY:-}
+
+      # Optional: Session configuration
+      - SESSION_SECRET=${SESSION_SECRET:-change-this-secret}
+    volumes:
+      # Persist cache and data directories
+      - ./data:/app/data
+      - ./.cache:/app/.cache
+      - ./logs:/app/logs
+    restart: unless-stopped

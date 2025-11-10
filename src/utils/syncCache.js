@@ -6,11 +6,21 @@
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
+const { StorageFactory, StorageAdapter } = require('../storage');
 
-// Cache directory for synced subtitles
+// Cache directory for synced subtitles (legacy filesystem fallback)
 const SYNC_CACHE_DIR = path.join(process.cwd(), '.cache', 'sync_cache');
-const MAX_CACHE_SIZE_GB = 10; // 10GB max for sync cache
+const MAX_CACHE_SIZE_GB = 50; // 50GB max for sync cache
 const MAX_CACHE_SIZE_BYTES = MAX_CACHE_SIZE_GB * 1024 * 1024 * 1024;
+
+// Storage adapter (lazy loaded)
+let storageAdapter = null;
+async function getStorageAdapter() {
+  if (!storageAdapter) {
+    storageAdapter = await StorageFactory.getStorageAdapter();
+  }
+  return storageAdapter;
+}
 
 /**
  * Initialize sync cache directory
@@ -50,7 +60,7 @@ function getSyncCachePath(cacheKey) {
 }
 
 /**
- * Save synced subtitle to cache
+ * Save synced subtitle to storage
  * @param {string} videoHash - Video file hash
  * @param {string} languageCode - Language code
  * @param {string} sourceSubId - Source subtitle ID
@@ -63,11 +73,7 @@ function getSyncCachePath(cacheKey) {
 async function saveSyncedSubtitle(videoHash, languageCode, sourceSubId, syncData) {
   try {
     const cacheKey = generateSyncCacheKey(videoHash, languageCode, sourceSubId);
-    const cachePath = getSyncCachePath(cacheKey);
-    const cacheDir = path.dirname(cachePath);
-
-    // Ensure subdirectory exists
-    await fs.mkdir(cacheDir, { recursive: true });
+    const adapter = await getStorageAdapter();
 
     // Prepare cache entry
     const cacheEntry = {
@@ -81,13 +87,10 @@ async function saveSyncedSubtitle(videoHash, languageCode, sourceSubId, syncData
       version: '1.0'
     };
 
-    // Write to cache
-    await fs.writeFile(cachePath, JSON.stringify(cacheEntry, null, 2), 'utf8');
+    // Save to storage
+    await adapter.set(cacheKey, cacheEntry, StorageAdapter.CACHE_TYPES.SYNC);
 
     console.log(`[Sync Cache] Saved: ${cacheKey}`);
-
-    // Check and enforce cache size limit
-    await enforceCacheSizeLimit();
 
   } catch (error) {
     console.error('[Sync Cache] Failed to save:', error.message);
@@ -164,10 +167,13 @@ async function getSyncedSubtitles(videoHash, languageCode) {
 async function getSyncedSubtitle(videoHash, languageCode, sourceSubId) {
   try {
     const cacheKey = generateSyncCacheKey(videoHash, languageCode, sourceSubId);
-    const cachePath = getSyncCachePath(cacheKey);
+    const adapter = await getStorageAdapter();
 
-    const content = await fs.readFile(cachePath, 'utf8');
-    const entry = JSON.parse(content);
+    const entry = await adapter.get(cacheKey, StorageAdapter.CACHE_TYPES.SYNC);
+
+    if (!entry) {
+      return null;
+    }
 
     console.log(`[Sync Cache] Retrieved: ${cacheKey}`);
     return {
@@ -180,15 +186,13 @@ async function getSyncedSubtitle(videoHash, languageCode, sourceSubId) {
     };
 
   } catch (error) {
-    if (error.code !== 'ENOENT') {
-      console.warn(`[Sync Cache] Failed to retrieve ${videoHash}_${languageCode}_${sourceSubId}:`, error.message);
-    }
+    console.warn(`[Sync Cache] Failed to retrieve ${videoHash}_${languageCode}_${sourceSubId}:`, error.message);
     return null;
   }
 }
 
 /**
- * Delete a synced subtitle from cache
+ * Delete a synced subtitle from storage
  * @param {string} videoHash - Video file hash
  * @param {string} languageCode - Language code
  * @param {string} sourceSubId - Source subtitle ID
@@ -197,16 +201,16 @@ async function getSyncedSubtitle(videoHash, languageCode, sourceSubId) {
 async function deleteSyncedSubtitle(videoHash, languageCode, sourceSubId) {
   try {
     const cacheKey = generateSyncCacheKey(videoHash, languageCode, sourceSubId);
-    const cachePath = getSyncCachePath(cacheKey);
+    const adapter = await getStorageAdapter();
 
-    await fs.unlink(cachePath);
-    console.log(`[Sync Cache] Deleted: ${cacheKey}`);
-    return true;
+    const deleted = await adapter.delete(cacheKey, StorageAdapter.CACHE_TYPES.SYNC);
+    if (deleted) {
+      console.log(`[Sync Cache] Deleted: ${cacheKey}`);
+    }
+    return deleted;
 
   } catch (error) {
-    if (error.code !== 'ENOENT') {
-      console.error('[Sync Cache] Failed to delete:', error.message);
-    }
+    console.error('[Sync Cache] Failed to delete:', error.message);
     return false;
   }
 }

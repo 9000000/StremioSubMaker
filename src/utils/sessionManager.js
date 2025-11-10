@@ -2,6 +2,16 @@ const { LRUCache } = require('lru-cache');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
+const { StorageFactory, StorageAdapter } = require('../storage');
+
+// Storage adapter (lazy loaded)
+let storageAdapter = null;
+async function getStorageAdapter() {
+  if (!storageAdapter) {
+    storageAdapter = await StorageFactory.getStorageAdapter();
+  }
+  return storageAdapter;
+}
 
 /**
  * Session Manager with LRU cache and disk persistence
@@ -179,7 +189,7 @@ class SessionManager {
         }
 
     /**
-     * Save sessions to disk
+     * Save sessions to storage
      * @returns {Promise<void>}
      */
     async saveToDisk() {
@@ -188,9 +198,7 @@ class SessionManager {
         }
 
         try {
-            // Ensure data directory exists
-            const dir = path.dirname(this.persistencePath);
-            await fs.mkdir(dir, { recursive: true });
+            const adapter = await getStorageAdapter();
 
             // Convert cache to serializable format
             const sessions = {};
@@ -204,20 +212,11 @@ class SessionManager {
                 sessions
             };
 
-            // Write atomically (write to temp file, then rename)
-            const tempPath = `${this.persistencePath}.tmp`;
-            await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf8');
-            await fs.rename(tempPath, this.persistencePath);
-
-            // Set restrictive permissions (Unix-like systems only)
-            try {
-                await fs.chmod(this.persistencePath, 0o600);
-            } catch (err) {
-                // Ignore on Windows
-            }
+            // Save to storage
+            await adapter.set('sessions', data, StorageAdapter.CACHE_TYPES.SESSION);
 
             this.dirty = false;
-            console.log(`[SessionManager] Saved ${Object.keys(sessions).length} sessions to disk`);
+            console.log(`[SessionManager] Saved ${Object.keys(sessions).length} sessions to storage`);
         } catch (err) {
             console.error('[SessionManager] Failed to save sessions:', err);
             throw err;
@@ -225,16 +224,16 @@ class SessionManager {
     }
 
     /**
-     * Load sessions from disk
+     * Load sessions from storage
      * @returns {Promise<void>}
      */
     async loadFromDisk() {
         try {
-            const fileContent = await fs.readFile(this.persistencePath, 'utf8');
-            const data = JSON.parse(fileContent);
+            const adapter = await getStorageAdapter();
+            const data = await adapter.get('sessions', StorageAdapter.CACHE_TYPES.SESSION);
 
-            if (!data.sessions) {
-                console.log('[SessionManager] No sessions in persistence file');
+            if (!data || !data.sessions) {
+                console.log('[SessionManager] No sessions in storage');
                 return;
             }
 

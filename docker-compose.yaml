@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # Stremio SubMaker application
+  stremio-submaker:
+    build: .
+    container_name: stremio-submaker
+    ports:
+      - "${PORT:-7000}:7000"
+    environment:
+      # Application configuration
+      - PORT=7000
+
+      # Storage configuration - Use Redis for HA setup
+      - STORAGE_TYPE=redis
+
+      # Redis configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      - REDIS_KEY_PREFIX=stremio:
+
+      # API Keys (configure these in your .env file)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENSUBTITLES_API_KEY=${OPENSUBTITLES_API_KEY:-}
+
+      # Optional: Session configuration
+      - SESSION_SECRET=${SESSION_SECRET:-change-this-secret}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - stremio-network
+    # Uncomment below if you want to use filesystem storage as fallback
+    # volumes:
+    #   - ./data:/app/data
+    #   - ./.cache:/app/.cache
+
+  # Redis for caching and storage
+  redis:
+    image: redis:7-alpine
+    container_name: stremio-redis
+    command: >
+      redis-server
+      --maxmemory 60gb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - stremio-network
+
+networks:
+  stremio-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local

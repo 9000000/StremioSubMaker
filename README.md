@@ -69,8 +69,130 @@ npm start
 4. **Select target languages** (what to translate to)
 5. **Click "Install in Stremio"** or copy the URL
 
-That's it! 
+That's it!
 Fetched languages and translation buttons (Make [Language]) will now appear in your Stremio subtitle menu.
+
+---
+
+## 🐳 Docker Deployment (Production)
+
+For production deployments with high availability and horizontal scaling, use Docker with Redis storage.
+
+### Why Redis?
+
+- **Stateless Pods**: No dependency on local filesystem
+- **High Availability**: Survive node reboots and scaling events
+- **Horizontal Scaling**: Run multiple instances sharing the same cache
+- **Performance**: Fast in-memory cache with persistence
+
+### Quick Start with Docker Compose
+
+#### Option 1: With Redis (Recommended for Production/HA)
+
+```bash
+# Clone the repository
+git clone https://github.com/xtremexq/StremioSubMaker.git
+cd StremioSubMaker
+
+# Create .env file with your configuration
+cp .env.example .env
+# Edit .env and add your API keys
+
+# Start with Redis
+docker-compose up -d
+
+# View logs
+docker-compose logs -f stremio-submaker
+```
+
+#### Option 2: Local Development (Filesystem Storage)
+
+```bash
+# Use the local development compose file
+docker-compose -f docker-compose.local.yaml up -d
+```
+
+### Configuration
+
+The application uses the `STORAGE_TYPE` environment variable to determine storage backend:
+
+- **`STORAGE_TYPE=filesystem`** (default): Uses local disk storage, perfect for npm start/local development
+- **`STORAGE_TYPE=redis`**: Uses Redis for distributed caching, required for HA deployments
+
+#### Redis Configuration Options
+
+Add these to your `.env` file when using Redis:
+
+```env
+# Storage Configuration
+STORAGE_TYPE=redis
+
+# Redis Connection
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_PASSWORD=your_secure_password
+REDIS_DB=0
+REDIS_KEY_PREFIX=stremio:
+
+# API Keys
+GEMINI_API_KEY=your_gemini_key
+OPENSUBTITLES_API_KEY=your_opensubtitles_key
+```
+
+### Cache Size Limits
+
+The storage adapter enforces these limits with LRU eviction:
+
+- **Translation Cache**: 50GB (permanent translations)
+- **User Config Cache**: 50GB (session data)
+- **Bypass Cache**: 10GB (temporary user-scoped cache, 12h TTL)
+- **Partial Cache**: 10GB (in-flight partial translations, 1h TTL)
+- **Sync Cache**: 50GB (synced subtitles)
+
+### Manual Docker Build
+
+```bash
+# Build the image
+docker build -t stremio-submaker .
+
+# Run with Redis
+docker run -d \
+  --name stremio-submaker \
+  -p 7000:7000 \
+  -e STORAGE_TYPE=redis \
+  -e REDIS_HOST=your-redis-host \
+  -e REDIS_PORT=6379 \
+  -e GEMINI_API_KEY=your_key \
+  stremio-submaker
+
+# Run with filesystem storage (requires volume mount)
+docker run -d \
+  --name stremio-submaker \
+  -p 7000:7000 \
+  -v $(pwd)/.cache:/app/.cache \
+  -v $(pwd)/data:/app/data \
+  -e STORAGE_TYPE=filesystem \
+  -e GEMINI_API_KEY=your_key \
+  stremio-submaker
+```
+
+### Health Checks
+
+The Docker image includes built-in health checks:
+- Endpoint: `http://localhost:7000/health`
+- Interval: 30 seconds
+- Timeout: 10 seconds
+
+### Scaling
+
+When using Redis, you can horizontally scale the application:
+
+```bash
+# Scale to 3 instances
+docker-compose up -d --scale stremio-submaker=3
+
+# Use a load balancer (nginx, traefik, etc.) to distribute traffic
+```
 
 ---
 

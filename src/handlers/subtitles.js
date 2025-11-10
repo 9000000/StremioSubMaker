@@ -7,10 +7,20 @@ const { parseSRT, toSRT, parseStremioId } = require('../utils/subtitle');
 const { getLanguageName, getDisplayName } = require('../utils/languages');
 const { LRUCache } = require('lru-cache');
 const syncCache = require('../utils/syncCache');
+const { StorageFactory, StorageAdapter } = require('../storage');
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+
+// Initialize storage adapter (will be set on first use)
+let storageAdapter = null;
+async function getStorageAdapter() {
+  if (!storageAdapter) {
+    storageAdapter = await StorageFactory.getStorageAdapter();
+  }
+  return storageAdapter;
+}
 
 // Redact/noise-reduce helper for logging large cache keys
 function shortKey(v) {
@@ -60,8 +70,8 @@ const BYPASS_CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'translation
 // Directory for partial translation cache during chunking/streaming - separate from user config
 const PARTIAL_CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'translations_partial');
 
-// Security: Maximum cache size (20GB)
-const MAX_CACHE_SIZE_BYTES = 20 * 1024 * 1024 * 1024; // 20GB
+// Security: Maximum cache size (50GB)
+const MAX_CACHE_SIZE_BYTES = 50 * 1024 * 1024 * 1024; // 50GB
 
 // Cache metrics for monitoring
 const cacheMetrics = {
@@ -302,7 +312,26 @@ function sanitizeCacheKey(cacheKey) {
   return sanitized;
 }
 
-// Read translation from disk cache
+// Read translation from storage (async)
+async function readFromStorage(cacheKey) {
+  try {
+    const adapter = await getStorageAdapter();
+    const cached = await adapter.get(cacheKey, StorageAdapter.CACHE_TYPES.TRANSLATION);
+
+    if (!cached) {
+      return null;
+    }
+
+    cacheMetrics.diskReads++;
+    return cached;
+  } catch (error) {
+    console.error(`[Cache] Failed to read from storage for key ${cacheKey}:`, error.message);
+    return null;
+  }
+}
+
+// DEPRECATED: Legacy sync function for backwards compatibility
+// New code should use readFromStorage() instead
 function readFromDisk(cacheKey) {
   try {
     const safeKey = sanitizeCacheKey(cacheKey);
@@ -343,7 +372,25 @@ function readFromDisk(cacheKey) {
   }
 }
 
-// Read translation from bypass disk cache
+// Read translation from bypass storage (async)
+async function readFromBypassStorage(cacheKey) {
+  try {
+    const adapter = await getStorageAdapter();
+    const cached = await adapter.get(cacheKey, StorageAdapter.CACHE_TYPES.BYPASS);
+
+    if (!cached) {
+      return null;
+    }
+
+    cacheMetrics.diskReads++;
+    return cached;
+  } catch (error) {
+    console.error(`[Bypass Cache] Failed to read from bypass storage for key ${cacheKey}:`, error.message);
+    return null;
+  }
+}
+
+// DEPRECATED: Legacy sync function for backwards compatibility
 function readFromBypassCache(cacheKey) {
   try {
     const safeKey = sanitizeCacheKey(cacheKey);
@@ -376,7 +423,21 @@ function readFromBypassCache(cacheKey) {
   }
 }
 
-// Save translation to disk
+// Save translation to storage (async)
+async function saveToStorage(cacheKey, cachedData) {
+  try {
+    const adapter = await getStorageAdapter();
+    const ttl = StorageAdapter.DEFAULT_TTL[StorageAdapter.CACHE_TYPES.TRANSLATION];
+    await adapter.set(cacheKey, cachedData, StorageAdapter.CACHE_TYPES.TRANSLATION, ttl);
+
+    cacheMetrics.diskWrites++;
+    console.log(`[Cache] Saved translation to storage: ${cacheKey} (expires: ${cachedData.expiresAt ? new Date(cachedData.expiresAt).toISOString() : 'never'})`);
+  } catch (error) {
+    console.error('[Cache] Failed to save translation to storage:', error.message);
+  }
+}
+
+// DEPRECATED: Legacy sync function for backwards compatibility
 function saveToDisk(cacheKey, cachedData) {
   try {
     const safeKey = sanitizeCacheKey(cacheKey);
@@ -422,7 +483,20 @@ function saveToDisk(cacheKey, cachedData) {
   }
 }
 
-// Save translation to bypass disk cache (for user-controlled bypass cache config)
+// Save translation to bypass storage (async)
+async function saveToBypassStorage(cacheKey, cachedData) {
+  try {
+    const adapter = await getStorageAdapter();
+    const ttl = StorageAdapter.DEFAULT_TTL[StorageAdapter.CACHE_TYPES.BYPASS];
+    await adapter.set(cacheKey, cachedData, StorageAdapter.CACHE_TYPES.BYPASS, ttl);
+
+    cacheMetrics.diskWrites++;
+  } catch (error) {
+    console.error('[Bypass Cache] Failed to save translation to bypass storage:', error.message);
+  }
+}
+
+// DEPRECATED: Legacy sync function for backwards compatibility
 function saveToBypassCache(cacheKey, cachedData) {
   try {
     const safeKey = sanitizeCacheKey(cacheKey);
@@ -442,6 +516,20 @@ function saveToBypassCache(cacheKey, cachedData) {
   }
 }
 
+// Save partial translation to storage (async)
+async function saveToPartialStorage(cacheKey, cachedData) {
+  try {
+    const adapter = await getStorageAdapter();
+    const ttl = StorageAdapter.DEFAULT_TTL[StorageAdapter.CACHE_TYPES.PARTIAL];
+    await adapter.set(cacheKey, cachedData, StorageAdapter.CACHE_TYPES.PARTIAL, ttl);
+
+    cacheMetrics.diskWrites++;
+  } catch (error) {
+    console.error('[Partial Cache] Failed to save partial translation to storage:', error.message);
+  }
+}
+
+// DEPRECATED: Legacy sync function for backwards compatibility
 // Save partial translation result during chunking/streaming (separate from user bypass config)
 function saveToPartialCache(cacheKey, cachedData) {
   try {
@@ -1360,21 +1448,21 @@ async function handleTranslation(sourceFileId, targetLanguage, config) {
     if (bypass) {
       // Skip reading permanent cache; optionally read bypass cache
       if (bypassEnabled) {
-        const bypassCached = readFromBypassCache(cacheKey);
+        const bypassCached = await readFromBypassStorage(cacheKey);
         if (bypassCached) {
           console.log('[Translation] Cache hit (bypass) key=', cacheKey, '— serving cached translation');
           cacheMetrics.hits++;
           cacheMetrics.estimatedCostSaved += 0.004;
-          return bypassCached.content;
+          return bypassCached.content || bypassCached;
         }
       }
     } else {
-      const cached = readFromDisk(cacheKey);
+      const cached = await readFromStorage(cacheKey);
       if (cached) {
         console.log('[Translation] Cache hit (permanent) key=', cacheKey, '— serving cached translation');
         cacheMetrics.hits++;
         cacheMetrics.estimatedCostSaved += 0.004; // Estimated $0.004 per translation
-        return cached.content;
+        return cached.content || cached;
       }
     }
 
@@ -1390,12 +1478,12 @@ async function handleTranslation(sourceFileId, targetLanguage, config) {
       console.log(`[Translation] Detected in-flight translation for key=${cacheKey}; checking for partial results`);
       try {
         // DON'T WAIT for completion - immediately return available partials instead
-        // Check disk cache first (in case it just completed)
-        const cachedResult = readFromDisk(cacheKey);
+        // Check storage first (in case it just completed)
+        const cachedResult = await readFromStorage(cacheKey);
         if (cachedResult) {
           console.log('[Translation] Final result already cached; returning it');
           cacheMetrics.hits++;
-          return cachedResult.content;
+          return cachedResult.content || cachedResult;
         }
 
         // Check partial cache (most common case - translation in progress)
@@ -1529,8 +1617,8 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
       const minSize = Number(config.minSubtitleSizeBytes) || 200;
       if (!sourceContent || sourceContent.length < minSize) {
         const msg = createInvalidSubtitleMessage('Selected subtitle seems invalid (too small).');
-        // Save short-lived cache to bypass cache so we never overwrite permanent translations
-        saveToBypassCache(cacheKey, {
+        // Save short-lived cache to bypass storage so we never overwrite permanent translations
+        await saveToBypassStorage(cacheKey, {
           content: msg,
           // expire after 10 minutes so user can try again later
           expiresAt: Date.now() + 10 * 60 * 1000
@@ -1711,7 +1799,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
     const bypassEnabled = bypass && (bypassCfg.enabled !== false);
 
     if (bypass && bypassEnabled) {
-      // Save only to bypass cache with TTL
+      // Save only to bypass storage with TTL
       const bypassDuration = (typeof bypassCfg.duration === 'number') ? bypassCfg.duration : 12;
       const expiresAt = Date.now() + (bypassDuration * 60 * 60 * 1000);
       const cachedData = {
@@ -1723,9 +1811,9 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
         targetLanguage,
         configHash: (config && typeof config.__configHash === 'string') ? config.__configHash : undefined
       };
-      saveToBypassCache(cacheKey, cachedData);
+      await saveToBypassStorage(cacheKey, cachedData);
     } else if (cacheConfig.enabled && cacheConfig.persistent !== false) {
-      // Save to permanent cache (no expiry)
+      // Save to permanent storage (no expiry)
       const cacheDuration = cacheConfig.duration; // 0 = permanent
       const expiresAt = cacheDuration > 0 ? Date.now() + (cacheDuration * 60 * 60 * 1000) : null;
       const cachedData = {
@@ -1736,7 +1824,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
         sourceFileId,
         targetLanguage
       };
-      saveToDisk(cacheKey, cachedData);
+      await saveToStorage(cacheKey, cachedData);
     }
 
     // Mark translation as complete
@@ -1890,14 +1978,14 @@ module.exports = {
   readFromBypassCache, // Export for checking bypass cache during duplicate requests
   translationStatus, // Export for safety block to check if translation is in progress
   /**
-   * Check if a translated subtitle exists in permanent cache
+   * Check if a translated subtitle exists in permanent storage
    * Mirrors the cache key logic used in handleTranslation (without bypass)
    */
-  hasCachedTranslation: function (sourceFileId, targetLanguage, config) {
+  hasCachedTranslation: async function (sourceFileId, targetLanguage, config) {
     try {
       const baseKey = `${sourceFileId}_${targetLanguage}`;
-      const cached = readFromDisk(baseKey);
-      return !!(cached && typeof cached.content === 'string' && cached.content.length > 0);
+      const cached = await readFromStorage(baseKey);
+      return !!(cached && ((cached.content && typeof cached.content === 'string' && cached.content.length > 0) || (typeof cached === 'string' && cached.length > 0)));
     } catch (_) {
       return false;
     }
@@ -1905,47 +1993,43 @@ module.exports = {
   /**
    * Purge any cached translation (permanent + temp) and reset in-progress state
    */
-  purgeTranslationCache: function (sourceFileId, targetLanguage, config) {
+  purgeTranslationCache: async function (sourceFileId, targetLanguage, config) {
     try {
       const baseKey = `${sourceFileId}_${targetLanguage}`;
-      const safeKey = sanitizeCacheKey(baseKey);
-      // Delete permanent cache file
+      const adapter = await getStorageAdapter();
+
+      // Delete permanent cache
       try {
-        const filePath = path.join(CACHE_DIR, `${safeKey}.json`);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-          console.log(`[Purge] Removed permanent cache for ${safeKey}`);
-        }
+        await adapter.delete(baseKey, StorageAdapter.CACHE_TYPES.TRANSLATION);
+        console.log(`[Purge] Removed permanent cache for ${baseKey}`);
       } catch (e) {
-        console.warn(`[Purge] Failed removing permanent cache for ${safeKey}:`, e.message);
+        console.warn(`[Purge] Failed removing permanent cache for ${baseKey}:`, e.message);
       }
 
-      // Delete bypass cache file (both scoped and unscoped variants just in case)
+      // Delete bypass cache (both scoped and unscoped variants just in case)
       try {
-        // Scoped by user/config hash (if present)
         const userHash = (config && typeof config.__configHash === 'string' && config.__configHash.length > 0)
           ? config.__configHash
           : '';
         const scopedKey = `${baseKey}__u_${userHash}`;
-        const bypassFiles = [sanitizeCacheKey(baseKey), sanitizeCacheKey(scopedKey)];
-        for (const key of bypassFiles) {
-          const bypassPath = path.join(BYPASS_CACHE_DIR, `${key}.json`);
-          if (fs.existsSync(bypassPath)) {
-            fs.unlinkSync(bypassPath);
+        const bypassKeys = [baseKey, scopedKey];
+
+        for (const key of bypassKeys) {
+          try {
+            await adapter.delete(key, StorageAdapter.CACHE_TYPES.BYPASS);
             console.log(`[Purge] Removed bypass cache for ${key}`);
+          } catch (e) {
+            // Ignore - key might not exist
           }
         }
       } catch (e) {
         console.warn(`[Purge] Failed removing bypass cache for ${baseKey}:`, e.message);
       }
 
-      // Delete partial cache file (in-flight translations)
+      // Delete partial cache (in-flight translations)
       try {
-        const partialPath = path.join(PARTIAL_CACHE_DIR, `${safeKey}.json`);
-        if (fs.existsSync(partialPath)) {
-          fs.unlinkSync(partialPath);
-          console.log(`[Purge] Removed partial cache for ${safeKey}`);
-        }
+        await adapter.delete(baseKey, StorageAdapter.CACHE_TYPES.PARTIAL);
+        console.log(`[Purge] Removed partial cache for ${baseKey}`);
       } catch (e) {
         console.warn(`[Purge] Failed removing partial cache for ${baseKey}:`, e.message);
       }
