@@ -150,6 +150,23 @@ The storage adapter enforces these limits with LRU eviction:
 - **Partial Cache**: 10GB (in-flight partial translations, 1h TTL)
 - **Sync Cache**: 50GB (synced subtitles)
 
+**Redis Memory Settings:**
+
+The default Docker setup allocates **8GB** to Redis. For larger deployments, adjust in `docker-compose.yaml`:
+
+```yaml
+# Small deployments (single user, testing)
+--maxmemory 2gb
+
+# Medium deployments (multiple users)
+--maxmemory 8gb  # default
+
+# Large deployments (many concurrent users)
+--maxmemory 16gb
+```
+
+**Note:** Application-level cache limits are enforced before Redis LRU kicks in. If Redis hits `maxmemory`, it will evict the least recently used keys automatically.
+
 ### Manual Docker Build
 
 ```bash
