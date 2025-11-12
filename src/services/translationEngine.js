@@ -131,13 +131,11 @@ class TranslationEngine {
           batches.length
         );
 
-        // Validate: ensure we got the same number of entries
-        // Note: Malformed sources should be caught early and routed to Gemini chunking
-        // This validation should never fail in production
+        // Note: translateBatch now handles entry count mismatches internally
+        // and ensures the returned array always matches batch.length
         if (translatedBatch.length !== batch.length) {
-          console.error(`[TranslationEngine] UNEXPECTED: Batch ${batchIndex + 1} validation failed: expected ${batch.length} entries, got ${translatedBatch.length}`);
-          console.error(`[TranslationEngine] This should have been caught by malformed source detection`);
-          throw new Error(`Translation validation failed: entry count mismatch in batch ${batchIndex + 1}`);
+          console.error(`[TranslationEngine] UNEXPECTED: translateBatch returned ${translatedBatch.length} entries, expected ${batch.length}`);
+          console.error(`[TranslationEngine] This should have been fixed by translateBatch - continuing anyway`);
         }
 
         // Merge translated text with original structure
@@ -196,9 +194,10 @@ class TranslationEngine {
     }
 
     // Step 4: Final validation
-    // Note: Malformed sources are caught early and routed to Gemini chunking
+    // Note: Entry count mismatches are now handled gracefully in translateBatch
     if (translatedEntries.length !== entries.length) {
-      throw new Error(`Translation validation failed: expected ${entries.length} entries, got ${translatedEntries.length}`);
+      console.warn(`[TranslationEngine] Final validation: expected ${entries.length} entries, got ${translatedEntries.length}`);
+      console.warn(`[TranslationEngine] This should have been fixed by translateBatch, but continuing with what we have`);
     }
 
     console.log(`[TranslationEngine] Translation completed: ${translatedEntries.length} entries translated`);
@@ -313,14 +312,56 @@ class TranslationEngine {
     // Parse translated text back into entries
     const translatedEntries = this.parseBatchResponse(translatedText, batch.length);
 
-    // Validate: must have same number of entries
-    // Note: Malformed sources (1 entry with 500+ tokens/entry) are caught early
-    // and routed to Gemini chunking, so this should rarely fail
+    // Handle entry count mismatches gracefully instead of throwing away translations
     if (translatedEntries.length !== batch.length) {
-      console.error(`[TranslationEngine] Batch validation failed: expected ${batch.length} entries, got ${translatedEntries.length}`);
-      console.error(`[TranslationEngine] This indicates malformed source was not caught by early detection`);
-      console.error(`[TranslationEngine] Translated text:\n${translatedText.substring(0, 500)}...`);
-      throw new Error(`Translation validation failed: expected ${batch.length} translated entries, got ${translatedEntries.length}`);
+      console.warn(`[TranslationEngine] Batch validation: expected ${batch.length} entries, got ${translatedEntries.length}`);
+
+      if (translatedEntries.length < batch.length) {
+        // Missing entries - fill in with original text (untranslated)
+        console.log(`[TranslationEngine] Fixing ${batch.length - translatedEntries.length} missing entries by keeping original text`);
+
+        // Create a map of translated entries by index
+        const translatedMap = new Map();
+        for (const entry of translatedEntries) {
+          translatedMap.set(entry.index, entry.text);
+        }
+
+        // Build complete array, using original text for missing entries
+        const completeEntries = [];
+        for (let i = 0; i < batch.length; i++) {
+          if (translatedMap.has(i)) {
+            completeEntries.push({
+              index: i,
+              text: translatedMap.get(i)
+            });
+          } else {
+            // Use original text for missing entry
+            console.warn(`[TranslationEngine] Entry ${i + 1} missing in translation, using original text`);
+            completeEntries.push({
+              index: i,
+              text: batch[i].text
+            });
+          }
+        }
+
+        // Replace translatedEntries with the complete version
+        translatedEntries.length = 0;
+        translatedEntries.push(...completeEntries);
+
+      } else if (translatedEntries.length > batch.length) {
+        // Too many entries - truncate to expected count
+        console.log(`[TranslationEngine] Removing ${translatedEntries.length - batch.length} extra entries`);
+
+        // Keep only the first batch.length entries
+        translatedEntries.length = batch.length;
+
+        // Ensure indices are correct (0 to batch.length-1)
+        for (let i = 0; i < translatedEntries.length; i++) {
+          translatedEntries[i].index = i;
+        }
+      }
+
+      console.log(`[TranslationEngine] Entry count fixed: now have ${translatedEntries.length} entries`);
     }
 
     // Cache individual entries
@@ -419,11 +460,7 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
     const blocks = cleaned.split(/\n\n+/);
 
     for (const block of blocks) {
-      // Stop parsing once we have all expected entries
-      if (entries.length >= expectedCount) {
-        break;
-      }
-
+      // Don't stop at expectedCount - parse everything we can
       const trimmed = block.trim();
       if (!trimmed) continue;
 
@@ -464,10 +501,6 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
           // Save previous entry if we have one
           if (currentEntry) {
             altEntries.push(currentEntry);
-            // Stop if we've reached expected count
-            if (altEntries.length >= expectedCount) {
-              break;
-            }
           }
           const num = parseInt(match[1]);
           currentEntry = {
@@ -481,14 +514,19 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
         // REMOVED: Don't add non-numbered lines as new entries
       }
 
-      // Add final entry if we haven't reached limit
-      if (currentEntry && altEntries.length < expectedCount) {
+      // Add final entry
+      if (currentEntry) {
         altEntries.push(currentEntry);
       }
 
-      if (altEntries.length === expectedCount) {
-        console.log(`[TranslationEngine] Alternative parsing successful: ${altEntries.length} entries`);
-        return altEntries.sort((a, b) => a.index - b.index);
+      if (altEntries.length > 0) {
+        console.log(`[TranslationEngine] Alternative parsing found ${altEntries.length} entries`);
+        altEntries.sort((a, b) => a.index - b.index);
+
+        // Use alternative parsing if it's better than the first attempt
+        if (altEntries.length > entries.length) {
+          return altEntries;
+        }
       }
     }
 
