@@ -29,7 +29,6 @@ class TranslationEngine {
   constructor(geminiService) {
     this.gemini = geminiService;
     this.batchSize = 100; // Translate 100 entries at a time (adjustable)
-    this.maxRetries = 3;
   }
 
   /**
@@ -43,13 +42,74 @@ class TranslationEngine {
   async translateSubtitle(srtContent, targetLanguage, customPrompt = null, onProgress = null) {
     console.log('[TranslationEngine] Starting structure-first translation');
 
-    // Step 1: Parse SRT into structured entries
+    // Step 0: Check if input is malformed or needs Gemini-level chunking
+    const estimatedTotalTokens = this.gemini.estimateTokenCount(srtContent);
+    console.log(`[TranslationEngine] Estimated total input tokens: ${estimatedTotalTokens}`);
+
+    // Parse to check entry count
     const entries = parseSRT(srtContent);
     if (!entries || entries.length === 0) {
       throw new Error('Invalid SRT content: no valid entries found');
     }
 
     console.log(`[TranslationEngine] Parsed ${entries.length} subtitle entries`);
+
+    // Detect malformed sources: very few entries but substantial content
+    // Common issue: entire subtitle file parsed as 1 entry due to formatting issues
+    const avgTokensPerEntry = entries.length > 0 ? estimatedTotalTokens / entries.length : 0;
+    const isMalformed = entries.length <= 5 && avgTokensPerEntry > 500; // Aggressive: 1 entry with 2.5k+ tokens = malformed
+
+    // Route to Gemini chunking if:
+    // 1. File is too large (> 30k tokens), OR
+    // 2. File appears malformed (few entries but high tokens per entry)
+    if (estimatedTotalTokens > 30000 || isMalformed) {
+      console.log(`[TranslationEngine] Routing to Gemini chunking:`);
+      console.log(`  - Total tokens: ${estimatedTotalTokens}`);
+      console.log(`  - Parsed entries: ${entries.length}`);
+      console.log(`  - Avg tokens/entry: ${Math.floor(avgTokensPerEntry)}`);
+      console.log(`  - Malformed: ${isMalformed ? 'YES' : 'NO'}`);
+
+      // Use Gemini's chunking with streaming and progress callback
+      let accumulatedChunks = [];
+      const translatedSrt = await this.gemini.translateSubtitleInChunksWithStreaming(
+        srtContent,
+        'detected',
+        targetLanguage,
+        customPrompt,
+        null, // Use default chunk size
+        async (info) => {
+          // Call progress callback if provided
+          if (typeof onProgress === 'function' && !info.isDelta) {
+            try {
+              // Accumulate completed chunks for partial delivery
+              accumulatedChunks.push(info.translatedChunk);
+
+              // Parse all accumulated chunks to get actual entries
+              const mergedChunks = accumulatedChunks.join('\n\n');
+              const parsedEntries = parseSRT(mergedChunks);
+
+              const totalEstimatedEntries = Math.floor(estimatedTotalTokens / 50); // Rough estimate
+              const completedEntries = parsedEntries.length;
+
+              // Provide the merged partial content for partial caching
+              await onProgress({
+                totalEntries: totalEstimatedEntries,
+                completedEntries: completedEntries,
+                currentBatch: info.index + 1,
+                totalBatches: info.total,
+                entry: null, // No individual entry
+                partialContent: mergedChunks // Provide accumulated chunks for partial caching
+              });
+            } catch (err) {
+              console.warn('[TranslationEngine] Progress callback error:', err.message);
+            }
+          }
+        }
+      );
+
+      console.log(`[TranslationEngine] Gemini chunking completed successfully`);
+      return translatedSrt;
+    }
 
     // Step 2: Split entries into batches
     const batches = this.createBatches(entries, this.batchSize);
@@ -72,8 +132,11 @@ class TranslationEngine {
         );
 
         // Validate: ensure we got the same number of entries
+        // Note: Malformed sources should be caught early and routed to Gemini chunking
+        // This validation should never fail in production
         if (translatedBatch.length !== batch.length) {
-          console.error(`[TranslationEngine] Batch ${batchIndex + 1} validation failed: expected ${batch.length} entries, got ${translatedBatch.length}`);
+          console.error(`[TranslationEngine] UNEXPECTED: Batch ${batchIndex + 1} validation failed: expected ${batch.length} entries, got ${translatedBatch.length}`);
+          console.error(`[TranslationEngine] This should have been caught by malformed source detection`);
           throw new Error(`Translation validation failed: entry count mismatch in batch ${batchIndex + 1}`);
         }
 
@@ -82,11 +145,19 @@ class TranslationEngine {
           const original = batch[i];
           const translated = translatedBatch[i];
 
-          // Create entry with original timing and translated text
+          // Clean translated text: remove any embedded timecodes that Gemini might have included
+          // Gemini sometimes preserves original timecodes in translation output
+          let cleanedText = translated.text.trim();
+          // Pattern: HH:MM:SS,MMM --> HH:MM:SS,MMM followed by optional newline
+          // Use global flag to remove ALL occurrences (Gemini sometimes includes multiple)
+          const timecodePattern = /\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n?/g;
+          cleanedText = cleanedText.replace(timecodePattern, '').trim();
+
+          // Create entry with original timing and cleaned translated text
           const translatedEntry = {
             id: original.id,
             timecode: original.timecode, // PRESERVE ORIGINAL TIMING
-            text: translated.text
+            text: cleanedText
           };
 
           translatedEntries.push(translatedEntry);
@@ -121,6 +192,7 @@ class TranslationEngine {
     }
 
     // Step 4: Final validation
+    // Note: Malformed sources are caught early and routed to Gemini chunking
     if (translatedEntries.length !== entries.length) {
       throw new Error(`Translation validation failed: expected ${entries.length} entries, got ${translatedEntries.length}`);
     }
@@ -172,42 +244,77 @@ class TranslationEngine {
     // Create translation prompt
     const prompt = this.createBatchPrompt(batchText, targetLanguage, customPrompt, batch.length);
 
-    // Translate with retries
-    let translatedText = null;
-    let lastError = null;
+    // Check if we need to chunk due to large input (> 30k tokens)
+    const estimatedInputTokens = this.gemini.estimateTokenCount(batchText + prompt);
 
-    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+    if (estimatedInputTokens > 30000 && batch.length > 1) {
+      // Split batch in half to avoid output token limit
+      console.log(`[TranslationEngine] Batch ${batchIndex + 1} has ${estimatedInputTokens} estimated input tokens (> 30k), splitting into 2 parts`);
+
+      const midpoint = Math.floor(batch.length / 2);
+      const firstHalf = batch.slice(0, midpoint);
+      const secondHalf = batch.slice(midpoint);
+
+      console.log(`[TranslationEngine] Split batch ${batchIndex + 1}: Part 1 has ${firstHalf.length} entries, Part 2 has ${secondHalf.length} entries`);
+
+      // Recursively translate each half
+      const firstHalfTranslated = await this.translateBatch(firstHalf, targetLanguage, customPrompt, batchIndex, totalBatches);
+      const secondHalfTranslated = await this.translateBatch(secondHalf, targetLanguage, customPrompt, batchIndex, totalBatches);
+
+      // Combine results
+      return [...firstHalfTranslated, ...secondHalfTranslated];
+    }
+
+    // Translate with retry logic for 503 errors
+    console.log(`[TranslationEngine] Translating batch ${batchIndex + 1}/${totalBatches}`);
+    let translatedText;
+    let lastError;
+    const maxRetries = 3;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`[TranslationEngine] Translating batch ${batchIndex + 1}/${totalBatches} (attempt ${attempt}/${this.maxRetries})`);
         translatedText = await this.gemini.translateSubtitle(
           batchText,
           'detected',
           targetLanguage,
           prompt
         );
-        break; // Success
+        break; // Success, exit retry loop
       } catch (error) {
         lastError = error;
-        console.error(`[TranslationEngine] Batch translation attempt ${attempt} failed:`, error.message);
 
-        if (attempt < this.maxRetries) {
-          const delay = 1000 * Math.pow(2, attempt - 1); // Exponential backoff
-          console.log(`[TranslationEngine] Retrying in ${delay}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
+        // Check if it's a 503 (service overloaded) error
+        const is503 = error.message && (
+          error.message.includes('503') ||
+          error.message.includes('overloaded') ||
+          error.message.includes('UNAVAILABLE')
+        );
+
+        if (is503 && attempt < maxRetries) {
+          // Exponential backoff: 2s, 4s, 8s
+          const delayMs = Math.pow(2, attempt) * 1000;
+          console.log(`[TranslationEngine] Batch ${batchIndex + 1} got 503 error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        } else {
+          // Not a 503 or out of retries
+          throw error;
         }
       }
     }
 
     if (!translatedText) {
-      throw new Error(`Batch translation failed after ${this.maxRetries} attempts: ${lastError?.message || 'Unknown error'}`);
+      throw lastError || new Error('Translation failed after retries');
     }
 
     // Parse translated text back into entries
     const translatedEntries = this.parseBatchResponse(translatedText, batch.length);
 
     // Validate: must have same number of entries
+    // Note: Malformed sources (1 entry with 500+ tokens/entry) are caught early
+    // and routed to Gemini chunking, so this should rarely fail
     if (translatedEntries.length !== batch.length) {
       console.error(`[TranslationEngine] Batch validation failed: expected ${batch.length} entries, got ${translatedEntries.length}`);
+      console.error(`[TranslationEngine] This indicates malformed source was not caught by early detection`);
       console.error(`[TranslationEngine] Translated text:\n${translatedText.substring(0, 500)}...`);
       throw new Error(`Translation validation failed: expected ${batch.length} translated entries, got ${translatedEntries.length}`);
     }
@@ -265,17 +372,24 @@ CRITICAL RULES:
 6. Use appropriate colloquialisms for ${targetLanguage}
 
 DO NOT:
-- Add explanations or notes
+- Add ANY explanations, notes, or commentary before, after, or between entries
+- Add alternative translations or suggestions
+- Include meta-text like "Here are the translations:" or "Translation notes:"
 - Skip any entries
 - Merge or split entries
 - Change the numbering
-- Add extra entries
+- Add extra entries beyond ${expectedCount}
+
+YOUR RESPONSE MUST:
+- Start immediately with "1." (the first entry)
+- End with "${expectedCount}." (the last entry)
+- Contain NOTHING else
 
 INPUT (${expectedCount} entries):
 
 ${batchText}
 
-OUTPUT FORMAT (must be ${expectedCount} numbered entries):`;
+OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
 
     return prompt;
   }
@@ -301,6 +415,11 @@ OUTPUT FORMAT (must be ${expectedCount} numbered entries):`;
     const blocks = cleaned.split(/\n\n+/);
 
     for (const block of blocks) {
+      // Stop parsing once we have all expected entries
+      if (entries.length >= expectedCount) {
+        break;
+      }
+
       const trimmed = block.trim();
       if (!trimmed) continue;
 
@@ -315,16 +434,8 @@ OUTPUT FORMAT (must be ${expectedCount} numbered entries):`;
           index: num - 1, // Convert to 0-based index
           text: text
         });
-      } else {
-        // If no number found, try to add as-is if we're missing entries
-        if (entries.length < expectedCount) {
-          console.warn('[TranslationEngine] Found unnumbered entry, attempting to use as-is:', trimmed.substring(0, 50));
-          entries.push({
-            index: entries.length,
-            text: trimmed
-          });
-        }
       }
+      // REMOVED: Don't add unnumbered blocks as entries - they're likely explanations
     }
 
     // Sort by index to ensure correct order
@@ -346,9 +457,13 @@ OUTPUT FORMAT (must be ${expectedCount} numbered entries):`;
         const match = trimmed.match(/^(\d+)[.):\s-]+(.+)$/);
 
         if (match) {
-          // New entry starts
+          // Save previous entry if we have one
           if (currentEntry) {
             altEntries.push(currentEntry);
+            // Stop if we've reached expected count
+            if (altEntries.length >= expectedCount) {
+              break;
+            }
           }
           const num = parseInt(match[1]);
           currentEntry = {
@@ -356,12 +471,14 @@ OUTPUT FORMAT (must be ${expectedCount} numbered entries):`;
             text: match[2].trim()
           };
         } else if (currentEntry) {
-          // Continue current entry
+          // Continue current entry (multi-line text)
           currentEntry.text += '\n' + trimmed;
         }
+        // REMOVED: Don't add non-numbered lines as new entries
       }
 
-      if (currentEntry) {
+      // Add final entry if we haven't reached limit
+      if (currentEntry && altEntries.length < expectedCount) {
         altEntries.push(currentEntry);
       }
 

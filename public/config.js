@@ -245,7 +245,7 @@ Translate to {target_language}.`;
             sourceLanguages: ['eng'], // Up to 3 source languages allowed
             targetLanguages: [],
             geminiApiKey: DEFAULT_API_KEYS.GEMINI,
-            geminiModel: '',
+            geminiModel: 'gemini-flash-lite-latest',
             promptStyle: 'strict', // 'natural' or 'strict'
             translationPrompt: STRICT_TRANSLATION_PROMPT,
             subtitleProviders: {
@@ -543,14 +543,14 @@ Translate to {target_language}.`;
         // Form submission
         document.getElementById('configForm').addEventListener('submit', handleSubmit);
 
-        // Gemini API key auto-fetch
-        const apiKeyInput = document.getElementById('geminiApiKey');
-        apiKeyInput.addEventListener('input', debounce((e) => {
-            const apiKey = e.target.value.trim();
-            if (apiKey && apiKey !== lastFetchedApiKey) {
-                autoFetchModels(apiKey);
-            }
-        }, 1000));
+        // Gemini API key auto-fetch - DISABLED
+        // const apiKeyInput = document.getElementById('geminiApiKey');
+        // apiKeyInput.addEventListener('input', debounce((e) => {
+        //     const apiKey = e.target.value.trim();
+        //     if (apiKey && apiKey !== lastFetchedApiKey) {
+        //         autoFetchModels(apiKey);
+        //     }
+        // }, 1000));
 
         // Search functionality
         document.getElementById('sourceSearch').addEventListener('input', (e) => {
@@ -1177,13 +1177,12 @@ Translate to {target_language}.`;
 
         // Load Gemini model
         const modelSelect = document.getElementById('geminiModel');
-        if (currentConfig.geminiModel) {
-            const option = document.createElement('option');
-            option.value = currentConfig.geminiModel;
-            option.textContent = currentConfig.geminiModel;
-            option.selected = true;
-            modelSelect.appendChild(option);
-        }
+        const modelToUse = currentConfig.geminiModel || 'gemini-flash-lite-latest';
+        const option = document.createElement('option');
+        option.value = modelToUse;
+        option.textContent = modelToUse;
+        option.selected = true;
+        modelSelect.appendChild(option);
 
         // Load prompt style
         const promptStyle = currentConfig.promptStyle || 'natural';

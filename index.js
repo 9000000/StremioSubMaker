@@ -681,7 +681,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
             const baseKey = `${sourceFileId}_${targetLang}`;
 
             // For duplicate requests, check partial cache FIRST (in-flight translations)
-            const partialCached = readFromPartialCache(baseKey);
+            const partialCached = await readFromPartialCache(baseKey);
             if (partialCached && typeof partialCached.content === 'string' && partialCached.content.length > 0) {
                 console.log(`[Translation] Found in-flight partial in partial cache for ${sourceFileId} (${partialCached.content.length} chars)`);
                 res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -697,7 +697,10 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
             const userHash = (config && typeof config.__configHash === 'string' && config.__configHash.length > 0) ? config.__configHash : '';
             const bypassCacheKey = (bypass && bypassEnabled && userHash) ? `${baseKey}__u_${userHash}` : baseKey;
 
-            const bypassCached = readFromBypassCache(bypassCacheKey);
+            const { StorageAdapter } = require('./src/storage');
+            const { getStorageAdapter } = require('./src/storage/StorageFactory');
+            const adapter = await getStorageAdapter();
+            const bypassCached = await adapter.get(bypassCacheKey, StorageAdapter.CACHE_TYPES.BYPASS);
             if (bypassCached && typeof bypassCached.content === 'string' && bypassCached.content.length > 0) {
                 console.log(`[Translation] Found bypass cache result for ${sourceFileId} (${bypassCached.content.length} chars)`);
                 res.setHeader('Content-Type', 'text/plain; charset=utf-8');

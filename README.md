@@ -74,85 +74,11 @@ Fetched languages and translation buttons (Make [Language]) will now appear in y
 
 ## 🐳 Docker Deployment
 
-### Quick Start with Docker Compose
+📦 **[See complete Docker deployment guide →](DOCKER.md)**
 
-#### Option 1: With Redis (Recommended)
-
+Quick start:
 ```bash
-# Clone the repository
-git clone https://github.com/xtremexq/StremioSubMaker.git
-cd StremioSubMaker
-
-# Create .env file with your configuration
-cp .env.example .env
-
-# Edit .env and add your API keys
-nano .env
-
-# Start with Redis
 docker-compose up -d
-
-# View logs
-docker-compose logs -f stremio-submaker
-```
-
-#### Option 2: Filesystem Storage
-
-```bash
-# Use the local development compose file
-docker-compose -f docker-compose.local.yaml up -d
-```
-
-### Configuration
-
-The application uses the `STORAGE_TYPE` environment variable to determine storage backend:
-
-- **`STORAGE_TYPE=filesystem`** (default): Uses local disk storage, perfect for npm start/local development
-- **`STORAGE_TYPE=redis`**: Uses Redis for distributed caching, required for HA deployments
-
-#### Redis Configuration Options
-
-Add these to your `.env` file when using Redis:
-
-```env
-# Storage Configuration
-STORAGE_TYPE=redis
-
-# Redis Connection
-REDIS_HOST=redis
-REDIS_PORT=6379
-REDIS_PASSWORD=your_secure_password
-REDIS_DB=0
-REDIS_KEY_PREFIX=stremio:
-
-# API Keys
-OPENSUBTITLES_API_KEY=your_opensubtitles_key
-
-```
-
-### Docker Build
-
-```bash
-# Build the image
-docker build -t stremio-submaker .
-
-# Run with Redis
-docker run -d \
-  --name stremio-submaker \
-  -p 7000:7000 \
-  -e STORAGE_TYPE=redis \
-  -e REDIS_HOST=your-redis-host \
-  -e REDIS_PORT=6379 \
-  stremio-submaker
-
-# Run with filesystem storage (requires volume mount)
-docker run -d \
-  --name stremio-submaker \
-  -p 7000:7000 \
-  -v $(pwd)/.cache:/app/.cache \
-  -v $(pwd)/data:/app/data \
-  -e STORAGE_TYPE=filesystem \
-  stremio-submaker
 ```
 
 ## 🎯 How It Works

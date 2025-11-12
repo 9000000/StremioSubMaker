@@ -202,7 +202,7 @@ function getDefaultConfig() {
     sourceLanguages: [],
     targetLanguages: [],
     geminiApiKey: '',
-    geminiModel: '',
+    geminiModel: 'gemini-flash-lite-latest',
     translationPrompt: DEFAULT_TRANSLATION_PROMPT,
     subtitleProviders: {
       opensubtitles: {

@@ -13,6 +13,8 @@ All notable changes to this project will be documented in this file.
 - Simplified progressive delivery with entry-by-entry streaming (no more complex tiered flush intervals)
 - Better translation quality with strict validation at every step
 - Faster and more reliable translation with cleaner architecture
+- Hardcoded gemini-flash-8b-1.5 (alias: gemini-flash-lite-latest) for consistency across all translations
+- Model selection UI will return in future versions with workflow optimization for different models
 
 ## SubMaker 1.1.0
 

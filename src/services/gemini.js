@@ -64,7 +64,7 @@ class GeminiService {
       // Chunk size for splitting large subtitles (target 12k tokens per chunk for faster progressive updates)
       this.chunkSize = advancedSettings.chunkSize || 12000;
       this.timeout = (advancedSettings.translationTimeout || 600) * 1000; // Convert to milliseconds
-      this.maxRetries = advancedSettings.maxRetries !== undefined ? advancedSettings.maxRetries : 5;
+      this.maxRetries = advancedSettings.maxRetries !== undefined ? advancedSettings.maxRetries : 0;
       // Thinking budget for Gemini 2.5 models - reserves tokens for internal reasoning
       // This counts against maxOutputTokens, so we need to account for it
       // NOTE: Due to Gemini API bug, thinking budget is often not respected properly
@@ -491,7 +491,18 @@ async translateSubtitle(subtitleContent, sourceLanguage, targetLanguage, customP
       const merged = translatedChunks.join('\n\n');
       const parsed = parseSRT(merged);
       if (parsed.length > 0) {
-        const reindexed = parsed.map((e, idx) => ({ id: idx + 1, timecode: e.timecode, text: (e.text || '').trim() })).filter(e => e.timecode && e.text);
+        const reindexed = parsed.map((e, idx) => {
+          let text = (e.text || '').trim();
+          
+          // Fix: Remove any embedded timecode at the start of the text
+          // Gemini sometimes preserves original timecodes in translation
+          // Pattern: HH:MM:SS,MMM --> HH:MM:SS,MMM followed by newline
+          // Use global flag to remove ALL occurrences
+          const timecodePattern = /\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n?/g;
+          text = text.replace(timecodePattern, '').trim();
+          
+          return { id: idx + 1, timecode: e.timecode, text };
+        }).filter(e => e.timecode && e.text);
         return toSRT(reindexed);
       }
       return merged;
@@ -625,25 +636,91 @@ async translateSubtitle(subtitleContent, sourceLanguage, targetLanguage, customP
       const translatedChunks = [];
       for (let i = 0; i < chunks.length; i++) {
         const chunkText = chunks[i];
-        console.log(`[Gemini] Streaming chunk ${i + 1}/${chunks.length}: ${this.estimateTokenCount(chunkText)} tokens`);
+        const chunkTokens = this.estimateTokenCount(chunkText);
 
-        // Use streaming for each chunk to get progressive per-chunk updates
-        let chunkBuffer = '';
-        await this.translateSubtitleStream(
+        // Build small context window by mapping chunk back to entries (same as non-streaming mode)
+        const thisEntries = chunkText.split(/(\r?\n){2,}/).filter(s => s && s.trim() && !s.match(/^\s*$/));
+        let beforeCtx = '';
+        let afterCtx = '';
+        if (thisEntries.length > 0) {
+          const first = thisEntries[0];
+          const last = thisEntries[thisEntries.length - 1];
+          const startIndex = validEntries.indexOf(first);
+          const endIndex = validEntries.indexOf(last);
+          if (startIndex !== -1) {
+            const beforeStart = Math.max(0, startIndex - 6);
+            beforeCtx = validEntries.slice(beforeStart, startIndex).join('\n\n');
+          }
+          if (endIndex !== -1) {
+            const afterEnd = Math.min(validEntries.length, endIndex + 1 + 3);
+            afterCtx = validEntries.slice(endIndex + 1, afterEnd).join('\n\n');
+          }
+        }
+        const composed = [
+          beforeCtx ? 'CONTEXT BEFORE (DO NOT TRANSLATE):' : '',
+          beforeCtx,
+          '-----',
+          'TRANSLATE ONLY THE FOLLOWING SUBTITLES (RETURN ONLY THE TRANSLATED SUBTITLES):',
           chunkText,
-          sourceLanguage,
-          normalizedTarget,
-          customPrompt,
-          (delta) => {
-            chunkBuffer += delta;
-            // Forward token deltas to the callback so handler can flush partials
-            if (typeof onChunk === 'function') {
-              try {
-                onChunk({ index: i, total: chunks.length, translatedChunk: delta, isDelta: true });
-              } catch (_) {}
+          '-----',
+          afterCtx ? 'CONTEXT AFTER (DO NOT TRANSLATE):' : '',
+          afterCtx
+        ].filter(Boolean).join('\n\n');
+
+        // Log ACTUAL tokens including context
+        const totalTokens = this.estimateTokenCount(composed);
+        const contextTokens = totalTokens - chunkTokens;
+        console.log(`[Gemini] Streaming chunk ${i + 1}/${chunks.length}: ${chunkTokens} chunk + ${contextTokens} context = ${totalTokens} total tokens`);
+
+        // Use streaming for each chunk to get progressive per-chunk updates with retry logic
+        let chunkBuffer = '';
+        let lastError;
+        const maxRetries = 3;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            chunkBuffer = '';
+            await this.translateSubtitleStream(
+              composed,
+              sourceLanguage,
+              normalizedTarget,
+              customPrompt,
+              (delta) => {
+                chunkBuffer += delta;
+                // Forward token deltas to the callback so handler can flush partials
+                if (typeof onChunk === 'function') {
+                  try {
+                    onChunk({ index: i, total: chunks.length, translatedChunk: delta, isDelta: true });
+                  } catch (_) {}
+                }
+              }
+            );
+            break; // Success, exit retry loop
+          } catch (error) {
+            lastError = error;
+
+            // Check if it's a 503 (service overloaded) error
+            const is503 = error.message && (
+              error.message.includes('503') ||
+              error.message.includes('overloaded') ||
+              error.message.includes('UNAVAILABLE')
+            );
+
+            if (is503 && attempt < maxRetries) {
+              // Exponential backoff: 2s, 4s, 8s
+              const delayMs = Math.pow(2, attempt) * 1000;
+              console.log(`[Gemini] Chunk ${i + 1} got 503 error, retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})`);
+              await new Promise(resolve => setTimeout(resolve, delayMs));
+            } else {
+              // Not a 503 or out of retries
+              throw error;
             }
           }
-        );
+        }
+
+        if (!chunkBuffer) {
+          throw lastError || new Error(`Chunk ${i + 1} translation failed after retries`);
+        }
 
         const translated = this.cleanTranslatedSubtitle(chunkBuffer);
         translatedChunks.push(translated);
@@ -665,7 +742,18 @@ async translateSubtitle(subtitleContent, sourceLanguage, targetLanguage, customP
       const merged = translatedChunks.join('\n\n');
       const parsed = parseSRT(merged);
       if (parsed.length > 0) {
-        const reindexed = parsed.map((e, idx) => ({ id: idx + 1, timecode: e.timecode, text: (e.text || '').trim() })).filter(e => e.timecode && e.text);
+        const reindexed = parsed.map((e, idx) => {
+          let text = (e.text || '').trim();
+          
+          // Fix: Remove any embedded timecode at the start of the text
+          // Gemini sometimes preserves original timecodes in translation
+          // Pattern: HH:MM:SS,MMM --> HH:MM:SS,MMM followed by newline
+          // Use global flag to remove ALL occurrences
+          const timecodePattern = /\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n?/g;
+          text = text.replace(timecodePattern, '').trim();
+          
+          return { id: idx + 1, timecode: e.timecode, text };
+        }).filter(e => e.timecode && e.text);
         return toSRT(reindexed);
       }
       return merged;

@@ -9,6 +9,7 @@ const { getLanguageName, getDisplayName } = require('../utils/languages');
 const { LRUCache } = require('lru-cache');
 const syncCache = require('../utils/syncCache');
 const { StorageFactory, StorageAdapter } = require('../storage');
+const { debug } = require('../utils/logger');
 
 const fs = require('fs');
 const path = require('path');
@@ -95,7 +96,6 @@ function createLoadingSubtitle() {
   const srt = `1
 00:00:00,000 --> 04:00:00,000
 TRANSLATION IN PROGRESS
-Subtitles load progressively during translation.
 Please wait ~1-3 minutes and reselect this subtitle.
 Partial results will appear as they are ready.`;
 
@@ -197,6 +197,47 @@ function createConcurrencyLimitSubtitle(limit = MAX_CONCURRENT_TRANSLATIONS_PER_
   return `1
 00:00:00,000 --> 04:00:00,000
 Too many concurrent translations for this user (limit: ${limit}).\nPlease wait for one to finish, then try again.`;
+}
+
+// Create an SRT explaining a translation error, visible across the whole video timeline
+// User can click again to retry the translation
+function createTranslationErrorSubtitle(errorType, errorMessage) {
+  // Determine error title based on type
+  let errorTitle = 'Translation Failed';
+  let errorExplanation = errorMessage || 'An unexpected error occurred during translation.';
+  let retryAdvice = 'Click this subtitle again to retry translation.';
+
+  if (errorType === '503') {
+    errorTitle = 'Translation Failed: Service Overloaded (503)';
+    errorExplanation = 'The Gemini API is temporarily overloaded with requests.\nThis is usually temporary and resolves within minutes.';
+  } else if (errorType === '429') {
+    errorTitle = 'Translation Failed: Usage Limit Reached (429)';
+    errorExplanation = 'Your Gemini API usage limit has been exceeded.\nThis may be a rate limit or quota limit.';
+    retryAdvice = 'Wait a few minutes, then click again to retry.\nOr check your Gemini API quota/billing settings.';
+  } else if (errorType === 'MAX_TOKENS') {
+    errorTitle = 'Translation Failed: Content Too Large';
+    errorExplanation = 'The subtitle file is too large for a single translation.\nThe system attempted chunking but still exceeded limits.';
+    retryAdvice = 'Try translating a shorter subtitle file,\nor contact support if this persists.';
+  } else if (errorType === 'SAFETY') {
+    errorTitle = 'Translation Failed: Content Filtered';
+    errorExplanation = 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.';
+  } else if (errorType === 'INVALID_SOURCE') {
+    errorTitle = 'Translation Failed: Invalid Source File';
+    errorExplanation = 'The source subtitle file appears corrupted or invalid.\nIt may be too small or have formatting issues.';
+    retryAdvice = 'Try a different subtitle from the list.';
+  }
+
+  return `1
+00:00:00,000 --> 00:00:10,000
+${errorTitle}
+
+2
+00:00:10,001 --> 00:00:25,000
+${errorExplanation}
+
+3
+00:00:25,001 --> 04:00:00,000
+${retryAdvice}`;
 }
 
 // Initialize cache directory
@@ -331,47 +372,8 @@ async function readFromStorage(cacheKey) {
   }
 }
 
-// DEPRECATED: Legacy sync function for backwards compatibility
-// New code should use readFromStorage() instead
-function readFromDisk(cacheKey) {
-  try {
-    const safeKey = sanitizeCacheKey(cacheKey);
-    const filePath = path.join(CACHE_DIR, `${safeKey}.json`);
-
-    // Security: Verify the resolved path is still within CACHE_DIR
-    const resolvedPath = path.resolve(filePath);
-    const resolvedCacheDir = path.resolve(CACHE_DIR);
-    if (!resolvedPath.startsWith(resolvedCacheDir)) {
-      console.error(`[Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
-      return null;
-    }
-
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-
-    const content = fs.readFileSync(filePath, 'utf8');
-    // Touch file to update atime so LRU eviction prefers truly old entries
-    try {
-      const stats = fs.statSync(filePath);
-      fs.utimesSync(filePath, new Date(), stats.mtime);
-    } catch (_) {}
-    const cached = JSON.parse(content);
-
-    // Check if cache is still valid
-    if (cached.expiresAt && Date.now() > cached.expiresAt) {
-      // Expired, delete file
-      fs.unlinkSync(filePath);
-      return null;
-    }
-
-    cacheMetrics.diskReads++;
-    return cached;
-  } catch (error) {
-    console.error(`[Cache] Failed to read from disk for key ${cacheKey}:`, error.message);
-    return null;
-  }
-}
+// DEPRECATED: Removed - use async readFromStorage() instead
+// This function caused blocking I/O. Legacy code has been migrated.
 
 // Read translation from bypass storage (async)
 async function readFromBypassStorage(cacheKey) {
@@ -391,38 +393,8 @@ async function readFromBypassStorage(cacheKey) {
   }
 }
 
-// DEPRECATED: Legacy sync function for backwards compatibility
-function readFromBypassCache(cacheKey) {
-  try {
-    const safeKey = sanitizeCacheKey(cacheKey);
-    const filePath = path.join(BYPASS_CACHE_DIR, `${safeKey}.json`);
-
-    const resolvedPath = path.resolve(filePath);
-    const resolvedCacheDir = path.resolve(BYPASS_CACHE_DIR);
-    if (!resolvedPath.startsWith(resolvedCacheDir)) {
-      console.error(`[Bypass Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
-      return null;
-    }
-
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-
-    const content = fs.readFileSync(filePath, 'utf8');
-    const cached = JSON.parse(content);
-
-    if (!cached.expiresAt || Date.now() > cached.expiresAt) {
-      try { fs.unlinkSync(filePath); } catch (_) {}
-      return null;
-    }
-
-    cacheMetrics.diskReads++;
-    return cached;
-  } catch (error) {
-    console.error(`[Bypass Cache] Failed to read from bypass cache for key ${cacheKey}:`, error.message);
-    return null;
-  }
-}
+// DEPRECATED: Removed - use async readFromBypassStorage() instead
+// This function caused blocking I/O. Legacy code has been migrated.
 
 // Save translation to storage (async)
 async function saveToStorage(cacheKey, cachedData) {
@@ -438,51 +410,8 @@ async function saveToStorage(cacheKey, cachedData) {
   }
 }
 
-// DEPRECATED: Legacy sync function for backwards compatibility
-function saveToDisk(cacheKey, cachedData) {
-  try {
-    const safeKey = sanitizeCacheKey(cacheKey);
-    const filePath = path.join(CACHE_DIR, `${safeKey}.json`);
-    const tempPath = path.join(CACHE_DIR, `${safeKey}.json.tmp`);
-
-    // Security: Verify the resolved path is still within CACHE_DIR
-    const resolvedPath = path.resolve(filePath);
-    const resolvedCacheDir = path.resolve(CACHE_DIR);
-    if (!resolvedPath.startsWith(resolvedCacheDir)) {
-      console.error(`[Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
-      return;
-    }
-
-    // Atomic write: write to temp then rename
-    try {
-      const fd = fs.openSync(tempPath, 'w');
-      const data = JSON.stringify(cachedData, null, 2);
-      fs.writeSync(fd, data);
-      // Ensure data hits disk before rename (best effort on platforms that support it)
-      try { fs.fsyncSync(fd); } catch (_) {}
-      fs.closeSync(fd);
-      fs.renameSync(tempPath, filePath);
-    } finally {
-      // Cleanup stray temp file on failure
-      try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) {}
-    }
-    cacheMetrics.diskWrites++;
-
-    // Update cache size metrics
-    const stats = fs.statSync(filePath);
-    cacheMetrics.totalCacheSize += stats.size;
-
-    console.log(`[Cache] Saved translation to disk: ${safeKey} (expires: ${cachedData.expiresAt ? new Date(cachedData.expiresAt).toISOString() : 'never'})`);
-
-    // Check if we need to enforce size limit
-    if (cacheMetrics.totalCacheSize > MAX_CACHE_SIZE_BYTES) {
-      console.log('[Cache] Cache size limit exceeded, triggering eviction');
-      enforceCacheSizeLimit();
-    }
-  } catch (error) {
-    console.error('[Cache] Failed to save translation to disk:', error.message);
-  }
-}
+// DEPRECATED: Removed - use async saveToStorage() instead
+// This function caused blocking I/O. Legacy code has been migrated.
 
 // Save translation to bypass storage (async)
 async function saveToBypassStorage(cacheKey, cachedData) {
@@ -497,25 +426,8 @@ async function saveToBypassStorage(cacheKey, cachedData) {
   }
 }
 
-// DEPRECATED: Legacy sync function for backwards compatibility
-function saveToBypassCache(cacheKey, cachedData) {
-  try {
-    const safeKey = sanitizeCacheKey(cacheKey);
-    const filePath = path.join(BYPASS_CACHE_DIR, `${safeKey}.json`);
-
-    const resolvedPath = path.resolve(filePath);
-    const resolvedCacheDir = path.resolve(BYPASS_CACHE_DIR);
-    if (!resolvedPath.startsWith(resolvedCacheDir)) {
-      console.error(`[Bypass Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
-      return;
-    }
-
-    fs.writeFileSync(filePath, JSON.stringify(cachedData, null, 2), 'utf8');
-    cacheMetrics.diskWrites++;
-  } catch (error) {
-    console.error('[Bypass Cache] Failed to save translation to bypass cache:', error.message);
-  }
-}
+// DEPRECATED: Removed - use async saveToBypassStorage() instead
+// This function caused blocking I/O. Legacy code has been migrated.
 
 // Save partial translation to storage (async)
 async function saveToPartialStorage(cacheKey, cachedData) {
@@ -530,107 +442,22 @@ async function saveToPartialStorage(cacheKey, cachedData) {
   }
 }
 
-// DEPRECATED: Legacy sync function for backwards compatibility
-// Save partial translation result during chunking/streaming (separate from user bypass config)
-function saveToPartialCache(cacheKey, cachedData) {
-  try {
-    const safeKey = sanitizeCacheKey(cacheKey);
-    const filePath = path.join(PARTIAL_CACHE_DIR, `${safeKey}.json`);
+// DEPRECATED: Removed - use async saveToPartialStorage() instead
+// This function caused blocking I/O. Legacy code has been migrated.
 
-    // Ensure partial cache directory exists
-    if (!fs.existsSync(PARTIAL_CACHE_DIR)) {
-      fs.mkdirSync(PARTIAL_CACHE_DIR, { recursive: true });
-    }
-
-    const resolvedPath = path.resolve(filePath);
-    const resolvedCacheDir = path.resolve(PARTIAL_CACHE_DIR);
-    if (!resolvedPath.startsWith(resolvedCacheDir)) {
-      console.error(`[Partial Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
-      return;
-    }
-
-    fs.writeFileSync(filePath, JSON.stringify(cachedData, null, 2), 'utf8');
-    cacheMetrics.diskWrites++;
-  } catch (error) {
-    console.error('[Partial Cache] Failed to save partial translation:', error.message);
-  }
-}
-
-// Async version of saveToPartialCache with write queue to prevent blocking
-const writeQueue = [];
-let isProcessingQueue = false;
-
+// Async helper for saving partial translations
+// No queue needed - storage adapter handles concurrency
 async function saveToPartialCacheAsync(cacheKey, cachedData) {
-  return new Promise((resolve) => {
-    writeQueue.push({ cacheKey, cachedData, resolve });
-    if (!isProcessingQueue) {
-      processWriteQueue();
-    }
-  });
+  return saveToPartialStorage(cacheKey, cachedData);
 }
 
-async function processWriteQueue() {
-  if (writeQueue.length === 0) {
-    isProcessingQueue = false;
-    return;
-  }
-
-  isProcessingQueue = true;
-  const { cacheKey, cachedData, resolve } = writeQueue.shift();
-
+// Read partial translation result during chunking/streaming (async)
+async function readFromPartialCache(cacheKey) {
   try {
-    const safeKey = sanitizeCacheKey(cacheKey);
-    const filePath = path.join(PARTIAL_CACHE_DIR, `${safeKey}.json`);
-
-    // Ensure partial cache directory exists
-    if (!fs.existsSync(PARTIAL_CACHE_DIR)) {
-      fs.mkdirSync(PARTIAL_CACHE_DIR, { recursive: true });
-    }
-
-    const resolvedPath = path.resolve(filePath);
-    const resolvedCacheDir = path.resolve(PARTIAL_CACHE_DIR);
-    if (!resolvedPath.startsWith(resolvedCacheDir)) {
-      console.error(`[Partial Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
-      resolve();
-      processWriteQueue();
-      return;
-    }
-
-    await fs.promises.writeFile(filePath, JSON.stringify(cachedData, null, 2), 'utf8');
-    cacheMetrics.diskWrites++;
-    resolve();
-  } catch (error) {
-    console.error('[Partial Cache] Failed to save partial translation (async):', error.message);
-    resolve();
-  }
-
-  // Continue processing next item in queue
-  processWriteQueue();
-}
-
-// Read partial translation result during chunking/streaming
-function readFromPartialCache(cacheKey) {
-  try {
-    const safeKey = sanitizeCacheKey(cacheKey);
-    const filePath = path.join(PARTIAL_CACHE_DIR, `${safeKey}.json`);
-
-    const resolvedPath = path.resolve(filePath);
-    const resolvedCacheDir = path.resolve(PARTIAL_CACHE_DIR);
-    if (!resolvedPath.startsWith(resolvedCacheDir)) {
-      console.error(`[Partial Cache] Security: Path traversal attempt detected for key ${cacheKey}`);
-      return null;
-    }
-
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-
-    const content = fs.readFileSync(filePath, 'utf8');
-    const cached = JSON.parse(content);
-
-    // Check if partial has expired (default 1 hour TTL for in-flight partials)
-    if (!cached.expiresAt || Date.now() > cached.expiresAt) {
-      try { fs.unlinkSync(filePath); } catch (_) {}
+    const adapter = await getStorageAdapter();
+    const cached = await adapter.get(cacheKey, StorageAdapter.CACHE_TYPES.PARTIAL);
+    
+    if (!cached) {
       return null;
     }
 
@@ -996,7 +823,7 @@ function rankSubtitlesByFilename(subtitles, streamFilename) {
 function createSubtitleHandler(config) {
   return async (args) => {
     try {
-      console.log('[Subtitles] Handler called with args:', JSON.stringify(args));
+      debug(() => `[Subtitles] Handler called with args: ${JSON.stringify(args)}`);
 
       const { type, id, extra } = args;
       const videoInfo = parseStremioId(id);
@@ -1006,12 +833,12 @@ function createSubtitleHandler(config) {
         return { subtitles: [] };
       }
 
-      console.log('[Subtitles] Video info:', videoInfo);
+      debug(() => `[Subtitles] Video info: ${JSON.stringify(videoInfo)}`);
 
       // Extract stream filename for matching
       const streamFilename = extra?.filename || '';
       if (streamFilename) {
-        console.log('[Subtitles] Stream filename for matching:', streamFilename);
+        debug(() => `[Subtitles] Stream filename for matching: ${streamFilename}`);
       }
 
       // Get all languages (source + target) for searching
@@ -1124,7 +951,7 @@ function createSubtitleHandler(config) {
       // This ensures the best matches appear first in Stremio UI
       if (streamFilename) {
         filteredFoundSubtitles = rankSubtitlesByFilename(filteredFoundSubtitles, streamFilename);
-        console.log('[Subtitles] Ranked subtitles by filename match');
+        debug(() => '[Subtitles] Ranked subtitles by filename match');
       }
 
       // Limit to top 12 subtitles per language (applied AFTER ranking all sources)
@@ -1279,7 +1106,7 @@ function createSubtitleHandler(config) {
       allSubtitles = [...actionButtons, ...allSubtitles];
 
       const totalResponseItems = stremioSubtitles.length + translationEntries.length + xSyncEntries.length + actionButtons.length;
-      console.log(`[Subtitles] Returning ${totalResponseItems} items (${stremioSubtitles.length} subs + ${translationEntries.length} trans + ${xSyncEntries.length} xSync + ${actionButtons.length} actions)`);
+      debug(() => `[Subtitles] Returning ${totalResponseItems} items (${stremioSubtitles.length} subs + ${translationEntries.length} trans + ${xSyncEntries.length} xSync + ${actionButtons.length} actions)`);
 
       return {
         subtitles: allSubtitles
@@ -1451,6 +1278,23 @@ async function handleTranslation(sourceFileId, targetLanguage, config) {
       if (bypassEnabled) {
         const bypassCached = await readFromBypassStorage(cacheKey);
         if (bypassCached) {
+          // Check if this is a cached error
+          if (bypassCached.isError === true) {
+            console.log('[Translation] Cached error found (bypass) key=', cacheKey, '— showing error and clearing cache');
+            const errorSrt = createTranslationErrorSubtitle(bypassCached.errorType, bypassCached.errorMessage);
+
+            // Delete the error cache so next click retries translation
+            const adapter = await getStorageAdapter();
+            try {
+              await adapter.delete(cacheKey, StorageAdapter.CACHE_TYPES.BYPASS);
+              console.log('[Translation] Cleared error cache for retry');
+            } catch (e) {
+              console.warn('[Translation] Failed to delete error cache:', e.message);
+            }
+
+            return errorSrt;
+          }
+
           console.log('[Translation] Cache hit (bypass) key=', cacheKey, '— serving cached translation');
           cacheMetrics.hits++;
           cacheMetrics.estimatedCostSaved += 0.004;
@@ -1460,6 +1304,23 @@ async function handleTranslation(sourceFileId, targetLanguage, config) {
     } else {
       const cached = await readFromStorage(cacheKey);
       if (cached) {
+        // Check if this is a cached error
+        if (cached.isError === true) {
+          console.log('[Translation] Cached error found (permanent) key=', cacheKey, '— showing error and clearing cache');
+          const errorSrt = createTranslationErrorSubtitle(cached.errorType, cached.errorMessage);
+
+          // Delete the error cache so next click retries translation
+          const adapter = await getStorageAdapter();
+          try {
+            await adapter.delete(cacheKey, StorageAdapter.CACHE_TYPES.TRANSLATION);
+            console.log('[Translation] Cleared error cache for retry');
+          } catch (e) {
+            console.warn('[Translation] Failed to delete error cache:', e.message);
+          }
+
+          return errorSrt;
+        }
+
         console.log('[Translation] Cache hit (permanent) key=', cacheKey, '— serving cached translation');
         cacheMetrics.hits++;
         cacheMetrics.estimatedCostSaved += 0.004; // Estimated $0.004 per translation
@@ -1488,10 +1349,9 @@ async function handleTranslation(sourceFileId, targetLanguage, config) {
         }
 
         // Check partial cache (most common case - translation in progress)
-        // Partials are saved to PARTIAL_CACHE_DIR, not BYPASS_CACHE_DIR
-        const partialResult = readFromPartialCache(cacheKey);
+        const partialResult = await readFromPartialCache(cacheKey);
         if (partialResult && typeof partialResult.content === 'string' && partialResult.content.length > 0) {
-          console.log(`[Translation] Returning partial result (${partialResult.content.length} chars) without waiting for completion`);
+          debug(() => `[Translation] Returning partial result (${partialResult.content.length} chars) without waiting for completion`);
           return partialResult.content;
         }
 
@@ -1513,9 +1373,9 @@ async function handleTranslation(sourceFileId, targetLanguage, config) {
       const elapsedTime = Math.floor((Date.now() - status.startedAt) / 1000);
       console.log(`[Translation] In-progress existing translation key=${cacheKey} (elapsed ${elapsedTime}s); attempting partial SRT`);
       try {
-        const partial = readFromPartialCache(cacheKey);
+        const partial = await readFromPartialCache(cacheKey);
         if (partial && typeof partial.content === 'string' && partial.content.length > 0) {
-          console.log('[Translation] Serving partial SRT from partial cache');
+          debug(() => '[Translation] Serving partial SRT from partial cache');
           return partial.content;
         }
       } catch (_) {}
@@ -1660,7 +1520,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
           content: partialSrt,
           expiresAt: Date.now() + 60 * 60 * 1000
         });
-        console.log(`[Translation] Saved partial: ${translatedEntries.length} entries (${partialSrt.length} chars)`);
+        debug(() => `[Translation] Saved partial: ${translatedEntries.length} entries (${partialSrt.length} chars)`);
       }
     };
 
@@ -1672,19 +1532,33 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
         targetLangName,
         config.translationPrompt,
         async (progress) => {
-          // Store translated entry
-          translatedEntries.push(progress.entry);
+          // Store translated entry (if available - batch mode provides individual entries)
+          if (progress.entry) {
+            translatedEntries.push(progress.entry);
+          }
 
-          // Flush periodically
-          const now = Date.now();
-          if (now - lastFlush > flushInterval) {
-            lastFlush = now;
-            await savePartial();
+          // For chunked mode: save partial content directly when provided
+          if (progress.partialContent) {
+            const partialSrt = buildPartialSrtWithTail(progress.partialContent);
+            if (partialSrt && partialSrt.length > 0) {
+              await saveToPartialCacheAsync(cacheKey, {
+                content: partialSrt,
+                expiresAt: Date.now() + 60 * 60 * 1000
+              });
+              console.log(`[Translation] Saved partial (chunked mode): ${progress.completedEntries} entries (${partialSrt.length} chars)`);
+            }
+          } else {
+            // For batch mode: flush periodically
+            const now = Date.now();
+            if (now - lastFlush > flushInterval) {
+              lastFlush = now;
+              await savePartial();
+            }
           }
 
           // Log progress
           if (progress.completedEntries % 50 === 0 || progress.completedEntries === progress.totalEntries) {
-            console.log(`[Translation] Progress: ${progress.completedEntries}/${progress.totalEntries} entries (batch ${progress.currentBatch}/${progress.totalBatches})`);
+            debug(() => `[Translation] Progress: ${progress.completedEntries}/${progress.totalEntries} entries (batch ${progress.currentBatch}/${progress.totalBatches})`);
           }
         }
       );
@@ -1745,6 +1619,52 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
 
   } catch (error) {
     console.error('[Translation] Background translation error:', error.message);
+
+    // Determine error type for user-friendly message
+    let errorType = 'other';
+    let errorMessage = error.message;
+
+    if (error.message && error.message.includes('503')) {
+      errorType = '503';
+    } else if (error.message && error.message.includes('429')) {
+      errorType = '429';
+    } else if (error.message && (error.message.includes('MAX_TOKENS') || error.message.includes('exceeded maximum token limit'))) {
+      errorType = 'MAX_TOKENS';
+    } else if (error.message && error.message.includes('SAFETY')) {
+      errorType = 'SAFETY';
+    } else if (error.message && (error.message.includes('invalid') || error.message.includes('corrupted') || error.message.includes('too small'))) {
+      errorType = 'INVALID_SOURCE';
+    }
+
+    console.log(`[Translation] Caching error (type: ${errorType}) for user retry`);
+
+    // Cache the error so user can see what went wrong and retry
+    const bypass = config.bypassCache === true;
+    const bypassCfg = config.bypassCacheConfig || config.tempCache || {};
+    const bypassEnabled = bypass && (bypassCfg.enabled !== false);
+
+    try {
+      const errorCache = {
+        isError: true,
+        errorType: errorType,
+        errorMessage: errorMessage,
+        timestamp: Date.now(),
+        expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes - auto-expire old errors
+      };
+
+      if (bypass && bypassEnabled) {
+        // Save to bypass storage with short TTL
+        await saveToBypassStorage(cacheKey, errorCache);
+        console.log('[Translation] Error cached to bypass storage');
+      } else {
+        // Save to permanent storage with TTL
+        await saveToStorage(cacheKey, errorCache);
+        console.log('[Translation] Error cached to permanent storage');
+      }
+    } catch (cacheError) {
+      console.warn('[Translation] Failed to cache error:', cacheError.message);
+    }
+
     // Remove from status so it can be retried
     try { translationStatus.delete(cacheKey); } catch (_) {}
     throw error;
@@ -1884,7 +1804,6 @@ module.exports = {
   getAvailableSubtitlesForTranslation,
   createLoadingSubtitle, // Export for loading message in translation endpoint
   readFromPartialCache, // Export for checking in-flight partial results during duplicate requests
-  readFromBypassCache, // Export for checking bypass cache during duplicate requests
   translationStatus, // Export for safety block to check if translation is in progress
   /**
    * Check if a translated subtitle exists in permanent storage

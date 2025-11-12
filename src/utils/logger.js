@@ -248,4 +248,16 @@ console.startup = function(...args) {
     writeFileLog('STARTUP', args);
 };
 
-module.exports = {};
+/**
+ * Debug utility function that prevents expensive string operations when debug is disabled
+ * Usage: debug(() => `[Module] Expensive operation: ${JSON.stringify(obj)}`);
+ * The callback only executes if debug level is enabled
+ */
+function debug(messageFn) {
+    if (currentLevel <= LEVELS.debug) {
+        const message = typeof messageFn === 'function' ? messageFn() : messageFn;
+        console.log(message);
+    }
+}
+
+module.exports = { debug };
