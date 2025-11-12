@@ -3,6 +3,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { StorageFactory, StorageAdapter } = require('../storage');
+const { shutdownLogger } = require('./logger');
 
 // Storage adapter (lazy loaded)
 let storageAdapter = null;
@@ -331,15 +332,21 @@ class SessionManager {
             if (server) {
                 server.close(() => {
                     console.log('[SessionManager] Server closed gracefully');
+                    // Close logger before exit
+                    shutdownLogger();
                     process.exit(saveFailed ? 1 : 0);
                 });
 
                 // Force exit after 2 seconds if server close hangs
                 setTimeout(() => {
                     console.warn('[SessionManager] Forcefully exiting after timeout');
+                    // Close logger before exit
+                    shutdownLogger();
                     process.exit(saveFailed ? 1 : 0);
                 }, 2000).unref(); // unref to allow process to exit naturally if server closes faster
             } else {
+                // Close logger before exit
+                shutdownLogger();
                 process.exit(saveFailed ? 1 : 0);
             }
         };
@@ -355,8 +362,10 @@ class SessionManager {
             console.error('[SessionManager] Uncaught exception:', err);
             if (!isShuttingDown) {
                 shutdown('uncaughtException').then(() => {
+                    shutdownLogger();
                     process.exit(1);
                 }).catch(() => {
+                    shutdownLogger();
                     process.exit(1);
                 });
             }

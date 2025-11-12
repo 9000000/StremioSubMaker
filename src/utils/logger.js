@@ -194,17 +194,25 @@ function writeFileLog(level, args) {
     }
 }
 
+// Logger shutdown function (exported for graceful shutdown coordination)
+const shutdownLogger = () => {
+    try {
+        if (LOG_TO_FILE) {
+            closeStream();
+        }
+    } catch (_) {}
+};
+
 // Periodic purge (every 1 hour)
 if (LOG_TO_FILE) {
     ensureLogDir();
     openStream();
     try { purgeOldLogs(); } catch (_) {}
     setInterval(() => { try { purgeOldLogs(); } catch (_) {} }, 1000 * 60 * 60);
-    // Close stream on exit
-    const shutdown = () => { try { closeStream(); } catch (_) {} };
-    process.on('exit', shutdown);
-    process.on('SIGINT', () => { shutdown(); process.exit(0); });
-    process.on('SIGTERM', () => { shutdown(); process.exit(0); });
+
+    // Close stream on normal process exit
+    // NOTE: SIGINT/SIGTERM are handled by sessionManager for coordinated shutdown
+    process.on('exit', shutdownLogger);
 }
 
 /**
@@ -260,4 +268,4 @@ function debug(messageFn) {
     }
 }
 
-module.exports = { debug };
+module.exports = { debug, shutdownLogger };
