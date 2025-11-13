@@ -24,11 +24,11 @@ const log = require('../utils/logger');
 // Key: hash of (source_text + target_language)
 // Value: translated text
 const entryCache = new Map();
-// Entry cache size (default: 50K entries = ~5-10MB RAM)
+// Entry cache size (default: 100K entries = ~10-20MB RAM)
 // Configurable via ENTRY_CACHE_SIZE environment variable
 // Higher values improve cache hit rates but use more memory
 // Estimate: 1000 entries ≈ 100KB-200KB RAM
-const MAX_ENTRY_CACHE_SIZE = parseInt(process.env.ENTRY_CACHE_SIZE) || 50000; // Cache up to 50k individual entries (was 10k)
+const MAX_ENTRY_CACHE_SIZE = parseInt(process.env.ENTRY_CACHE_SIZE) || 100000; // Cache up to 100k individual entries (was 50k)
 
 class TranslationEngine {
   constructor(geminiService) {
