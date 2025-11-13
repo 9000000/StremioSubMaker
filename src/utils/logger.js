@@ -48,6 +48,9 @@ function shouldSample(level) {
 }
 
 // Optional file logging with rotation/purge (enabled by default in production)
+// NOTE: Application logs ALWAYS use filesystem, regardless of STORAGE_TYPE setting
+// STORAGE_TYPE (redis/filesystem) only controls where CACHE data is stored
+// Logs and cache are separate concerns - logs need disk for rotation/debugging
 const fs = require('fs');
 const path = require('path');
 

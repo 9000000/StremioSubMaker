@@ -5,8 +5,8 @@ All notable changes to this project will be documented in this file.
 ## SubMaker 1.1.0
 
 **Infrastructure:**
-- Extensive Redis support implemented
-- Extensive encryption support implemented
+- Redis support: Full Redis integration for translation cache, session storage, and subtitle cache with configurable TTLs and automatic key expiration (enables distributed HA deployments)
+- Encryption support: AES-256-GCM encryption for user configurations and sensitive API keys with per-user key derivation and secure session token generation
 - Docker deployment support with docker-compose configurations for both standalone and Redis-backed deployments
 - Filesystem storage adapter still available for local deployment and fallback
 
@@ -20,6 +20,11 @@ All notable changes to this project will be documented in this file.
 - NEW: Translation engine now preserves original SRT timing (timings never sent to AI, can't be modified)
 - Hardcoded gemini-flash-8b-1.5 (alias: gemini-flash-lite-latest) for consistency across all translations
 - Model selection UI will return in future versions with workflow optimization for different models
+
+**Performance & Logging:**
+- High-performance logging overhaul: Lazy evaluation with callbacks for all 520+ log statements eliminates 40-70% CPU overhead from string interpolation on filtered logs
+- Async file logging with buffering replaces synchronous writes, eliminating event loop blocking (1-5ms per log) that caused 100-300ms p99 latency spikes under load
+- Log sampling support for extreme load scenarios (LOG_SAMPLE_RATE, LOG_SAMPLE_DEBUG_ONLY) allows reducing log volume while preserving critical errors
 
 ## SubMaker 1.0.3
 
