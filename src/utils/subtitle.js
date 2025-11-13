@@ -13,10 +13,13 @@ function parseSRT(srtContent) {
   }
 
   const entries = [];
-  const blocks = srtContent.trim().split(/\n\n+/);
+  // CRLF-aware splitting: handles both \n\n (LF) and \r\n\r\n (CRLF) line endings
+  // Pattern (?:\r?\n){2,} matches 2 or more consecutive newlines (with optional \r before each \n)
+  const blocks = srtContent.trim().split(/(?:\r?\n){2,}/);
 
   for (const block of blocks) {
-    const lines = block.trim().split('\n');
+    // Also handle CRLF when splitting lines within each block
+    const lines = block.trim().split(/\r?\n/);
     if (lines.length < 3) continue;
 
     const id = parseInt(lines[0]);

@@ -52,19 +52,24 @@ function getEncryptionKey() {
   }
 
   // Try to load from file
+  log.debug(() => ['[Encryption] Checking for encryption key file:', ENCRYPTION_KEY_FILE]);
   if (fs.existsSync(ENCRYPTION_KEY_FILE)) {
     try {
+      log.debug(() => '[Encryption] Encryption key file exists, attempting to load...');
       const keyHex = fs.readFileSync(ENCRYPTION_KEY_FILE, 'utf8').trim();
       if (keyHex.length !== KEY_LENGTH * 2) {
-        throw new Error(`Encryption key file corrupt: expected ${KEY_LENGTH * 2} hex characters`);
+        throw new Error(`Encryption key file corrupt: expected ${KEY_LENGTH * 2} hex characters, got ${keyHex.length}`);
       }
       encryptionKey = Buffer.from(keyHex, 'hex');
-      log.debug(() => ['[Encryption] Loaded encryption key from file:', ENCRYPTION_KEY_FILE]);
+      log.info(() => ['[Encryption] ✓ Successfully loaded encryption key from file:', ENCRYPTION_KEY_FILE]);
       return encryptionKey;
     } catch (error) {
       log.error(() => ['[Encryption] Failed to load encryption key from file:', error.message]);
+      log.error(() => ['[Encryption] File will be regenerated. Previous encrypted data may be inaccessible.']);
       // Continue to generate new key
     }
+  } else {
+    log.debug(() => ['[Encryption] Encryption key file does not exist:', ENCRYPTION_KEY_FILE]);
   }
 
   // Generate new key and save to file
@@ -75,8 +80,16 @@ function getEncryptionKey() {
     // Ensure the directory exists before writing
     const keyDir = path.dirname(ENCRYPTION_KEY_FILE);
     if (!fs.existsSync(keyDir)) {
-      fs.mkdirSync(keyDir, { recursive: true, mode: 0o700 });
+      log.debug(() => ['[Encryption] Creating encryption key directory:', keyDir]);
+      fs.mkdirSync(keyDir, { recursive: true, mode: 0o755 }); // Changed from 0o700 to allow node user access
       log.debug(() => ['[Encryption] Created encryption key directory:', keyDir]);
+    }
+
+    // Verify directory is writable before attempting to write key
+    try {
+      fs.accessSync(keyDir, fs.constants.W_OK);
+    } catch (accessError) {
+      throw new Error(`Directory ${keyDir} is not writable: ${accessError.message}`);
     }
 
     fs.writeFileSync(ENCRYPTION_KEY_FILE, keyHex, { mode: 0o600 }); // Read/write for owner only
@@ -85,6 +98,8 @@ function getEncryptionKey() {
     log.warn(() => '[Encryption] ⚠️  For production, use ENCRYPTION_KEY environment variable instead.');
   } catch (error) {
     log.error(() => ['[Encryption] Failed to save encryption key to file:', error.message]);
+    log.error(() => ['[Encryption] Key file path:', ENCRYPTION_KEY_FILE]);
+    log.error(() => ['[Encryption] Directory exists:', fs.existsSync(path.dirname(ENCRYPTION_KEY_FILE))]);
     log.warn(() => '[Encryption] Using in-memory key only (will be lost on restart!)');
   }
 

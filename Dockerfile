@@ -11,15 +11,16 @@ RUN npm ci --only=production
 # Copy application code
 COPY . .
 
-# Create cache directories
+# Create cache directories and keys directory for encryption key persistence
 RUN mkdir -p .cache/translations \
     .cache/translations_bypass \
     .cache/translations_partial \
     .cache/sync_cache \
     data \
-    logs
+    logs \
+    keys
 
-# Set permissions
+# Set permissions (ensure node user owns all directories including keys)
 RUN chown -R node:node /app
 
 # Use non-root user

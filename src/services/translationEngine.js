@@ -276,8 +276,8 @@ class TranslationEngine {
    * @returns {Promise<Array>} - Array of translated entries
    */
   async translateBatch(batch, targetLanguage, customPrompt, batchIndex, totalBatches) {
-    // Check cache first
-    const cacheResults = this.checkBatchCache(batch, targetLanguage);
+    // Check cache first (includes customPrompt in cache key)
+    const cacheResults = this.checkBatchCache(batch, targetLanguage, customPrompt);
 
     // If all entries are cached, return immediately
     if (cacheResults.allCached) {
@@ -408,9 +408,9 @@ class TranslationEngine {
       log.debug(() => `[TranslationEngine] Entry count fixed: now have ${translatedEntries.length} entries`);
     }
 
-    // Cache individual entries
+    // Cache individual entries (includes customPrompt in cache key)
     for (let i = 0; i < batch.length; i++) {
-      this.cacheEntry(batch[i].text, targetLanguage, translatedEntries[i].text);
+      this.cacheEntry(batch[i].text, targetLanguage, translatedEntries[i].text, customPrompt);
     }
 
     log.debug(() => `[TranslationEngine] Batch ${batchIndex + 1} translated and validated (${translatedEntries.length} entries)`);
@@ -493,15 +493,15 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
     // Clean the response
     let cleaned = translatedText.trim();
 
-    // Remove markdown code blocks if present
-    cleaned = cleaned.replace(/```[a-z]*\n?/g, '');
+    // Remove markdown code blocks if present (CRLF-aware)
+    cleaned = cleaned.replace(/```[a-z]*(?:\r?\n)?/g, '');
 
     // Try to extract numbered entries
     // Pattern: "1. text" or "1) text" or "1 - text"
     const entries = [];
 
-    // Split by double newlines first (entry separator)
-    const blocks = cleaned.split(/\n\n+/);
+    // Split by double newlines first (entry separator) - CRLF-aware
+    const blocks = cleaned.split(/(?:\r?\n){2,}/);
 
     for (const block of blocks) {
       // Don't stop at expectedCount - parse everything we can
@@ -530,8 +530,8 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
     if (entries.length !== expectedCount) {
       log.warn(() => `[TranslationEngine] Entry count mismatch: expected ${expectedCount}, parsed ${entries.length}`);
 
-      // Try alternative parsing: split by newlines and look for patterns
-      const lines = cleaned.split('\n');
+      // Try alternative parsing: split by newlines and look for patterns (CRLF-aware)
+      const lines = cleaned.split(/\r?\n/);
       const altEntries = [];
       let currentEntry = null;
 
@@ -581,14 +581,15 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
    * Check if batch entries are cached
    * @param {Array} batch - Batch of entries
    * @param {string} targetLanguage - Target language
+   * @param {string} customPrompt - Custom prompt (affects cache key)
    * @returns {Object} - { allCached: boolean, entries: Array }
    */
-  checkBatchCache(batch, targetLanguage) {
+  checkBatchCache(batch, targetLanguage, customPrompt) {
     const cachedEntries = [];
     let cacheHits = 0;
 
     for (const entry of batch) {
-      const cached = this.getCachedEntry(entry.text, targetLanguage);
+      const cached = this.getCachedEntry(entry.text, targetLanguage, customPrompt);
       if (cached) {
         cachedEntries.push({ index: entry.id - 1, text: cached });
         cacheHits++;
@@ -613,10 +614,11 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
    * Get cached entry translation
    * @param {string} sourceText - Source text
    * @param {string} targetLanguage - Target language
+   * @param {string} customPrompt - Custom prompt (affects cache key)
    * @returns {string|null} - Cached translation or null
    */
-  getCachedEntry(sourceText, targetLanguage) {
-    const key = this.createCacheKey(sourceText, targetLanguage);
+  getCachedEntry(sourceText, targetLanguage, customPrompt) {
+    const key = this.createCacheKey(sourceText, targetLanguage, customPrompt);
     return entryCache.get(key) || null;
   }
 
@@ -625,8 +627,9 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
    * @param {string} sourceText - Source text
    * @param {string} targetLanguage - Target language
    * @param {string} translatedText - Translated text
+   * @param {string} customPrompt - Custom prompt (affects cache key)
    */
-  cacheEntry(sourceText, targetLanguage, translatedText) {
+  cacheEntry(sourceText, targetLanguage, translatedText, customPrompt) {
     // Enforce cache size limit (LRU-like behavior)
     if (entryCache.size >= MAX_ENTRY_CACHE_SIZE) {
       // Remove oldest entries (first 10% of max size to reduce eviction frequency)
@@ -638,7 +641,7 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
       log.debug(() => `[TranslationEngine] Evicted ${evictionCount} entries from cache (size: ${entryCache.size})`);
     }
 
-    const key = this.createCacheKey(sourceText, targetLanguage);
+    const key = this.createCacheKey(sourceText, targetLanguage, customPrompt);
     entryCache.set(key, translatedText);
   }
 
@@ -646,12 +649,16 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
    * Create cache key for an entry
    * @param {string} sourceText - Source text
    * @param {string} targetLanguage - Target language
+   * @param {string} customPrompt - Custom prompt (affects cache key)
    * @returns {string} - Cache key
    */
-  createCacheKey(sourceText, targetLanguage) {
+  createCacheKey(sourceText, targetLanguage, customPrompt) {
     const normalized = sourceText.trim().toLowerCase();
+    // Include customPrompt in cache key to prevent using cached translations
+    // when retranslating with different prompts/settings
+    const promptHash = customPrompt ? crypto.createHash('md5').update(customPrompt).digest('hex').substring(0, 8) : 'default';
     const hash = crypto.createHash('md5')
-      .update(`${normalized}:${targetLanguage}`)
+      .update(`${normalized}:${targetLanguage}:${promptHash}`)
       .digest('hex');
     return hash;
   }
