@@ -73,11 +73,11 @@ class GeminiService {
       // NOTE: Due to Gemini API bug, thinking budget is often not respected properly
       // For translation tasks, minimal thinking is recommended (1000 tokens)
       this.thinkingBudget = advancedSettings.thinkingBudget !== undefined ? advancedSettings.thinkingBudget : 1000;
-      // Parallel chunk concurrency - how many chunks to process simultaneously
-      // Default: 3 (balances speed vs API rate limits)
-      // Set to 1 to disable parallel processing (sequential mode)
-      // Higher values (4-5) may hit API rate limits faster
-      this.chunkConcurrency = advancedSettings.chunkConcurrency || parseInt(process.env.GEMINI_CHUNK_CONCURRENCY) || 3;
+      // Chunk concurrency - how many chunks to process simultaneously
+      // Default: 1 (sequential mode - safe for all users)
+      // Set to 3-5 for parallel processing (faster but may hit API rate limits)
+      // Parallel mode provides 3-5x speedup but requires monitoring API quotas
+      this.chunkConcurrency = advancedSettings.chunkConcurrency || parseInt(process.env.GEMINI_CHUNK_CONCURRENCY) || 1;
   }
 
   /**
