@@ -314,9 +314,28 @@ const fileTranslationLimiter = rateLimit({
 });
 
 // Enable gzip compression for all responses
+// SRT files compress extremely well (typically 5-10x reduction)
+// Use higher compression for subtitles, lower for other content
 app.use(compression({
-    threshold: 1024, // Only compress responses larger than 1KB
-    level: 6 // Compression level (0-9, 6 is a good balance)
+    threshold: 512, // Compress responses larger than 512 bytes (was 1KB)
+    level: (req, res) => {
+        // Higher compression for subtitle files (they compress very well)
+        if (req.url.includes('/subtitle/') || req.url.includes('/translate/') || req.url.includes('.srt')) {
+            return 9; // Maximum compression for SRT files (10-15x reduction)
+        }
+        // Standard compression for other content (JSON, HTML, etc.)
+        return 6; // Balanced compression level
+    },
+    filter: (req, res) => {
+        // Only compress text-based responses
+        const contentType = res.getHeader('content-type');
+        if (typeof contentType === 'string' &&
+            (contentType.includes('text/') || contentType.includes('application/json') || contentType.includes('application/javascript'))) {
+            return true;
+        }
+        // Default compression filter
+        return compression.filter(req, res);
+    }
 }));
 
 // Expose version on all responses

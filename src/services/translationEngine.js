@@ -24,7 +24,11 @@ const log = require('../utils/logger');
 // Key: hash of (source_text + target_language)
 // Value: translated text
 const entryCache = new Map();
-const MAX_ENTRY_CACHE_SIZE = 10000; // Cache up to 10k individual entries
+// Entry cache size (default: 50K entries = ~5-10MB RAM)
+// Configurable via ENTRY_CACHE_SIZE environment variable
+// Higher values improve cache hit rates but use more memory
+// Estimate: 1000 entries ≈ 100KB-200KB RAM
+const MAX_ENTRY_CACHE_SIZE = parseInt(process.env.ENTRY_CACHE_SIZE) || 50000; // Cache up to 50k individual entries (was 10k)
 
 class TranslationEngine {
   constructor(geminiService) {
@@ -625,11 +629,13 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
   cacheEntry(sourceText, targetLanguage, translatedText) {
     // Enforce cache size limit (LRU-like behavior)
     if (entryCache.size >= MAX_ENTRY_CACHE_SIZE) {
-      // Remove oldest entries (first 1000)
-      const keysToDelete = Array.from(entryCache.keys()).slice(0, 1000);
+      // Remove oldest entries (first 10% of max size to reduce eviction frequency)
+      const evictionCount = Math.floor(MAX_ENTRY_CACHE_SIZE * 0.1);
+      const keysToDelete = Array.from(entryCache.keys()).slice(0, evictionCount);
       for (const key of keysToDelete) {
         entryCache.delete(key);
       }
+      log.debug(() => `[TranslationEngine] Evicted ${evictionCount} entries from cache (size: ${entryCache.size})`);
     }
 
     const key = this.createCacheKey(sourceText, targetLanguage);

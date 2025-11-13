@@ -73,6 +73,11 @@ class GeminiService {
       // NOTE: Due to Gemini API bug, thinking budget is often not respected properly
       // For translation tasks, minimal thinking is recommended (1000 tokens)
       this.thinkingBudget = advancedSettings.thinkingBudget !== undefined ? advancedSettings.thinkingBudget : 1000;
+      // Parallel chunk concurrency - how many chunks to process simultaneously
+      // Default: 3 (balances speed vs API rate limits)
+      // Set to 1 to disable parallel processing (sequential mode)
+      // Higher values (4-5) may hit API rate limits faster
+      this.chunkConcurrency = advancedSettings.chunkConcurrency || parseInt(process.env.GEMINI_CHUNK_CONCURRENCY) || 3;
   }
 
   /**
@@ -585,6 +590,42 @@ async translateSubtitle(subtitleContent, sourceLanguage, targetLanguage, customP
   }
 
   /**
+   * Process items in parallel with concurrency limit
+   * @private
+   * @param {Array} items - Items to process
+   * @param {Function} processor - Async function to process each item
+   * @param {number} concurrency - Max concurrent operations
+   * @returns {Promise<Array>} - Results in original order
+   */
+  async _processInParallel(items, processor, concurrency) {
+    // If concurrency is 1, fall back to sequential processing
+    if (concurrency <= 1) {
+      const results = [];
+      for (let i = 0; i < items.length; i++) {
+        results[i] = await processor(items[i], i);
+      }
+      return results;
+    }
+
+    // Parallel processing with concurrency limit
+    const results = new Array(items.length);
+    let currentIndex = 0;
+    let completed = 0;
+
+    const workers = Array(Math.min(concurrency, items.length)).fill(null).map(async () => {
+      while (currentIndex < items.length) {
+        const index = currentIndex++;
+        const item = items[index];
+        results[index] = await processor(item, index);
+        completed++;
+      }
+    });
+
+    await Promise.all(workers);
+    return results;
+  }
+
+  /**
    * Translate subtitle in chunks with token-level streaming per chunk for progressive updates.
    * Best for large files (>25k tokens) - streams each chunk for faster progressive delivery.
    * Each chunk uses streaming which provides token-level updates as they arrive.
@@ -631,11 +672,11 @@ async translateSubtitle(subtitleContent, sourceLanguage, targetLanguage, customP
       }
       if (currentChunk.length > 0) chunks.push(currentChunk.join('\n\n'));
 
-      log.debug(() => `[Gemini] Streaming chunks: Split into ${chunks.length} chunks for streaming translation`);
+      const concurrency = this.chunkConcurrency;
+      log.debug(() => `[Gemini] Streaming chunks: Split into ${chunks.length} chunks, processing with concurrency=${concurrency}`);
 
-      const translatedChunks = [];
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkText = chunks[i];
+      // Process chunks in parallel with concurrency limit
+      const translatedChunks = await this._processInParallel(chunks, async (chunkText, i) => {
         const chunkTokens = this.estimateTokenCount(chunkText);
 
         // Build small context window by mapping chunk back to entries (same as non-streaming mode)
@@ -723,7 +764,6 @@ async translateSubtitle(subtitleContent, sourceLanguage, targetLanguage, customP
         }
 
         const translated = this.cleanTranslatedSubtitle(chunkBuffer);
-        translatedChunks.push(translated);
 
         // Notify completion of full chunk
         if (typeof onChunk === 'function') {
@@ -732,11 +772,13 @@ async translateSubtitle(subtitleContent, sourceLanguage, targetLanguage, customP
           } catch (_) {}
         }
 
-        // Small delay between chunks to avoid rate limiting
-        if (i < chunks.length - 1) {
+        // Small delay between chunks to avoid rate limiting (only in sequential mode)
+        if (concurrency === 1 && i < chunks.length - 1) {
           await new Promise(r => setTimeout(r, 500));
         }
-      }
+
+        return translated;
+      }, concurrency);
 
       log.debug(() => `[Gemini] All chunks streamed and translated (${chunks.length} chunks)`);
       const merged = translatedChunks.join('\n\n');

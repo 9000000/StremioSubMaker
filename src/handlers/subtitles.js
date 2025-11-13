@@ -1723,7 +1723,10 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
     // Setup progressive partial saving
     const translatedEntries = [];
     let lastFlush = Date.now();
-    const flushInterval = 15000; // Flush every 15 seconds
+    // Flush interval: How often to save partial results (default: 30s)
+    // Reduced from 15s to decrease I/O overhead
+    // Configurable via PARTIAL_FLUSH_INTERVAL_MS environment variable
+    const flushInterval = parseInt(process.env.PARTIAL_FLUSH_INTERVAL_MS) || 30000; // Flush every 30 seconds (was 15s)
 
     const savePartial = async () => {
       if (translatedEntries.length === 0) return;

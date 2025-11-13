@@ -10,27 +10,64 @@ const Redis = require('ioredis');
  * - LRU eviction based on size limits
  * - Atomic operations
  * - High availability and horizontal scaling
+ * - Optional Redis Sentinel for automatic failover (enterprise HA)
  */
 class RedisStorageAdapter extends StorageAdapter {
   constructor(options = {}) {
     super();
 
-    this.options = {
-      host: options.host || process.env.REDIS_HOST || 'localhost',
-      port: options.port || process.env.REDIS_PORT || 6379,
-      password: options.password || process.env.REDIS_PASSWORD || undefined,
-      db: options.db || process.env.REDIS_DB || 0,
-      keyPrefix: options.keyPrefix || 'stremio:',
-      maxRetriesPerRequest: 3,
-      retryStrategy: (times) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-      ...options
-    };
+    // Check if Redis Sentinel is enabled (disabled by default)
+    const sentinelEnabled = process.env.REDIS_SENTINEL_ENABLED === 'true' || options.sentinelEnabled === true;
+
+    if (sentinelEnabled) {
+      // Redis Sentinel configuration for HA deployments
+      const sentinels = process.env.REDIS_SENTINELS
+        ? process.env.REDIS_SENTINELS.split(',').map(s => {
+            const [host, port] = s.trim().split(':');
+            return { host, port: parseInt(port) || 26379 };
+          })
+        : options.sentinels || [{ host: 'localhost', port: 26379 }];
+
+      const sentinelName = process.env.REDIS_SENTINEL_NAME || options.sentinelName || 'mymaster';
+
+      this.options = {
+        sentinels,
+        name: sentinelName,
+        password: options.password || process.env.REDIS_PASSWORD || undefined,
+        db: options.db || process.env.REDIS_DB || 0,
+        keyPrefix: options.keyPrefix || 'stremio:',
+        maxRetriesPerRequest: 3,
+        retryStrategy: (times) => {
+          const delay = Math.min(times * 50, 2000);
+          return delay;
+        },
+        sentinelRetryStrategy: (times) => {
+          const delay = Math.min(times * 100, 3000);
+          return delay;
+        },
+        ...options
+      };
+      log.debug(() => `[Redis] Sentinel mode enabled: ${sentinelName} with ${sentinels.length} sentinel(s)`);
+    } else {
+      // Standard Redis configuration (default for single-user deployments)
+      this.options = {
+        host: options.host || process.env.REDIS_HOST || 'localhost',
+        port: options.port || process.env.REDIS_PORT || 6379,
+        password: options.password || process.env.REDIS_PASSWORD || undefined,
+        db: options.db || process.env.REDIS_DB || 0,
+        keyPrefix: options.keyPrefix || 'stremio:',
+        maxRetriesPerRequest: 3,
+        retryStrategy: (times) => {
+          const delay = Math.min(times * 50, 2000);
+          return delay;
+        },
+        ...options
+      };
+    }
 
     this.client = null;
     this.initialized = false;
+    this.sentinelMode = sentinelEnabled;
   }
 
   /**
