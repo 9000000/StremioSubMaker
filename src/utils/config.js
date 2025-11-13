@@ -119,6 +119,11 @@ function normalizeConfig(config) {
     bypassCacheConfig: {
       ...defaults.bypassCacheConfig,
       ...(config.bypassCacheConfig || config.tempCache || {})
+    },
+    // Deep merge advanced settings to preserve environment variable defaults
+    advancedSettings: {
+      ...defaults.advancedSettings,
+      ...(config.advancedSettings || {})
     }
   };
 
@@ -193,13 +198,28 @@ function encodeConfig(config) {
  * @returns {Object} - Default configuration
  */
 function getDefaultConfig() {
+  // Read advanced settings from environment variables with fallback defaults
+  const advancedSettings = {
+    maxOutputTokens: parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS) || 65536,
+    chunkSize: 12000,
+    translationTimeout: parseInt(process.env.GEMINI_TRANSLATION_TIMEOUT) || 600, // seconds
+    maxRetries: process.env.GEMINI_MAX_RETRIES !== undefined ? parseInt(process.env.GEMINI_MAX_RETRIES) : 3,
+    // Extended thinking (0 = disabled, -1 = dynamic, >0 = fixed budget)
+    thinkingBudget: process.env.GEMINI_THINKING_BUDGET !== undefined ? parseInt(process.env.GEMINI_THINKING_BUDGET) : 0,
+    // Sampling parameters
+    temperature: process.env.GEMINI_TEMPERATURE !== undefined ? parseFloat(process.env.GEMINI_TEMPERATURE) : 0.8,
+    topK: process.env.GEMINI_TOP_K !== undefined ? parseInt(process.env.GEMINI_TOP_K) : 40,
+    topP: process.env.GEMINI_TOP_P !== undefined ? parseFloat(process.env.GEMINI_TOP_P) : 0.95
+  };
+
   return {
     noTranslationMode: false, // If true, skip translation and just fetch subtitles
     noTranslationLanguages: [], // Languages to fetch when in no-translation mode
     sourceLanguages: [],
     targetLanguages: [],
     geminiApiKey: '',
-    geminiModel: 'gemini-flash-lite-latest',
+    // Use env variable for model if set, otherwise use default
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite-09-2025',
     translationPrompt: DEFAULT_TRANSLATION_PROMPT,
     subtitleProviders: {
       opensubtitles: {
@@ -234,12 +254,7 @@ function getDefaultConfig() {
     // Minimum size for a subtitle file to be considered valid (bytes)
     // Prevents attempting to load/translate obviously broken files
     minSubtitleSizeBytes: 200,
-    advancedSettings: {
-      maxOutputTokens: 65536,
-      chunkSize: 12000,
-      translationTimeout: 600, // seconds
-      maxRetries: 5
-    }
+    advancedSettings
   };
 }
 

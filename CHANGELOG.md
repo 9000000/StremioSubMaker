@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 **Translation Engine - Complete Rewrite:**
 - Completely rewrote subtitle translation workflow with structure-first approach to eliminate sync problems
 - NEW: Translation engine now preserves original SRT timing (timings never sent to AI, can't be modified)
-- Hardcoded gemini-flash-8b-1.5 (alias: gemini-flash-lite-latest) for consistency across all translations
+- Hardcoded gemini-flash-lite-09-2025 for consistency across all translations
 - Model selection UI will return in future versions with workflow optimization for different models
 
 **New Features and Updates:**
@@ -25,7 +25,7 @@ All notable changes to this project will be documented in this file.
 - Parallel translation chunk processing: Process multiple Gemini chunks simultaneously (EXPERIMENTAL - DISABLED BY DEFAULT)
 - Redis Sentinel support (OPTIONAL - disabled by default)
 - High-performance logging overhaul: Lazy evaluation with callbacks for all 520+ log statements eliminates 40-70% CPU overhead from string interpolation on filtered logs
-- Increased entry cache: 10,000 → 50,000 entries (5x capacity, improves cache hit rate from ~60% to ~75-85%)
+- Increased entry cache: 10,000 → 100,000 entries (5x capacity, improves cache hit rate from ~60% to ~75-85%)
 - Optimized partial cache flushing: Flush interval increased from 15s → 30s (50% less I/O overhead)
 - Enhanced response compression: Maximum compression (level 9) for SRT files: 10-15x bandwidth reduction (500KB → 35KB typical)
 - Async file logging with buffering replaces synchronous writes, eliminating event loop blocking (1-5ms per log) that caused 100-300ms p99 latency spikes under load

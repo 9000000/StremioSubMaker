@@ -43,11 +43,48 @@ class GeminiService {
     this.model = model;
     this.baseUrl = GEMINI_API_URL;
 
-    // Advanced settings with defaults
-    this.maxOutputTokens = advancedSettings.maxOutputTokens || 65536;
-    this.timeout = (advancedSettings.translationTimeout || 600) * 1000; // Convert to milliseconds
-    this.maxRetries = advancedSettings.maxRetries !== undefined ? advancedSettings.maxRetries : 0;
-    this.thinkingBudget = advancedSettings.thinkingBudget !== undefined ? advancedSettings.thinkingBudget : 1000;
+    // Advanced settings with environment variable fallbacks
+    // Priority: advancedSettings param > environment variables > hardcoded defaults
+
+    // Max output tokens (default: 65536)
+    this.maxOutputTokens = advancedSettings.maxOutputTokens
+      || parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS)
+      || 65536;
+
+    // Timeout in milliseconds (env is in seconds, convert to ms)
+    const timeoutSeconds = advancedSettings.translationTimeout
+      || parseInt(process.env.GEMINI_TRANSLATION_TIMEOUT)
+      || 600;
+    this.timeout = timeoutSeconds * 1000;
+
+    // Max retries (default: 3)
+    this.maxRetries = advancedSettings.maxRetries !== undefined
+      ? advancedSettings.maxRetries
+      : (process.env.GEMINI_MAX_RETRIES !== undefined ? parseInt(process.env.GEMINI_MAX_RETRIES) : 3);
+
+    // Thinking budget (default: 0)
+    // Special handling: -1 means dynamic thinking (null to API)
+    const envThinking = process.env.GEMINI_THINKING_BUDGET !== undefined
+      ? parseInt(process.env.GEMINI_THINKING_BUDGET)
+      : 0;
+    this.thinkingBudget = advancedSettings.thinkingBudget !== undefined
+      ? advancedSettings.thinkingBudget
+      : envThinking;
+
+    // Temperature (default: 0.8)
+    this.temperature = advancedSettings.temperature !== undefined
+      ? advancedSettings.temperature
+      : (process.env.GEMINI_TEMPERATURE !== undefined ? parseFloat(process.env.GEMINI_TEMPERATURE) : 0.8);
+
+    // Top-K (default: 40)
+    this.topK = advancedSettings.topK !== undefined
+      ? advancedSettings.topK
+      : (process.env.GEMINI_TOP_K !== undefined ? parseInt(process.env.GEMINI_TOP_K) : 40);
+
+    // Top-P (default: 0.95)
+    this.topP = advancedSettings.topP !== undefined
+      ? advancedSettings.topP
+      : (process.env.GEMINI_TOP_P !== undefined ? parseFloat(process.env.GEMINI_TOP_P) : 0.95);
   }
 
   /**
@@ -141,7 +178,7 @@ class GeminiService {
   /**
    * Retry a function with exponential backoff
    */
-  async retryWithBackoff(fn, maxRetries = null, baseDelay = 2000) {
+  async retryWithBackoff(fn, maxRetries = null, baseDelay = 3000) {
     maxRetries = maxRetries !== null ? maxRetries : this.maxRetries;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
@@ -151,13 +188,21 @@ class GeminiService {
         const isTimeout = error.message.includes('timeout') || error.code === 'ECONNABORTED';
         const isNetworkError = error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND';
         const isSocketHangup = error.message.includes('socket hang up') || error.code === 'ECONNRESET';
+        const isRateLimit = error.response?.status === 429;
+        const isServiceUnavailable = error.response?.status === 503;
 
-        if (isLastAttempt || (!isTimeout && !isNetworkError && !isSocketHangup)) {
+        // Retry for: timeouts, network errors, rate limits (429), and service unavailable (503)
+        const isRetryable = isTimeout || isNetworkError || isSocketHangup || isRateLimit || isServiceUnavailable;
+
+        if (isLastAttempt || !isRetryable) {
           throw error;
         }
 
         const delay = baseDelay * Math.pow(2, attempt);
-        const errorType = isSocketHangup ? 'socket hang up' : isTimeout ? 'timeout' : 'network error';
+        const errorType = isRateLimit ? '429 rate limit' :
+                          isServiceUnavailable ? '503 service unavailable' :
+                          isSocketHangup ? 'socket hang up' :
+                          isTimeout ? 'timeout' : 'network error';
         log.debug(() => `[Gemini] Attempt ${attempt + 1} failed (${errorType}), retrying in ${delay}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
@@ -203,6 +248,29 @@ class GeminiService {
           Math.max(8192, estimatedSubtitleTokens * 3.5)
         ));
 
+        // Prepare generation config
+        const generationConfig = {
+          temperature: this.temperature,
+          topK: this.topK,
+          topP: this.topP,
+          maxOutputTokens: estimatedOutputTokens + thinkingReserve
+        };
+
+        // Add thinking config based on thinking budget setting
+        // -1 = dynamic thinking (null), 0 = disabled (omit), >0 = fixed budget
+        if (this.thinkingBudget === -1) {
+          // Dynamic thinking: let the model decide
+          generationConfig.thinkingConfig = {
+            thinkingBudget: null  // null means dynamic
+          };
+        } else if (this.thinkingBudget > 0) {
+          // Fixed thinking budget
+          generationConfig.thinkingConfig = {
+            thinkingBudget: this.thinkingBudget
+          };
+        }
+        // If thinkingBudget is 0, don't add thinkingConfig at all (disabled)
+
         // Call Gemini API
         const response = await axios.post(
           `${this.baseUrl}/models/${this.model}:generateContent`,
@@ -212,15 +280,7 @@ class GeminiService {
                 text: userPrompt
               }]
             }],
-            generationConfig: {
-              temperature: 0.8,
-              topK: 40,
-              topP: 0.95,
-              maxOutputTokens: estimatedOutputTokens + thinkingReserve,
-              thinkingConfig: {
-                thinkingBudget: this.thinkingBudget
-              }
-            }
+            generationConfig
           },
           {
             params: { key: this.apiKey },
