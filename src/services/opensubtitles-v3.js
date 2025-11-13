@@ -44,15 +44,20 @@ class OpenSubtitlesV3Service {
     try {
       const { imdb_id, type, season, episode, languages } = params;
 
-      // Remove 'tt' prefix from IMDB ID if present
-      const cleanImdbId = imdb_id.replace(/^tt/, '');
+      // OpenSubtitles V3 API requires the full IMDB ID with 'tt' prefix
+      // Ensure it has the prefix
+      const fullImdbId = imdb_id.startsWith('tt') ? imdb_id : `tt${imdb_id}`;
 
       // Build URL based on type
+      // Note: OpenSubtitles V3 API uses 'series' instead of 'episode' for TV shows
       let url;
       if (type === 'episode' && season && episode) {
-        url = `${type}/${cleanImdbId}:${season}:${episode}.json`;
+        url = `series/${fullImdbId}:${season}:${episode}.json`;
+      } else if (type === 'movie') {
+        url = `movie/${fullImdbId}.json`;
       } else {
-        url = `${type}/${cleanImdbId}.json`;
+        // Fallback for other types (shouldn't happen in practice)
+        url = `${type}/${fullImdbId}.json`;
       }
 
       console.log('[OpenSubtitles V3] Searching:', url);

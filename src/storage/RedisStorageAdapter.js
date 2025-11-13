@@ -84,7 +84,13 @@ class RedisStorageAdapter extends StorageAdapter {
       this.initialized = true;
       console.log('Redis storage adapter initialized successfully');
     } catch (error) {
-      console.error('Failed to initialize Redis storage adapter:', error);
+      // Log a concise error message instead of the full stack trace
+      const isConnectionError = error.code === 'ECONNREFUSED' || error.message === 'Redis connection timeout';
+      if (isConnectionError) {
+        console.log(`Redis connection failed: Unable to connect to ${this.options.host}:${this.options.port}`);
+      } else {
+        console.error('Failed to initialize Redis storage adapter:', error.message);
+      }
       throw error;
     }
   }

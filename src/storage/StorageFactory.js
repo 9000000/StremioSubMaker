@@ -47,11 +47,9 @@ class StorageFactory {
 
       return adapter;
     } catch (error) {
-      console.error('Failed to initialize storage adapter:', error);
-
       // If Redis fails, fall back to filesystem
       if (storageType === 'redis') {
-        console.log('Redis initialization failed, falling back to filesystem storage...');
+        console.log('Falling back to filesystem storage...');
         adapter = new FilesystemStorageAdapter();
         await adapter.initialize();
         StorageFactory.instance = adapter;
@@ -61,6 +59,7 @@ class StorageFactory {
         return adapter;
       }
 
+      console.error('Failed to initialize storage adapter:', error);
       throw error;
     }
   }
