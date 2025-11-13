@@ -229,7 +229,7 @@ Translate to {target_language}.`;
                 const decoded = atob(configStr);
                 return JSON.parse(decoded);
             } catch (e) {
-                console.error('Failed to parse config:', e);
+                // Failed to parse config
             }
         }
 
@@ -292,7 +292,6 @@ Translate to {target_language}.`;
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                console.log(`[Languages] Attempt ${attempt}/${maxRetries} - Fetching from /api/languages...`);
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
@@ -305,19 +304,16 @@ Translate to {target_language}.`;
                 });
 
                 clearTimeout(timeoutId);
-                console.log(`[Languages] Response status: ${response.status}`);
 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
 
                 const languages = await response.json();
-                console.log(`[Languages] Successfully loaded ${languages.length} languages`);
 
                 // Filter out special fake languages (like ___upload for File Translation) and dedupe variants
                 const filtered = languages.filter(lang => !lang.code.startsWith('___'));
                 allLanguages = dedupeLanguagesForUI(filtered);
-                console.log(`[Languages] After filtering/dedup: ${allLanguages.length} languages`);
 
                 renderLanguageGrid('sourceLanguages', 'selectedSourceLanguages', allLanguages);
                 renderLanguageGrid('targetLanguages', 'selectedTargetLanguages', allLanguages);
@@ -328,26 +324,18 @@ Translate to {target_language}.`;
                 updateSelectedChips('target', currentConfig.targetLanguages);
                 updateSelectedChips('notranslation', currentConfig.noTranslationLanguages);
 
-                console.log('[Languages] Language loading completed successfully');
                 return; // Success - exit function
             } catch (error) {
                 lastError = error;
-                console.error(`[Languages] Attempt ${attempt} failed:`, error.message);
 
                 if (attempt < maxRetries) {
                     const delayMs = 1000 * attempt; // Exponential backoff: 1s, 2s, 3s
-                    console.log(`[Languages] Retrying in ${delayMs}ms...`);
                     await new Promise(resolve => setTimeout(resolve, delayMs));
                 }
             }
         }
 
         // All retries failed
-        console.error('[Languages] All retry attempts failed. Error:', lastError);
-        console.error('[Languages] Error details:', {
-            message: lastError.message,
-            name: lastError.name
-        });
         showAlert(`Failed to load languages after ${maxRetries} attempts: ${lastError.message}. Please refresh the page.`, 'error');
     }
 
@@ -582,16 +570,11 @@ Translate to {target_language}.`;
             toggleProviderConfig('opensubtitlesConfig', e.target.checked);
         });
 
-        // OpenSubtitles implementation type selection
-        // Use event delegation for more reliable event handling
-        const opensubtitlesConfig = document.getElementById('opensubtitlesConfig');
-        if (opensubtitlesConfig) {
-            opensubtitlesConfig.addEventListener('change', (e) => {
-                if (e.target && e.target.name === 'opensubtitlesImplementation') {
-                    handleOpenSubtitlesImplChange(e);
-                }
-            });
-        }
+        // OpenSubtitles implementation type - attach listeners directly to radio buttons
+        const implRadios = document.querySelectorAll('input[name="opensubtitlesImplementation"]');
+        implRadios.forEach(radio => {
+            radio.addEventListener('change', handleOpenSubtitlesImplChange);
+        });
 
         // Password visibility toggle
         const togglePasswordBtn = document.getElementById('toggleOpenSubsPassword');
@@ -643,9 +626,6 @@ Translate to {target_language}.`;
             });
         });
 
-        // Prompt style selector
-        document.getElementById('promptStyle').addEventListener('change', handlePromptStyleChange);
-
         // Advanced settings toggle (element may not exist in current UI)
         const showAdv = document.getElementById('showAdvancedSettings');
         if (showAdv) {
@@ -667,53 +647,35 @@ Translate to {target_language}.`;
         // No need to attach individual listeners here
     }
 
-    function handlePromptStyleChange(e) {
-        // Prompt style change handler - no longer needed for custom prompts
-        // Keeping this function for potential future extensions
-    }
-
     function handleOpenSubtitlesImplChange(e) {
-        if (!e || !e.target) {
-            console.error('[OpenSubtitles] Invalid event object passed to handleOpenSubtitlesImplChange');
-            return;
-        }
-
-        const implementationType = e.target.value;
-        console.log('[OpenSubtitles] Implementation type changed to:', implementationType);
-
         const authConfig = document.getElementById('opensubtitlesAuthConfig');
+        if (!authConfig) return;
 
-        if (!authConfig) {
-            console.error('[OpenSubtitles] Auth config element not found');
-            return;
-        }
-
-        // Show/hide auth fields based on implementation type
-        if (implementationType === 'auth') {
-            authConfig.style.display = 'block';
-            console.log('[OpenSubtitles] Auth fields shown');
+        // Get implementation type from event or checked radio button
+        let implementationType;
+        if (e && e.target && e.target.value) {
+            implementationType = e.target.value;
         } else {
-            authConfig.style.display = 'none';
-            console.log('[OpenSubtitles] Auth fields hidden');
+            const checkedRadio = document.querySelector('input[name="opensubtitlesImplementation"]:checked');
+            implementationType = checkedRadio ? checkedRadio.value : 'v3';
         }
 
-        // Update visual selection state
-        try {
-            document.querySelectorAll('input[name="opensubtitlesImplementation"]').forEach(radio => {
-                const label = radio.closest('label');
-                if (label) {
-                    if (radio.checked) {
-                        label.style.borderColor = 'var(--primary)';
-                        label.style.background = 'var(--surface-light)';
-                    } else {
-                        label.style.borderColor = 'var(--border)';
-                        label.style.background = 'white';
-                    }
+        // Show/hide auth fields
+        authConfig.style.display = implementationType === 'auth' ? 'block' : 'none';
+
+        // Update visual selection state for all radio buttons
+        document.querySelectorAll('input[name="opensubtitlesImplementation"]').forEach(radio => {
+            const label = radio.closest('label');
+            if (label) {
+                if (radio.checked) {
+                    label.style.borderColor = 'var(--primary)';
+                    label.style.background = 'var(--surface-light)';
+                } else {
+                    label.style.borderColor = 'var(--border)';
+                    label.style.background = 'white';
                 }
-            });
-        } catch (error) {
-            console.error('[OpenSubtitles] Error updating visual state:', error);
-        }
+            }
+        });
     }
 
     /**
@@ -1040,7 +1002,6 @@ Translate to {target_language}.`;
             }, 3000);
 
         } catch (error) {
-            console.error('Failed to fetch models:', error);
             statusDiv.innerHTML = '✗ Failed to fetch models. Check your API key.';
             statusDiv.className = 'model-status error';
 
@@ -1155,19 +1116,23 @@ Translate to {target_language}.`;
 
     function toggleProviderConfig(configId, enabled) {
         const configDiv = document.getElementById(configId);
-        if (configDiv) {
-            configDiv.style.opacity = enabled ? '1' : '0.5';
+        if (!configDiv) return;
+        
+        configDiv.style.opacity = enabled ? '1' : '0.5';
 
-            if (configId === 'opensubtitlesConfig') {
-                // For OpenSubtitles, disable individual controls instead of blocking pointer events
-                const inputs = configDiv.querySelectorAll('input, select, textarea');
-                inputs.forEach(input => {
-                    input.disabled = !enabled;
-                });
-            } else {
-                // For other providers, use pointer-events as before
-                configDiv.style.pointerEvents = enabled ? 'auto' : 'none';
-            }
+        if (configId === 'opensubtitlesConfig') {
+            // For OpenSubtitles, disable individual controls instead of blocking pointer events
+            const inputs = configDiv.querySelectorAll('input, select, textarea');
+            inputs.forEach(input => {
+                input.disabled = !enabled;
+            });
+            
+            // Always update auth fields visibility (whether enabled or disabled)
+            // This ensures correct state in all scenarios: enabled/disabled, v3/auth, with/without credentials
+            handleOpenSubtitlesImplChange();
+        } else {
+            // For other providers, use pointer-events as before
+            configDiv.style.pointerEvents = enabled ? 'auto' : 'none';
         }
     }
 
@@ -1181,7 +1146,6 @@ Translate to {target_language}.`;
             localStorage.setItem(CACHE_KEY, JSON.stringify(config));
             localStorage.setItem(CACHE_EXPIRY_KEY, Date.now().toString());
         } catch (error) {
-            console.error('Failed to cache configuration:', error);
             // Continue anyway - caching is optional
         }
     }
@@ -1200,7 +1164,6 @@ Translate to {target_language}.`;
             const config = JSON.parse(cachedConfig);
             return config;
         } catch (error) {
-            console.error('Failed to load cached configuration:', error);
             return null;
         }
     }
@@ -1212,9 +1175,8 @@ Translate to {target_language}.`;
         try {
             localStorage.removeItem(CACHE_KEY);
             localStorage.removeItem(CACHE_EXPIRY_KEY);
-            console.log('Configuration cache cleared');
         } catch (error) {
-            console.error('Failed to clear cache:', error);
+            // Failed to clear cache
         }
     }
 
@@ -1271,17 +1233,8 @@ Translate to {target_language}.`;
         document.getElementById('opensubtitlesPassword').value =
             currentConfig.subtitleProviders?.opensubtitles?.password || '';
 
+        // toggleProviderConfig will call handleOpenSubtitlesImplChange to set auth fields visibility
         toggleProviderConfig('opensubtitlesConfig', opensubtitlesEnabled);
-
-        // Trigger implementation change to show/hide auth fields and update visuals
-        // Use setTimeout to ensure DOM is fully ready
-        setTimeout(() => {
-            try {
-                handleOpenSubtitlesImplChange({ target: { value: implementationType } });
-            } catch (error) {
-                console.error('[Config] Error initializing OpenSubtitles auth fields:', error);
-            }
-        }, 0);
 
         // SubDL
         const subdlEnabled = (isFirstRun ? false : (currentConfig.subtitleProviders?.subdl?.enabled !== false));
@@ -1456,7 +1409,6 @@ Translate to {target_language}.`;
         try {
             if (existingToken) {
                 // Try to update existing session first
-                console.log('Updating existing session...');
                 const response = await fetch(`/api/update-session/${existingToken}`, {
                     method: 'POST',
                     headers: {
@@ -1474,15 +1426,12 @@ Translate to {target_language}.`;
                 isUpdate = sessionData.updated;
 
                 if (sessionData.updated) {
-                    console.log('Session updated successfully');
                     showAlert('Configuration updated! Changes will take effect immediately in Stremio.', 'success');
                 } else if (sessionData.created) {
-                    console.log('Session expired, created new session');
                     showAlert('Session expired. Please reinstall the addon in Stremio.', 'warning');
                 }
             } else {
                 // No existing token, create new session
-                console.log('Creating new session...');
                 const response = await fetch('/api/create-session', {
                     method: 'POST',
                     headers: {
@@ -1497,18 +1446,11 @@ Translate to {target_language}.`;
 
                 const sessionData = await response.json();
                 configToken = sessionData.token;
-
-                console.log('Session created:', sessionData.type);
-                if (sessionData.type === 'session') {
-                    const expiryDays = Math.floor(sessionData.expiresIn / (24 * 60 * 60 * 1000));
-                    console.log(`Session will expire in ${expiryDays} days of inactivity`);
-                }
             }
 
             // Store token for future updates
             localStorage.setItem(TOKEN_KEY, configToken);
         } catch (error) {
-            console.error('Error with session:', error);
             showAlert('Failed to save configuration: ' + error.message, 'error');
             return;
         }
@@ -1517,9 +1459,6 @@ Translate to {target_language}.`;
         const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
         const baseUrl = isLocalhost ? 'http://localhost:7001' : window.location.origin;
         const installUrl = `${baseUrl}/addon/${configToken}/manifest.json`;
-
-        console.log('Configuration saved!');
-        console.log('Install URL:', installUrl);
 
         // Save to current config
         currentConfig = config;
@@ -1559,8 +1498,6 @@ Translate to {target_language}.`;
             // Stremio protocol format: stremio://localhost:7001/{config}/manifest.json
             const url = new URL(window.installUrl);
             const stremioUrl = `stremio://${url.host}${url.pathname}`;
-            console.log('Opening Stremio:', stremioUrl);
-            console.log('With manifest URL:', window.installUrl);
             window.location.href = stremioUrl;
             showAlert('Opening Stremio...', 'info');
         }
