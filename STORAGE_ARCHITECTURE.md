@@ -12,7 +12,7 @@ SubMaker uses a **dual-storage architecture** to balance performance and persist
 ### 1. Translation Cache (TRANSLATION)
 - **What:** Permanently cached translated subtitles
 - **Storage:** Redis (configurable via `STORAGE_TYPE`)
-- **Default Limit:** 3GB (configurable via `CACHE_LIMIT_TRANSLATION`)
+- **Default Limit:** 6GB (configurable via `CACHE_LIMIT_TRANSLATION`)
 - **TTL:** None (permanent until evicted by LRU)
 - **Purpose:** Avoid re-translating the same subtitle
 - **Eviction:** Oldest/least-used first when limit reached
@@ -20,7 +20,7 @@ SubMaker uses a **dual-storage architecture** to balance performance and persist
 ### 2. Bypass Cache (BYPASS)
 - **What:** User-scoped temporary translations
 - **Storage:** Redis
-- **Default Limit:** 1GB (configurable via `CACHE_LIMIT_BYPASS`)
+- **Default Limit:** 2GB (configurable via `CACHE_LIMIT_BYPASS`)
 - **TTL:** 12 hours
 - **Purpose:** Temporary translations without polluting permanent cache
 - **Eviction:** Auto-expire after 12h OR LRU when limit reached
@@ -28,7 +28,7 @@ SubMaker uses a **dual-storage architecture** to balance performance and persist
 ### 3. Partial Cache (PARTIAL)
 - **What:** In-progress translations (partial results)
 - **Storage:** Redis
-- **Default Limit:** 1GB (configurable via `CACHE_LIMIT_PARTIAL`)
+- **Default Limit:** 2GB (configurable via `CACHE_LIMIT_PARTIAL`)
 - **TTL:** 1 hour
 - **Purpose:** Show progress to concurrent users during translation
 - **Eviction:** Auto-expire after 1h OR LRU when limit reached
@@ -36,7 +36,7 @@ SubMaker uses a **dual-storage architecture** to balance performance and persist
 ### 4. Sync Cache (SYNC)
 - **What:** User-synced subtitle files
 - **Storage:** Filesystem (`.cache/sync_cache/`)
-- **Default Limit:** 1GB (configurable via `CACHE_LIMIT_SYNC`)
+- **Default Limit:** 2GB (configurable via `CACHE_LIMIT_SYNC`)
 - **TTL:** None (permanent)
 - **Purpose:** Store manually synchronized subtitles
 - **Eviction:** Oldest first when limit reached
@@ -265,10 +265,10 @@ curl http://localhost:7001/api/session-stats
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `STORAGE_TYPE` | `filesystem` | `redis` or `filesystem` |
-| `CACHE_LIMIT_TRANSLATION` | `3GB` | Translation cache size (bytes) |
-| `CACHE_LIMIT_BYPASS` | `1GB` | Bypass cache size (bytes) |
-| `CACHE_LIMIT_PARTIAL` | `1GB` | Partial cache size (bytes) |
-| `CACHE_LIMIT_SYNC` | `1GB` | Sync cache size (bytes) |
+| `CACHE_LIMIT_TRANSLATION` | `6GB` | Translation cache size (bytes) |
+| `CACHE_LIMIT_BYPASS` | `2GB` | Bypass cache size (bytes) |
+| `CACHE_LIMIT_PARTIAL` | `2GB` | Partial cache size (bytes) |
+| `CACHE_LIMIT_SYNC` | `2GB` | Sync cache size (bytes) |
 | `SESSION_MAX_SESSIONS` | `50000` | Maximum concurrent sessions |
 | `REDIS_HOST` | `localhost` | Redis server hostname |
 | `REDIS_PORT` | `6379` | Redis server port |

@@ -131,21 +131,21 @@ StorageAdapter.CACHE_TYPES = {
 // For filesystem storage, these are soft limits (enforced by cleanup routines)
 //
 // IMPORTANT: Total cache size should be LESS than Redis maxmemory setting
-// Default: 6GB total (fits in 8GB Redis with 2GB overhead for Redis internals)
+// Default: 12GB total (fits in 16GB Redis with 4GB overhead for Redis internals)
 //
 // Environment variables to override:
-// - CACHE_LIMIT_TRANSLATION (default: 3GB)
-// - CACHE_LIMIT_BYPASS (default: 1GB)
-// - CACHE_LIMIT_PARTIAL (default: 1GB)
-// - CACHE_LIMIT_SYNC (default: 1GB)
+// - CACHE_LIMIT_TRANSLATION (default: 6GB)
+// - CACHE_LIMIT_BYPASS (default: 2GB)
+// - CACHE_LIMIT_PARTIAL (default: 2GB)
+// - CACHE_LIMIT_SYNC (default: 2GB)
 //
 // Example for larger deployments:
 // CACHE_LIMIT_TRANSLATION=50000000000 (50GB) - requires Redis with 120GB+ RAM
 StorageAdapter.SIZE_LIMITS = {
-  [StorageAdapter.CACHE_TYPES.TRANSLATION]: parseInt(process.env.CACHE_LIMIT_TRANSLATION) || (3 * 1024 * 1024 * 1024), // 3GB (was 50GB)
-  [StorageAdapter.CACHE_TYPES.BYPASS]: parseInt(process.env.CACHE_LIMIT_BYPASS) || (1 * 1024 * 1024 * 1024),           // 1GB (was 10GB)
-  [StorageAdapter.CACHE_TYPES.PARTIAL]: parseInt(process.env.CACHE_LIMIT_PARTIAL) || (1 * 1024 * 1024 * 1024),         // 1GB (was 10GB)
-  [StorageAdapter.CACHE_TYPES.SYNC]: parseInt(process.env.CACHE_LIMIT_SYNC) || (1 * 1024 * 1024 * 1024),               // 1GB (was 50GB)
+  [StorageAdapter.CACHE_TYPES.TRANSLATION]: parseInt(process.env.CACHE_LIMIT_TRANSLATION) || (6 * 1024 * 1024 * 1024), // 6GB (was 3GB)
+  [StorageAdapter.CACHE_TYPES.BYPASS]: parseInt(process.env.CACHE_LIMIT_BYPASS) || (2 * 1024 * 1024 * 1024),           // 2GB (was 1GB)
+  [StorageAdapter.CACHE_TYPES.PARTIAL]: parseInt(process.env.CACHE_LIMIT_PARTIAL) || (2 * 1024 * 1024 * 1024),         // 2GB (was 1GB)
+  [StorageAdapter.CACHE_TYPES.SYNC]: parseInt(process.env.CACHE_LIMIT_SYNC) || (2 * 1024 * 1024 * 1024),               // 2GB (was 1GB)
   [StorageAdapter.CACHE_TYPES.SESSION]: null                                                                             // No limit
 };
 
