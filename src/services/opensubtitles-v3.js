@@ -2,9 +2,10 @@ const axios = require('axios');
 const { toISO6391, toISO6392 } = require('../utils/languages');
 const { handleSearchError, handleDownloadError } = require('../utils/apiErrorHandler');
 const { httpAgent, httpsAgent } = require('../utils/httpAgents');
+const { version } = require('../utils/version');
 
 const OPENSUBTITLES_V3_BASE_URL = 'https://opensubtitles-v3.strem.io/subtitles/';
-const USER_AGENT = 'SubMaker v1.0.3';
+const USER_AGENT = `SubMaker v${version}`;
 
 /**
  * OpenSubtitles V3 Service - Uses official Stremio OpenSubtitles V3 addon
