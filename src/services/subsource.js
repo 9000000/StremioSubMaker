@@ -292,8 +292,8 @@ class SubSourceService {
         const originalLang = sub.language || 'en';
         const normalizedLang = this.normalizeLanguageCode(originalLang);
 
-        // SubSource provides subtitle ID - check multiple possible field names
-        const subtitleId = sub.id || sub.subtitleId || sub.subtitle_id || sub._id;
+        // SubSource provides subtitle ID - check multiple possible field names (subtitleId is the correct field)
+        const subtitleId = sub.subtitleId || sub.id || sub.subtitle_id || sub._id;
         const fileId = `subsource_${subtitleId}`;
 
         // Log subtitle structure for debugging if ID is missing
@@ -301,21 +301,105 @@ class SubSourceService {
           log.error(() => '[SubSource] WARNING: Subtitle missing ID field');
         }
 
+        // Extract name from releaseInfo array (SubSource stores release names as an array)
+        let extractedName = null;
+        if (sub.releaseInfo && Array.isArray(sub.releaseInfo) && sub.releaseInfo.length > 0) {
+          // Join multiple release names with " / " if there are multiple
+          extractedName = sub.releaseInfo.join(' / ');
+        } else if (sub.releaseInfo && typeof sub.releaseInfo === 'string') {
+          // In case it's a string instead of array
+          extractedName = sub.releaseInfo;
+        }
+
+        // Fallback to other possible field names if releaseInfo not found
+        if (!extractedName) {
+          extractedName = sub.name ||
+                         sub.release_name ||
+                         sub.releaseName ||
+                         sub.fullname ||
+                         sub.fullName ||
+                         sub.full_name ||
+                         sub.file_name ||
+                         sub.fileName ||
+                         sub.filename ||
+                         sub.title ||
+                         sub.subtitle_name ||
+                         sub.subtitleName ||
+                         sub.releasename ||
+                         sub.label ||
+                         sub.description ||
+                         sub.subtitle ||
+                         sub.release ||
+                         null;
+        }
+
+        // If still no name found, construct one from available info
+        let finalName = extractedName;
+        if (!finalName || finalName.trim() === '') {
+          const langName = originalLang || 'Unknown Language';
+          const dlCount = parseInt(sub.downloads || sub.download_count || 0) || 0;
+          finalName = `SubSource ${langName}${dlCount > 0 ? ` (${dlCount} downloads)` : ''}`;
+          log.debug(() => `[SubSource] No name field found for subtitle ${subtitleId}, constructed: ${finalName}`);
+        }
+
+        // Extract upload date from various possible field names (createdAt is the correct field for SubSource)
+        const extractedDate = sub.createdAt ||
+                              sub.created_at ||
+                              sub.upload_date ||
+                              sub.uploadDate ||
+                              sub.date ||
+                              sub.uploaded ||
+                              sub.created ||
+                              sub.date_uploaded ||
+                              sub.dateUploaded ||
+                              sub.upload ||
+                              sub.timestamp ||
+                              sub.create_date ||
+                              sub.createDate ||
+                              undefined;
+
+        // Extract downloads from various possible field names
+        const extractedDownloads = parseInt(
+          sub.downloads ||
+          sub.download_count ||
+          sub.downloadCount ||
+          sub.hi_download_count ||
+          sub.hiDownloadCount ||
+          sub.total_downloads ||
+          sub.totalDownloads ||
+          0
+        ) || 0;
+
+        // Extract rating - SubSource returns rating as an object {good, bad, total}
+        let extractedRating = 0;
+        if (sub.rating && typeof sub.rating === 'object') {
+          // Calculate rating based on good/bad votes
+          const good = parseInt(sub.rating.good) || 0;
+          const bad = parseInt(sub.rating.bad) || 0;
+          const total = good + bad;
+          if (total > 0) {
+            // Convert to 0-10 scale based on percentage of good votes
+            extractedRating = (good / total) * 10;
+          }
+        } else {
+          extractedRating = parseFloat(sub.rating || sub.score || 0) || 0;
+        }
+
         return {
           id: fileId,
           language: originalLang,
           languageCode: normalizedLang,
-          name: sub.name || sub.release_name || sub.fullname || 'Unknown',
-          downloads: parseInt(sub.downloads || sub.download_count) || 0,
-          rating: parseFloat(sub.rating) || 0,
-          uploadDate: sub.upload_date || sub.created_at,
+          name: finalName,
+          downloads: extractedDownloads,
+          rating: extractedRating,
+          uploadDate: extractedDate,
           format: sub.format || 'srt',
           fileId: fileId,
-          downloadLink: sub.download_url || sub.url,
-          hearing_impaired: sub.hearing_impaired || sub.hi || false,
-          foreign_parts_only: false,
+          downloadLink: sub.download_url || sub.downloadUrl || sub.url,
+          hearing_impaired: sub.hearingImpaired || sub.hearing_impaired || sub.hi || false,
+          foreign_parts_only: sub.foreignParts || false,
           machine_translated: false,
-          uploader: sub.uploader || sub.author || 'Unknown',
+          uploader: sub.uploader || sub.author || sub.user || 'Unknown',
           provider: 'subsource',
           // Store SubSource-specific IDs for download
           subsource_id: subtitleId
@@ -337,7 +421,6 @@ class SubSourceService {
       }
 
       const limitedSubtitles = Object.values(groupedByLanguage).flat();
-      log.debug(() => `[SubSource] Found ${subtitles.length} subtitles total, limited to ${limitedSubtitles.length} (max ${MAX_RESULTS_PER_LANGUAGE} per language)`);
       return limitedSubtitles;
 
     } catch (error) {

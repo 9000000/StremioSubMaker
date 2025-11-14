@@ -84,7 +84,7 @@ class OpenSubtitlesV3Service {
 
       log.debug(() => ['[OpenSubtitles V3] Requested languages (normalized):', Array.from(normalizedRequestedLangs).join(', ')]);
 
-      // Filter and map subtitles
+      // Filter subtitles by requested languages
       const filteredSubtitles = allSubtitles
         .map(sub => {
           const normalizedLang = this.normalizeLanguageCode(sub.lang);
@@ -96,40 +96,96 @@ class OpenSubtitlesV3Service {
         .filter(sub => {
           // Keep subtitles that match requested languages
           return sub.normalizedLang && normalizedRequestedLangs.has(sub.normalizedLang);
-        })
-        .map((sub, index) => {
-          // Encode the URL in the fileId for stateless downloads
-          // Use base64 encoding (URL-safe)
-          const encodedUrl = Buffer.from(sub.url).toString('base64url');
-          const fileId = `v3_${encodedUrl}`;
-
-          return {
-            id: fileId,
-            language: sub.lang,
-            languageCode: sub.normalizedLang,
-            name: `OpenSubtitles V3 - ${sub.lang}`,
-            downloads: 0, // V3 API doesn't provide download counts
-            rating: 0, // V3 API doesn't provide ratings
-            uploadDate: null,
-            format: 'srt',
-            fileId: fileId,
-            downloadLink: sub.url,
-            hearing_impaired: false,
-            foreign_parts_only: false,
-            machine_translated: false,
-            uploader: 'OpenSubtitles V3',
-            provider: 'opensubtitles-v3',
-            // Store original URL for direct download
-            _v3Url: sub.url
-          };
         });
 
-      log.debug(() => `[OpenSubtitles V3] Found ${filteredSubtitles.length} matching subtitles`);
-      return filteredSubtitles;
+      // Extract real filenames from Content-Disposition headers (parallel HEAD requests)
+      // This allows proper filename matching instead of just numeric IDs
+      const subtitlesWithNames = await this.extractFilenames(filteredSubtitles);
+
+      return subtitlesWithNames;
 
     } catch (error) {
       return handleSearchError(error, 'OpenSubtitles V3');
     }
+  }
+
+  /**
+   * Extract filenames from subtitle URLs using parallel HEAD requests
+   * @param {Array} subtitles - Array of subtitle objects with urls
+   * @returns {Promise<Array>} - Subtitles with extracted names
+   */
+  async extractFilenames(subtitles) {
+    // Make parallel HEAD requests to extract filenames
+    const filenamePromises = subtitles.map(async (sub) => {
+      try {
+        // Make HEAD request to get Content-Disposition header
+        const response = await axios.head(sub.url, {
+          headers: {
+            'User-Agent': USER_AGENT
+          },
+          timeout: 3000, // 3 second timeout for HEAD requests
+          httpAgent,
+          httpsAgent
+        });
+
+        // Extract filename from Content-Disposition header
+        const contentDisposition = response.headers['content-disposition'];
+        if (contentDisposition) {
+          const match = contentDisposition.match(/filename="(.+?)"/);
+          if (match && match[1]) {
+            // Remove .srt extension for cleaner display
+            const filename = match[1].replace(/\.srt$/i, '');
+            return filename;
+          }
+        }
+
+        // Fallback: no filename found
+        return null;
+
+      } catch (error) {
+        // Fallback on error (timeout, network issue, etc.)
+        log.debug(() => `[OpenSubtitles V3] Failed to extract filename for ${sub.id}: ${error.message}`);
+        return null;
+      }
+    });
+
+    // Wait for all HEAD requests to complete
+    const extractedNames = await Promise.all(filenamePromises);
+
+    // Map subtitles with extracted names
+    return subtitles.map((sub, index) => {
+      const encodedUrl = Buffer.from(sub.url).toString('base64url');
+      const fileId = `v3_${encodedUrl}`;
+
+      // Use extracted name if available, otherwise fallback to generic name
+      let finalName;
+      if (extractedNames[index]) {
+        finalName = extractedNames[index];
+      } else {
+        const langName = this.getLanguageDisplayName(sub.lang);
+        finalName = `OpenSubtitles (${langName}) - #${sub.id}`;
+      }
+
+      return {
+        id: fileId,
+        language: sub.lang,
+        languageCode: sub.normalizedLang,
+        name: finalName,
+        downloads: 0, // V3 API doesn't provide download counts
+        rating: 0, // V3 API doesn't provide ratings
+        uploadDate: null,
+        format: 'srt',
+        fileId: fileId,
+        downloadLink: sub.url,
+        hearing_impaired: sub.hearing_impaired || sub.hi || false,
+        foreign_parts_only: false,
+        machine_translated: false,
+        uploader: 'OpenSubtitles V3',
+        provider: 'opensubtitles-v3',
+        // Store original URL for direct download
+        _v3Url: sub.url
+      };
+    });
   }
 
   /**
@@ -198,6 +254,57 @@ class OpenSubtitlesV3Service {
 
     // All retries exhausted - throw the last error
     handleDownloadError(lastError, 'OpenSubtitles V3');
+  }
+
+  /**
+   * Get human-readable language name for display
+   * @param {string} languageCode - Language code (ISO-639-1, ISO-639-2, or special code)
+   * @returns {string} - Display name (e.g., "English", "Portuguese (BR)")
+   */
+  getLanguageDisplayName(languageCode) {
+    if (!languageCode) return 'Unknown';
+
+    const lower = languageCode.toLowerCase().trim();
+
+    // Language display names map
+    const displayNames = {
+      'en': 'English', 'eng': 'English',
+      'pt': 'Portuguese', 'por': 'Portuguese',
+      'pob': 'Portuguese (BR)', 'pb': 'Portuguese (BR)',
+      'es': 'Spanish', 'spa': 'Spanish', 'spn': 'Spanish',
+      'fr': 'French', 'fre': 'French', 'fra': 'French',
+      'de': 'German', 'ger': 'German', 'deu': 'German',
+      'it': 'Italian', 'ita': 'Italian',
+      'ru': 'Russian', 'rus': 'Russian',
+      'ja': 'Japanese', 'jpn': 'Japanese',
+      'zh': 'Chinese', 'chi': 'Chinese', 'zho': 'Chinese',
+      'ko': 'Korean', 'kor': 'Korean',
+      'ar': 'Arabic', 'ara': 'Arabic',
+      'nl': 'Dutch', 'dut': 'Dutch', 'nld': 'Dutch',
+      'pl': 'Polish', 'pol': 'Polish',
+      'tr': 'Turkish', 'tur': 'Turkish',
+      'sv': 'Swedish', 'swe': 'Swedish',
+      'no': 'Norwegian', 'nor': 'Norwegian',
+      'da': 'Danish', 'dan': 'Danish',
+      'fi': 'Finnish', 'fin': 'Finnish',
+      'el': 'Greek', 'gre': 'Greek', 'ell': 'Greek',
+      'he': 'Hebrew', 'heb': 'Hebrew',
+      'hi': 'Hindi', 'hin': 'Hindi',
+      'cs': 'Czech', 'cze': 'Czech', 'ces': 'Czech',
+      'hu': 'Hungarian', 'hun': 'Hungarian',
+      'ro': 'Romanian', 'rum': 'Romanian', 'ron': 'Romanian',
+      'th': 'Thai', 'tha': 'Thai',
+      'vi': 'Vietnamese', 'vie': 'Vietnamese',
+      'id': 'Indonesian', 'ind': 'Indonesian',
+      'uk': 'Ukrainian', 'ukr': 'Ukrainian',
+      'bg': 'Bulgarian', 'bul': 'Bulgarian',
+      'hr': 'Croatian', 'hrv': 'Croatian',
+      'sr': 'Serbian', 'srp': 'Serbian',
+      'sk': 'Slovak', 'slo': 'Slovak', 'slk': 'Slovak',
+      'sl': 'Slovenian', 'slv': 'Slovenian'
+    };
+
+    return displayNames[lower] || languageCode.toUpperCase();
   }
 
   /**

@@ -101,20 +101,24 @@ Translate to {target_language}.`;
         currentConfig.targetLanguages = normalizeLanguageCodes(currentConfig.targetLanguages || []);
         currentConfig.noTranslationLanguages = normalizeLanguageCodes(currentConfig.noTranslationLanguages || []);
 
-        await loadLanguages();
+        // Show instructions ASAP (do not block on network/UI work)
+        showInstructionsModalIfNeeded();
+
+        // Kick off language loading without blocking UI/modals
+        loadLanguages().catch(err => {
+            try { showAlert('Failed to load languages: ' + err.message, 'error'); } catch (_) {}
+        });
+
         setupEventListeners();
         loadConfigToForm();
         setupKeyboardShortcuts();
         showKeyboardHint();
 
-        // Auto-fetch models if API key exists
+        // Auto-fetch models if API key exists (do not block UI/modals)
         const apiKey = document.getElementById('geminiApiKey').value.trim();
         if (apiKey) {
-            await autoFetchModels(apiKey);
+            Promise.resolve().then(() => autoFetchModels(apiKey)).catch(() => {});
         }
-
-        // Show instructions modal on first visit
-        showInstructionsModalIfNeeded();
     }
 
     function normalizeLanguageCodes(codes) {
@@ -127,12 +131,24 @@ Translate to {target_language}.`;
     }
 
     // Modal management functions
+    function openModalById(id) {
+        const el = document.getElementById(id);
+        if (!el) return false;
+        // Force visible regardless of stylesheet order
+        el.classList.add('show');
+        el.style.display = 'flex';
+        el.style.zIndex = '10000';
+        return true;
+    }
     function showInstructionsModalIfNeeded() {
-        const dontShow = localStorage.getItem('submaker_dont_show_instructions');
-        if (!dontShow) {
-            setTimeout(() => {
-                document.getElementById('instructionsModal').classList.add('show');
-            }, 500);
+        try {
+            const raw = localStorage.getItem('submaker_dont_show_instructions');
+            if (raw !== 'true') {
+                // Single scheduled attempt keeps code simple and reliable
+                setTimeout(() => openModalById('instructionsModal'), 200);
+            }
+        } catch (_) {
+            setTimeout(() => openModalById('instructionsModal'), 200);
         }
     }
 
@@ -143,7 +159,10 @@ Translate to {target_language}.`;
             localStorage.setItem('submaker_dont_show_instructions', 'true');
         }
         const modal = document.getElementById('instructionsModal');
-        if (modal) modal.classList.remove('show');
+        if (modal) {
+            modal.classList.remove('show');
+            modal.style.display = 'none';
+        }
     };
 
     window.closeFileTranslationModal = function() {
@@ -153,15 +172,25 @@ Translate to {target_language}.`;
             localStorage.setItem('submaker_dont_show_file_translation', 'true');
         }
         const modal = document.getElementById('fileTranslationModal');
-        if (modal) modal.classList.remove('show');
+        if (modal) {
+            modal.classList.remove('show');
+            modal.style.display = 'none';
+        }
     };
 
     function showFileTranslationModal() {
-        const dontShow = localStorage.getItem('submaker_dont_show_file_translation');
-        if (!dontShow) {
-            document.getElementById('fileTranslationModal').classList.add('show');
+        try {
+            const raw = localStorage.getItem('submaker_dont_show_file_translation');
+            const suppressed = (raw === 'true');
+            if (!suppressed) {
+                openModalById('fileTranslationModal');
+            }
+        } catch (_) {
+            openModalById('fileTranslationModal');
         }
     }
+
+    // (Removed extra window load fallback to reduce complexity)
 
     // Close modals when clicking outside
     document.addEventListener('click', function(e) {
@@ -687,6 +716,12 @@ Translate to {target_language}.`;
         document.getElementById('geminiApiKey').addEventListener('input', validateGeminiApiKey);
         document.getElementById('geminiModel').addEventListener('change', validateGeminiModel);
 
+        // API Key Validation Buttons
+        document.getElementById('validateSubSource').addEventListener('click', () => validateApiKey('subsource'));
+        document.getElementById('validateSubDL').addEventListener('click', () => validateApiKey('subdl'));
+        document.getElementById('validateOpenSubtitles').addEventListener('click', () => validateApiKey('opensubtitles'));
+        document.getElementById('validateGemini').addEventListener('click', () => validateApiKey('gemini'));
+
         // File translation toggle - show modal when enabled
         document.getElementById('fileTranslationEnabled').addEventListener('change', (e) => {
             if (e.target.checked) {
@@ -845,15 +880,18 @@ Translate to {target_language}.`;
         }
     }
 
-    function validateGeminiApiKey() {
+    function validateGeminiApiKey(showNotification = false) {
         const input = document.getElementById('geminiApiKey');
         const error = document.getElementById('geminiApiKeyError');
         const value = input.value.trim();
-        
+
         if (!value) {
             input.classList.add('invalid');
             input.classList.remove('valid');
             error.classList.add('show');
+            if (showNotification) {
+                showAlert('⚠️ Gemini API key is required', 'error');
+            }
             return false;
         } else {
             input.classList.remove('invalid');
@@ -867,7 +905,7 @@ Translate to {target_language}.`;
         const select = document.getElementById('geminiModel');
         const error = document.getElementById('geminiModelError');
         const value = select.value;
-        
+
         if (!value) {
             select.classList.add('invalid');
             select.classList.remove('valid');
@@ -879,6 +917,152 @@ Translate to {target_language}.`;
             error.classList.remove('show');
             return true;
         }
+    }
+
+    /**
+     * Validate API key by calling backend validation endpoint
+     * @param {string} provider - Provider name: 'subsource', 'subdl', 'opensubtitles', or 'gemini'
+     */
+    async function validateApiKey(provider) {
+        // Get elements based on provider
+        let btn, feedback, apiKey, username, password, endpoint;
+
+        if (provider === 'subsource') {
+            btn = document.getElementById('validateSubSource');
+            feedback = document.getElementById('subsourceValidationFeedback');
+            apiKey = document.getElementById('subsourceApiKey').value.trim();
+            endpoint = '/api/validate-subsource';
+        } else if (provider === 'subdl') {
+            btn = document.getElementById('validateSubDL');
+            feedback = document.getElementById('subdlValidationFeedback');
+            apiKey = document.getElementById('subdlApiKey').value.trim();
+            endpoint = '/api/validate-subdl';
+        } else if (provider === 'opensubtitles') {
+            btn = document.getElementById('validateOpenSubtitles');
+            feedback = document.getElementById('opensubtitlesValidationFeedback');
+            username = document.getElementById('opensubtitlesUsername').value.trim();
+            password = document.getElementById('opensubtitlesPassword').value.trim();
+            endpoint = '/api/validate-opensubtitles';
+        } else if (provider === 'gemini') {
+            btn = document.getElementById('validateGemini');
+            feedback = document.getElementById('geminiValidationFeedback');
+            apiKey = document.getElementById('geminiApiKey').value.trim();
+            endpoint = '/api/validate-gemini';
+        }
+
+        // Validate input
+        if (provider === 'opensubtitles') {
+            if (!username || !password) {
+                showValidationFeedback(feedback, 'error', 'Please enter both username and password');
+                return;
+            }
+        } else {
+            if (!apiKey) {
+                showValidationFeedback(feedback, 'error', 'Please enter an API key');
+                return;
+            }
+        }
+
+        // Update button state - validating
+        btn.classList.add('validating');
+        btn.classList.remove('success', 'error');
+        btn.disabled = true;
+        const iconEl = btn.querySelector('.validate-icon');
+        const textEl = btn.querySelector('.validate-text');
+        const originalIcon = iconEl.textContent;
+        iconEl.textContent = '⟳';
+        textEl.textContent = 'Testing...';
+
+        // Clear previous feedback
+        feedback.classList.remove('show', 'success', 'error');
+
+        try {
+            // Call validation endpoint
+            const body = provider === 'opensubtitles'
+                ? { username, password }
+                : { apiKey };
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            });
+
+            const result = await response.json();
+
+            // Update button and feedback based on result
+            btn.classList.remove('validating');
+            btn.disabled = false;
+
+            if (result.valid) {
+                // Success
+                btn.classList.add('success');
+                iconEl.textContent = '✓';
+                textEl.textContent = 'Valid';
+
+                let message = result.message || 'API key is valid';
+                if (result.resultsCount !== undefined) {
+                    message += ` (${result.resultsCount} test results)`;
+                }
+
+                showValidationFeedback(feedback, 'success', message);
+
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    btn.classList.remove('success');
+                    iconEl.textContent = originalIcon;
+                    textEl.textContent = provider === 'opensubtitles' ? 'Test Credentials' : 'Test';
+                }, 3000);
+            } else {
+                // Error
+                btn.classList.add('error');
+                iconEl.textContent = '✗';
+                textEl.textContent = 'Invalid';
+                showValidationFeedback(feedback, 'error', result.error || 'Validation failed');
+
+                // Reset button after 4 seconds
+                setTimeout(() => {
+                    btn.classList.remove('error');
+                    iconEl.textContent = originalIcon;
+                    textEl.textContent = provider === 'opensubtitles' ? 'Test Credentials' : 'Test';
+                }, 4000);
+            }
+
+        } catch (error) {
+            console.error('[Validation] Error:', error);
+            btn.classList.remove('validating');
+            btn.classList.add('error');
+            btn.disabled = false;
+            iconEl.textContent = '✗';
+            textEl.textContent = 'Error';
+            showValidationFeedback(feedback, 'error', 'Connection error. Please try again.');
+
+            // Reset button after 4 seconds
+            setTimeout(() => {
+                btn.classList.remove('error');
+                iconEl.textContent = originalIcon;
+                textEl.textContent = provider === 'opensubtitles' ? 'Test Credentials' : 'Test';
+            }, 4000);
+        }
+    }
+
+    /**
+     * Show validation feedback message
+     * @param {HTMLElement} element - Feedback element
+     * @param {string} type - 'success', 'error', or 'info'
+     * @param {string} message - Message to display
+     */
+    function showValidationFeedback(element, type, message) {
+        element.textContent = message;
+        element.classList.remove('success', 'error', 'info');
+        element.classList.add(type, 'show');
+
+        // Auto-hide after 8 seconds
+        setTimeout(() => {
+            element.classList.remove('show');
+        }, 8000);
     }
 
     function setupKeyboardShortcuts() {
@@ -993,12 +1177,77 @@ Translate to {target_language}.`;
             if (sourceCard) sourceCard.style.display = 'none';
             if (targetCard) targetCard.style.display = 'none';
             if (geminiCard) geminiCard.style.display = 'none';
+
+            // Clear validation errors for fields that aren't required in no-translation mode
+            const geminiApiKeyInput = document.getElementById('geminiApiKey');
+            const geminiApiKeyError = document.getElementById('geminiApiKeyError');
+            const geminiModelSelect = document.getElementById('geminiModel');
+            const geminiModelError = document.getElementById('geminiModelError');
+            const sourceLanguagesError = document.getElementById('sourceLanguagesError');
+            const targetLanguagesError = document.getElementById('targetLanguagesError');
+
+            if (geminiApiKeyInput) {
+                geminiApiKeyInput.classList.remove('invalid', 'valid');
+            }
+            if (geminiApiKeyError) {
+                geminiApiKeyError.classList.remove('show');
+            }
+            if (geminiModelSelect) {
+                geminiModelSelect.classList.remove('invalid', 'valid');
+            }
+            if (geminiModelError) {
+                geminiModelError.classList.remove('show');
+            }
+            if (sourceLanguagesError) {
+                sourceLanguagesError.classList.remove('show');
+            }
+            if (targetLanguagesError) {
+                targetLanguagesError.classList.remove('show');
+            }
+
+            // Clear source and target languages when switching to no-translation mode
+            // This prevents translation-mode languages from being saved in no-translation config
+            currentConfig.sourceLanguages = [];
+            currentConfig.targetLanguages = [];
+
+            // Update UI to reflect cleared languages
+            const sourceGrid = document.getElementById('sourceLanguages');
+            const targetGrid = document.getElementById('targetLanguages');
+
+            if (sourceGrid) {
+                sourceGrid.querySelectorAll('.language-item.selected').forEach(item => {
+                    item.classList.remove('selected');
+                });
+            }
+            if (targetGrid) {
+                targetGrid.querySelectorAll('.language-item.selected').forEach(item => {
+                    item.classList.remove('selected');
+                });
+            }
+
+            updateSelectedChips('source', []);
+            updateSelectedChips('target', []);
         } else {
             // Hide no-translation card, show source, target, and gemini cards
             if (noTranslationCard) noTranslationCard.style.display = 'none';
             if (sourceCard) sourceCard.style.display = 'block';
             if (targetCard) targetCard.style.display = 'block';
             if (geminiCard) geminiCard.style.display = 'block';
+
+            // Clear no-translation languages when switching to translation mode
+            // This prevents no-translation-mode languages from being saved in translation config
+            currentConfig.noTranslationLanguages = [];
+
+            // Update UI to reflect cleared no-translation languages
+            const noTranslationGrid = document.getElementById('noTranslationLanguages');
+
+            if (noTranslationGrid) {
+                noTranslationGrid.querySelectorAll('.language-item.selected').forEach(item => {
+                    item.classList.remove('selected');
+                });
+            }
+
+            updateSelectedChips('notranslation', []);
         }
     }
 
@@ -1037,11 +1286,15 @@ Translate to {target_language}.`;
         }
 
         try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
             const response = await fetch('/api/gemini-models', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ apiKey })
+                body: JSON.stringify({ apiKey }),
+                signal: controller.signal
             });
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 throw new Error('Failed to fetch models');
@@ -1498,7 +1751,7 @@ Translate to {target_language}.`;
 
         // If not in no-translation mode, validate Gemini API and model
         if (!config.noTranslationMode) {
-            if (!validateGeminiApiKey()) {
+            if (!validateGeminiApiKey(true)) {
                 errors.push('⚠️ Gemini API key is required');
             }
 

@@ -138,12 +138,16 @@ class SubDLService {
 
         const fileId = `subdl_${sdId}_${subtitleId}`;
 
+        // Use download count from API, or 0 if not provided
+        const downloadCount = parseInt(sub.download_count);
+        const downloads = (!isNaN(downloadCount) && downloadCount > 0) ? downloadCount : 0;
+
         return {
           id: fileId,
           language: originalLang,
           languageCode: normalizedLang,
           name: sub.release_name || sub.name || 'Unknown',
-          downloads: parseInt(sub.download_count) || 0,
+          downloads: downloads,
           rating: parseFloat(sub.rating) || 0,
           uploadDate: sub.upload_date || sub.created_at,
           format: 'srt',
@@ -175,7 +179,6 @@ class SubDLService {
       }
 
       const limitedSubtitles = Object.values(groupedByLanguage).flat();
-      log.debug(() => `[SubDL] Found ${subtitles.length} subtitles total, limited to ${limitedSubtitles.length} (max ${MAX_RESULTS_PER_LANGUAGE} per language)`);
       return limitedSubtitles;
 
     } catch (error) {

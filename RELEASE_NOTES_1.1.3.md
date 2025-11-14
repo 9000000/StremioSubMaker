@@ -1,0 +1,11 @@
+﻿## SubMaker 1.1.3
+
+**New Features:**
+- **API Key Validation**: Added "Test" buttons to validate API keys for SubSource, SubDL, OpenSubtitles, and Gemini directly from the config page
+- **Dark Mode**: All addon pages now support automatic dark/light themes based on system preference with manual toggle buttons
+
+**Bug Fixes:**
+- Fixed config page: Gemini API key validation now properly displays notification alerts when field is empty
+- Fixed config page: "Just-fetch subtitles" mode now clears validation errors for translation-only fields (Gemini API key, source/target languages)
+- Fixed config page: Switching between translation and no-translation modes now clears language selections from the previous mode to prevent unwanted languages from being saved
+- Various minor  fixes.

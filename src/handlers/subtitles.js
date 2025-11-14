@@ -250,24 +250,30 @@ function createTranslationErrorSubtitle(errorType, errorMessage) {
   let errorExplanation = errorMessage || 'An unexpected error occurred during translation.';
   let retryAdvice = 'Click this subtitle again to retry translation.';
 
-  if (errorType === '503') {
+  if (errorType === '403') {
+    errorTitle = 'Translation Failed: Authentication Error (403)';
+    errorExplanation = 'Your Gemini API key is invalid or rejected.\nPlease check that your API key is correct.';
+    retryAdvice = 'Update your Gemini API key in the addon configuration,\nthen reinstall the addon and try again.';
+  } else if (errorType === '503') {
     errorTitle = 'Translation Failed: Service Overloaded (503)';
     errorExplanation = 'The Gemini API is temporarily overloaded with requests.\nThis is usually temporary and resolves within minutes.';
+    retryAdvice = '(503) - Wait a moment for Gemini service to recover,\nthen click this subtitle again to retry translation.';
   } else if (errorType === '429') {
     errorTitle = 'Translation Failed: Usage Limit Reached (429)';
     errorExplanation = 'Your Gemini API usage limit has been exceeded.\nThis may be a rate limit or quota limit.';
-    retryAdvice = 'Wait a few minutes, then click again to retry.\nOr check your Gemini API quota/billing settings.';
+    retryAdvice = '(429) - Gemini API rate or quota limiting error\nWait a few minutes, then click again to retry.';
   } else if (errorType === 'MAX_TOKENS') {
     errorTitle = 'Translation Failed: Content Too Large';
     errorExplanation = 'The subtitle file is too large for a single translation.\nThe system attempted chunking but still exceeded limits.';
-    retryAdvice = 'Try translating a shorter subtitle file,\nor contact support if this persists.';
+    retryAdvice = '(MAX_TOKENS) Try translating a shorter subtitle file,\nPlease let us know if this persists.';
   } else if (errorType === 'SAFETY') {
     errorTitle = 'Translation Failed: Content Filtered';
     errorExplanation = 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.';
+    retryAdvice = '(PROHIBITED) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.';
   } else if (errorType === 'INVALID_SOURCE') {
     errorTitle = 'Translation Failed: Invalid Source File';
     errorExplanation = 'The source subtitle file appears corrupted or invalid.\nIt may be too small or have formatting issues.';
-    retryAdvice = 'Try a different subtitle from the list.';
+    retryAdvice = '(CORRUPT SOURCE)\nPlease retry or try a different subtitle from the list.';
   }
 
   return `1
@@ -1083,9 +1089,10 @@ function calculateFilenameMatchScore(streamFilename, subtitleName) {
  * Sort subtitles by filename match score with secondary quality-based ranking
  * @param {Array} subtitles - Array of subtitle objects
  * @param {string} streamFilename - Stream filename from Stremio
+ * @param {Object} videoInfo - Video metadata (imdbId, type, season, episode)
  * @returns {Array} - Sorted subtitles (best matches first)
  */
-function rankSubtitlesByFilename(subtitles, streamFilename) {
+function rankSubtitlesByFilename(subtitles, streamFilename, videoInfo = null) {
   if (!streamFilename || subtitles.length === 0) {
     return subtitles;
   }
@@ -1095,9 +1102,50 @@ function rankSubtitlesByFilename(subtitles, streamFilename) {
     _matchScore: calculateFilenameMatchScore(streamFilename, sub.name || '')
   }));
 
+  // Add episode metadata match bonus/penalty (for TV shows)
+  // This helps rank subtitles when filename matching fails (e.g., numeric IDs)
+  if (videoInfo && videoInfo.type === 'episode' && videoInfo.season && videoInfo.episode) {
+    const targetSeason = videoInfo.season;
+    const targetEpisode = videoInfo.episode;
+
+    for (const sub of withScores) {
+      const name = (sub.name || '').toLowerCase();
+
+      // Check for season/episode patterns in subtitle name
+      // Patterns: S02E01, s02e01, 2x01, S02.E01, etc.
+      const seasonEpisodePatterns = [
+        new RegExp(`s0*${targetSeason}e0*${targetEpisode}`, 'i'),        // S02E01, s02e01
+        new RegExp(`${targetSeason}x0*${targetEpisode}`, 'i'),           // 2x01
+        new RegExp(`s0*${targetSeason}\\.e0*${targetEpisode}`, 'i'),     // S02.E01
+        new RegExp(`season\\s*0*${targetSeason}.*episode\\s*0*${targetEpisode}`, 'i')  // Season 2 Episode 1
+      ];
+
+      const hasCorrectEpisode = seasonEpisodePatterns.some(pattern => pattern.test(name));
+
+      if (hasCorrectEpisode) {
+        // BONUS: Subtitle name explicitly mentions correct episode
+        sub._matchScore += 2000; // Large bonus to prioritize correct episodes
+      } else {
+        // Check if subtitle has ANY episode number (wrong episode)
+        const hasWrongEpisode = /s\d+e\d+|\d+x\d+|season\s*\d+.*episode\s*\d+/i.test(name);
+        if (hasWrongEpisode) {
+          // PENALTY: Subtitle is for wrong episode (e.g., S02E11 when we want S02E01)
+          sub._matchScore -= 3000; // Heavy penalty for wrong episode
+        }
+      }
+    }
+  }
+
+  // Provider reputation scores (used as final tiebreaker when all else is equal)
+  const providerReputation = {
+    'opensubtitles-v3': 3, // Highest reputation (largest database, most reliable)
+    'subdl': 2,            // Good reputation
+    'subsource': 1         // Newer/smaller provider
+  };
+
   // Two-tier ranking system:
   // 1. Primary: Filename match score (for subtitle sync accuracy)
-  // 2. Secondary: Quality metrics (downloads, rating, upload date)
+  // 2. Secondary: Quality metrics (downloads, rating, upload date, provider reputation)
   //    - Used as tiebreaker when filename scores are similar
   withScores.sort((a, b) => {
     // Primary sort: Filename match score (descending - higher is better)
@@ -1106,6 +1154,15 @@ function rankSubtitlesByFilename(subtitles, streamFilename) {
     // If scores are significantly different (>100 points), use filename score
     if (Math.abs(scoreDiff) > 100) {
       return scoreDiff;
+    }
+
+    // Special case: When both scores are 0 (no filename match), prioritize by provider reputation first
+    // This ensures quality providers aren't unfairly penalized when release names are missing
+    if (a._matchScore === 0 && b._matchScore === 0) {
+      const reputationDiff = (providerReputation[b.provider] || 0) - (providerReputation[a.provider] || 0);
+      if (reputationDiff !== 0) {
+        return reputationDiff;
+      }
     }
 
     // Secondary sort: Quality metrics for similar filename scores
@@ -1132,7 +1189,13 @@ function rankSubtitlesByFilename(subtitles, streamFilename) {
     const dateA = getTimestamp(a.uploadDate);
     const dateB = getTimestamp(b.uploadDate);
 
-    return dateB - dateA;
+    const dateDiff = dateB - dateA;
+    if (dateDiff !== 0) {
+      return dateDiff;
+    }
+
+    // Final tiebreaker: Provider reputation (for truly equal subtitles)
+    return (providerReputation[b.provider] || 0) - (providerReputation[a.provider] || 0);
   });
 
   // Remove the temporary score property before returning
@@ -1314,14 +1377,14 @@ function createSubtitleHandler(config) {
       // Rank subtitles by filename match + quality metrics before creating response lists
       // This ensures the best matches appear first in Stremio UI
       if (streamFilename) {
-        filteredFoundSubtitles = rankSubtitlesByFilename(filteredFoundSubtitles, streamFilename);
-        log.debug(() => `[Subtitles] Ranked ${filteredFoundSubtitles.length} subtitles by filename match + quality (downloads, rating, date)`);
+        filteredFoundSubtitles = rankSubtitlesByFilename(filteredFoundSubtitles, streamFilename, videoInfo);
+        log.debug(() => `[Subtitles] Ranked ${filteredFoundSubtitles.length} subtitles by filename match + episode metadata + quality (downloads, rating, date)`);
 
-        // Debug: Log top 5 ranked subtitles for verification
+        // Debug: Log top 3 ranked subtitles for verification
         if (filteredFoundSubtitles.length > 0) {
-          const top5 = filteredFoundSubtitles.slice(0, 5);
-          log.debug(() => ['[Subtitles] Top 5 ranked:', top5.map(s => ({
-            name: s.name,
+          const top3 = filteredFoundSubtitles.slice(0, 3);
+          log.debug(() => ['[Subtitles] Top 3 AFTER ranking:', top3.map(s => ({
+            name: s.name?.substring(0, 50) + (s.name?.length > 50 ? '...' : ''),
             provider: s.provider,
             downloads: s.downloads,
             rating: s.rating,
@@ -1330,9 +1393,9 @@ function createSubtitleHandler(config) {
         }
       }
 
-      // Limit to top 12 subtitles per language (applied AFTER ranking all sources)
+      // Limit to top 16 subtitles per language (applied AFTER ranking all sources)
       // This prevents UI slowdown while ensuring best-quality subtitles are shown
-      const MAX_SUBS_PER_LANGUAGE = 12;
+      const MAX_SUBS_PER_LANGUAGE = 16;
       const limitedByLanguage = new Map(); // language -> subtitle array
 
       for (const sub of filteredFoundSubtitles) {
@@ -1385,7 +1448,7 @@ function createSubtitleHandler(config) {
       }))];
 
       // Create translation entries: for each target language, create entries for top source language subtitles
-      // Note: filteredFoundSubtitles is already limited to 12 per language (including source languages)
+      // Note: filteredFoundSubtitles is already limited to 16 per language (including source languages)
       const sourceSubtitles = filteredFoundSubtitles.filter(sub =>
         config.sourceLanguages.some(sourceLang => {
           const normalized = normalizeLanguageCode(sourceLang);
@@ -1396,7 +1459,7 @@ function createSubtitleHandler(config) {
       log.debug(() => `[Subtitles] Found ${sourceSubtitles.length} source language subtitles for translation (already limited to ${MAX_SUBS_PER_LANGUAGE} per language)`);
 
       // For each target language, create a translation entry for each source subtitle
-      // Translation entries are created from the already-limited source subtitles (12 per source language)
+      // Translation entries are created from the already-limited source subtitles (16 per source language)
       const translationEntries = [];
       for (const targetLang of normalizedTargetLangs) {
         const baseName = getLanguageName(targetLang);
@@ -1579,8 +1642,41 @@ async function handleSubtitleDownload(fileId, language, config) {
     log.error(() => ['[Download] Error:', error.message]);
 
     // Return error message as subtitle so user knows what happened
-    const errorStatus = error.response?.status;
-    
+    const errorStatus = error.response?.status || error.statusCode;
+
+    // Handle 403 errors - API key authentication failures
+    if (errorStatus === 403 || error.message.includes('403') || error.message.includes('Authentication failed')) {
+      // Determine which service based on fileId
+      let serviceName = 'Subtitle Provider';
+      let apiKeyInstructions = 'Please check your API key in the addon configuration.';
+
+      if (fileId.startsWith('subdl_')) {
+        serviceName = 'SubDL';
+        apiKeyInstructions = 'SubDL API key error\nThen update your addon configuration and reinstall.';
+      } else if (fileId.startsWith('subsource_')) {
+        serviceName = 'SubSource';
+        apiKeyInstructions = 'SubSource API key error\nPlease update your addon configuration and reinstall.';
+      } else if (fileId.startsWith('v3_')) {
+        serviceName = 'OpenSubtitles V3';
+        apiKeyInstructions = 'OpenSubtitles v3 should not require an API key.\nPlease report this issue if it persists.';
+      } else {
+        serviceName = 'OpenSubtitles';
+        apiKeyInstructions = 'Please check your OpenSubtitles credentials\nin the addon configuration and reinstall.';
+      }
+
+      return `1
+00:00:00,000 --> 00:00:08,000
+Authentication Error (403)
+
+2
+00:00:08,001 --> 00:00:16,000
+${serviceName} rejected your API key or credentials
+
+3
+00:00:16,001 --> 04:00:00,000
+${apiKeyInstructions}`;
+    }
+
     // Handle 404 errors specifically - subtitle not available
     if (errorStatus === 404 || error.message.includes('Subtitle not available') || error.message.includes('404')) {
       return `1
@@ -1602,7 +1698,7 @@ or subtitles that were removed
 Please try a different subtitle from the list
 or enable other subtitle providers in settings`;
     }
-    
+
     if (errorStatus === 503) {
       return `1
 00:00:00,000 --> 00:00:10,000
@@ -2014,7 +2110,9 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
     let errorType = 'other';
     let errorMessage = error.message;
 
-    if (error.message && error.message.includes('503')) {
+    if (error.message && error.message.includes('403')) {
+      errorType = '403';
+    } else if (error.message && error.message.includes('503')) {
       errorType = '503';
     } else if (error.message && error.message.includes('429')) {
       errorType = '429';
@@ -2039,7 +2137,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
         errorType: errorType,
         errorMessage: errorMessage,
         timestamp: Date.now(),
-        expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes - auto-expire old errors
+        expiresAt: Date.now() + 15 * 60 * 1000 // 15 minutes - auto-expire old errors
       };
 
       if (bypass && bypassEnabled) {

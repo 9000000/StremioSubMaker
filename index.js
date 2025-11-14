@@ -573,6 +573,324 @@ app.post('/api/gemini-models', async (req, res) => {
     }
 });
 
+// API endpoint to validate SubSource API key
+app.post('/api/validate-subsource', async (req, res) => {
+    try {
+        const { apiKey } = req.body;
+
+        if (!apiKey) {
+            return res.status(400).json({
+                valid: false,
+                error: 'API key is required'
+            });
+        }
+
+        const axios = require('axios');
+        const { httpAgent, httpsAgent } = require('./src/utils/httpAgents');
+
+        // Make direct API call to test the key
+        // First get movie ID
+        const searchUrl = 'https://api.subsource.net/api/v1/movies/search?searchType=imdb&imdb=tt0133093';
+
+        try {
+            const movieResponse = await axios.get(searchUrl, {
+                headers: {
+                    'X-API-Key': apiKey.trim(),
+                    'api-key': apiKey.trim(),
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                timeout: 10000,
+                httpAgent,
+                httpsAgent
+            });
+
+            const movies = Array.isArray(movieResponse.data) ? movieResponse.data : (movieResponse.data.data || []);
+
+            if (movies.length > 0) {
+                const movieId = movies[0].id || movies[0].movieId;
+
+                // Try to fetch subtitles with the movie ID
+                const subtitlesUrl = `https://api.subsource.net/api/v1/subtitles?movieId=${movieId}&language=english`;
+                const subtitlesResponse = await axios.get(subtitlesUrl, {
+                    headers: {
+                        'X-API-Key': apiKey.trim(),
+                        'api-key': apiKey.trim(),
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    },
+                    timeout: 10000,
+                    httpAgent,
+                    httpsAgent
+                });
+
+                // If we got here without errors, API key is valid
+                const subtitles = Array.isArray(subtitlesResponse.data) ? subtitlesResponse.data : (subtitlesResponse.data.subtitles || subtitlesResponse.data.data || []);
+
+                res.json({
+                    valid: true,
+                    message: 'API key is valid',
+                    resultsCount: subtitles.length
+                });
+            } else {
+                // No movies found, but API key worked (no auth error)
+                res.json({
+                    valid: true,
+                    message: 'API key is valid',
+                    resultsCount: 0
+                });
+            }
+        } catch (apiError) {
+            // Check for authentication errors
+            if (apiError.response?.status === 401 || apiError.response?.status === 403) {
+                res.json({
+                    valid: false,
+                    error: 'Invalid API key - authentication failed'
+                });
+            } else {
+                throw apiError;
+            }
+        }
+    } catch (error) {
+        res.json({
+            valid: false,
+            error: `API error: ${error.message}`
+        });
+    }
+});
+
+// API endpoint to validate SubDL API key
+app.post('/api/validate-subdl', async (req, res) => {
+    try {
+        const { apiKey } = req.body;
+
+        if (!apiKey) {
+            return res.status(400).json({
+                valid: false,
+                error: 'API key is required'
+            });
+        }
+
+        const axios = require('axios');
+        const { httpAgent, httpsAgent } = require('./src/utils/httpAgents');
+
+        // Make direct API call to SubDL
+        const subdlUrl = 'https://api.subdl.com/api/v1/subtitles';
+
+        try {
+            const response = await axios.get(subdlUrl, {
+                params: {
+                    api_key: apiKey.trim(),
+                    imdb_id: 'tt0133093',
+                    languages: 'EN',
+                    type: 'movie'
+                },
+                headers: {
+                    'User-Agent': 'StremioSubtitleTranslator v1.0',
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                timeout: 10000,
+                httpAgent,
+                httpsAgent
+            });
+
+            // Check if response indicates success
+            if (response.data && response.data.status === true) {
+                const subtitles = response.data.subtitles || [];
+                res.json({
+                    valid: true,
+                    message: 'API key is valid',
+                    resultsCount: subtitles.length
+                });
+            } else if (response.data && response.data.status === false) {
+                // API returned error status
+                res.json({
+                    valid: false,
+                    error: response.data.error || 'Invalid API key'
+                });
+            } else {
+                // Unexpected response format
+                res.json({
+                    valid: true,
+                    message: 'API key appears valid',
+                    resultsCount: 0
+                });
+            }
+        } catch (apiError) {
+            // Check for authentication errors
+            if (apiError.response?.status === 401 || apiError.response?.status === 403) {
+                res.json({
+                    valid: false,
+                    error: 'Invalid API key - authentication failed'
+                });
+            } else if (apiError.response?.data?.error) {
+                // SubDL may return error in response body
+                res.json({
+                    valid: false,
+                    error: apiError.response.data.error
+                });
+            } else {
+                throw apiError;
+            }
+        }
+    } catch (error) {
+        res.json({
+            valid: false,
+            error: `API error: ${error.message}`
+        });
+    }
+});
+
+// API endpoint to validate OpenSubtitles credentials
+app.post('/api/validate-opensubtitles', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+
+        if (!username || !password) {
+            return res.status(400).json({
+                valid: false,
+                error: 'Username and password are required'
+            });
+        }
+
+        const axios = require('axios');
+        const { httpAgent, httpsAgent } = require('./src/utils/httpAgents');
+        const { version } = require('./src/utils/version');
+
+        // Make direct login API call
+        const loginUrl = 'https://api.opensubtitles.com/api/v1/login';
+
+        // Get API key from environment
+        const apiKey = process.env.OPENSUBTITLES_API_KEY || '';
+        const headers = {
+            'User-Agent': `SubMaker v${version}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        };
+
+        if (apiKey) {
+            headers['Api-Key'] = apiKey;
+        }
+
+        try {
+            const response = await axios.post(loginUrl, {
+                username: username,
+                password: password
+            }, {
+                headers: headers,
+                timeout: 15000,
+                httpAgent,
+                httpsAgent
+            });
+
+            // Check if we got a token
+            if (response.data && response.data.token) {
+                res.json({
+                    valid: true,
+                    message: 'Credentials are valid'
+                });
+            } else {
+                res.json({
+                    valid: false,
+                    error: 'No token received - credentials may be invalid'
+                });
+            }
+        } catch (apiError) {
+            // Check for authentication errors
+            if (apiError.response?.status === 401) {
+                res.json({
+                    valid: false,
+                    error: 'Invalid username or password'
+                });
+            } else if (apiError.response?.status === 406) {
+                res.json({
+                    valid: false,
+                    error: 'Invalid request format'
+                });
+            } else if (apiError.response?.data?.message) {
+                res.json({
+                    valid: false,
+                    error: apiError.response.data.message
+                });
+            } else {
+                throw apiError;
+            }
+        }
+    } catch (error) {
+        res.json({
+            valid: false,
+            error: `API error: ${error.message}`
+        });
+    }
+});
+
+// API endpoint to validate Gemini API key
+app.post('/api/validate-gemini', async (req, res) => {
+    try {
+        const { apiKey } = req.body;
+
+        if (!apiKey) {
+            return res.status(400).json({
+                valid: false,
+                error: 'API key is required'
+            });
+        }
+
+        const axios = require('axios');
+        const { httpAgent, httpsAgent } = require('./src/utils/httpAgents');
+
+        // Make direct API call to Gemini to validate the key
+        const geminiUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+        try {
+            const response = await axios.get(geminiUrl, {
+                params: { key: apiKey.trim() },
+                timeout: 10000,
+                httpAgent,
+                httpsAgent
+            });
+
+            // If we got here without errors, API key is valid
+            if (response.data && response.data.models) {
+                res.json({
+                    valid: true,
+                    message: 'API key is valid'
+                });
+            } else {
+                res.json({
+                    valid: true,
+                    message: 'API key is valid'
+                });
+            }
+        } catch (apiError) {
+            // Check for authentication errors
+            if (apiError.response?.status === 401 || apiError.response?.status === 403) {
+                res.json({
+                    valid: false,
+                    error: 'Invalid API key - authentication failed'
+                });
+            } else if (apiError.response?.status === 400) {
+                res.json({
+                    valid: false,
+                    error: 'Invalid API key'
+                });
+            } else {
+                throw apiError;
+            }
+        }
+    } catch (error) {
+        const isAuthError = error.response?.status === 401 ||
+                           error.response?.status === 403 ||
+                           error.message?.toLowerCase().includes('api key') ||
+                           error.message?.toLowerCase().includes('invalid') ||
+                           error.message?.toLowerCase().includes('permission');
+
+        res.json({
+            valid: false,
+            error: isAuthError ? 'Invalid API key' : `API error: ${error.message}`
+        });
+    }
+});
+
 // API endpoint to create a session (production mode)
 app.post('/api/create-session', async (req, res) => {
     try {
@@ -1227,10 +1545,42 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
             box-sizing: border-box;
         }
 
+        :root {
+            --bg-gradient-start: #0A0E27;
+            --bg-gradient-end: #1a1f3a;
+            --text-primary: #E8EAED;
+            --text-secondary: #9AA0A6;
+            --card-bg: #141931;
+            --card-border: #2A3247;
+            --card-hover-border: #7B68EE;
+            --card-hover-shadow: rgba(123, 104, 238, 0.3);
+            --badge-bg: #2A3247;
+            --badge-text: #9AA0A6;
+            --badge-border: #2A3247;
+            --primary-gradient-start: #9B88FF;
+            --primary-gradient-end: #7B68EE;
+        }
+
+        [data-theme="light"] {
+            --bg-gradient-start: #f7fafc;
+            --bg-gradient-end: #ffffff;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --card-bg: #ffffff;
+            --card-border: #dbe3ea;
+            --card-hover-border: #08A4D5;
+            --card-hover-shadow: rgba(8, 164, 213, 0.3);
+            --badge-bg: rgba(8, 164, 213, 0.1);
+            --badge-text: #068DB7;
+            --badge-border: rgba(8, 164, 213, 0.3);
+            --primary-gradient-start: #08A4D5;
+            --primary-gradient-end: #33B9E1;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-            background: linear-gradient(135deg, #0A0E27 0%, #1a1f3a 100%);
-            color: #E8EAED;
+            background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+            color: var(--text-primary);
             min-height: 100vh;
             padding: 2rem 1rem;
         }
@@ -1244,7 +1594,7 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
             text-align: center;
             margin-bottom: 0.5rem;
             font-size: 2rem;
-            background: linear-gradient(135deg, #9B88FF 0%, #7B68EE 100%);
+            background: linear-gradient(135deg, var(--primary-gradient-start) 0%, var(--primary-gradient-end) 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
@@ -1252,9 +1602,9 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
 
         .version-badge {
             display: inline-block;
-            background: #2A3247;
-            color: #9AA0A6;
-            border: 1px solid #2A3247;
+            background: var(--badge-bg);
+            color: var(--badge-text);
+            border: 1px solid var(--badge-border);
             border-radius: 999px;
             padding: 0.15rem 0.6rem;
             font-size: 0.8rem;
@@ -1265,22 +1615,22 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
         .subtitle-header {
             text-align: center;
             margin-bottom: 2rem;
-            color: #9AA0A6;
+            color: var(--text-secondary);
             font-size: 0.95rem;
         }
 
         .subtitle-option {
-            background: #141931;
-            border: 2px solid #2A3247;
+            background: var(--card-bg);
+            border: 2px solid var(--card-border);
             border-radius: 12px;
             margin-bottom: 1rem;
             transition: all 0.3s ease;
         }
 
         .subtitle-option:hover {
-            border-color: #7B68EE;
+            border-color: var(--card-hover-border);
             transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(123, 104, 238, 0.3);
+            box-shadow: 0 8px 20px var(--card-hover-shadow);
         }
 
         .subtitle-link {
@@ -1298,22 +1648,147 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
 
         .subtitle-meta {
             font-size: 0.9rem;
-            color: #9AA0A6;
+            color: var(--text-secondary);
         }
 
         .no-subtitles {
             text-align: center;
             padding: 3rem;
-            color: #9AA0A6;
+            color: var(--text-secondary);
+        }
+
+        /* Theme Toggle Button */
+        .theme-toggle {
+            position: fixed;
+            top: 2rem;
+            right: 2rem;
+            width: 48px;
+            height: 48px;
+            background: var(--card-bg);
+            border: 2px solid var(--card-border);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            z-index: 9999;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .theme-toggle:hover {
+            transform: translateY(-2px) scale(1.05);
+            border-color: var(--card-hover-border);
+            box-shadow: 0 8px 20px var(--card-hover-shadow);
+        }
+
+        .theme-toggle:active {
+            transform: translateY(0) scale(0.98);
+        }
+
+        .theme-toggle-icon {
+            font-size: 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .theme-toggle-icon.sun {
+            display: none;
+        }
+
+        .theme-toggle-icon.moon {
+            display: block;
+        }
+
+        [data-theme="light"] .theme-toggle-icon.sun {
+            display: block;
+        }
+
+        [data-theme="light"] .theme-toggle-icon.moon {
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .theme-toggle {
+                top: 1rem;
+                right: 1rem;
+                width: 42px;
+                height: 42px;
+            }
+
+            .theme-toggle-icon {
+                font-size: 1.25rem;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- Theme Toggle Button -->
+    <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+        <span class="theme-toggle-icon sun">☀️</span>
+        <span class="theme-toggle-icon moon">🌙</span>
+    </button>
+
     <div class="container">
         <h1>Translate to ${targetLangName} <span class="version-badge">v${version}</span></h1>
         <div class="subtitle-header">Select a ${sourceLangs} subtitle to translate</div>
         ${subtitles.length > 0 ? subtitleOptions : `<div class="no-subtitles">No ${sourceLangs} subtitles available</div>`}
     </div>
+
+    <script>
+    // Theme switching functionality
+    (function() {
+        const html = document.documentElement;
+        const themeToggle = document.getElementById('themeToggle');
+
+        // Check for saved theme preference or default to system preference
+        function getPreferredTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme) {
+                return savedTheme;
+            }
+
+            // Check system preference (default to dark for this page)
+            if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+                return 'light';
+            }
+
+            return 'dark';
+        }
+
+        // Apply theme
+        function setTheme(theme) {
+            if (theme === 'light') {
+                html.setAttribute('data-theme', 'light');
+            } else {
+                html.removeAttribute('data-theme');
+            }
+            localStorage.setItem('theme', theme);
+        }
+
+        // Initialize theme on page load
+        const initialTheme = getPreferredTheme();
+        setTheme(initialTheme);
+
+        // Toggle theme on button click
+        if (themeToggle) {
+            themeToggle.addEventListener('click', function() {
+                const currentTheme = html.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+                const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+                setTheme(newTheme);
+            });
+        }
+
+        // Listen for system theme changes
+        if (window.matchMedia) {
+            window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function(e) {
+                // Only auto-switch if user hasn't manually set a preference
+                if (!localStorage.getItem('theme')) {
+                    setTheme(e.matches ? 'light' : 'dark');
+                }
+            });
+        }
+    })();
+    </script>
 </body>
 </html>
     `;
@@ -1581,6 +2056,23 @@ function generateFileTranslationPage(videoId, configStr, config) {
             --glow: rgba(8, 164, 213, 0.25);
         }
 
+        [data-theme="dark"] {
+            --primary: #08A4D5;
+            --primary-light: #33B9E1;
+            --primary-dark: #068DB7;
+            --secondary: #33B9E1;
+            --success: #10b981;
+            --danger: #ef4444;
+            --bg-primary: #0A0E27;
+            --surface: #141931;
+            --surface-light: #1E2539;
+            --text-primary: #E8EAED;
+            --text-secondary: #9AA0A6;
+            --border: #2A3247;
+            --shadow: rgba(0, 0, 0, 0.3);
+            --glow: rgba(8, 164, 213, 0.35);
+        }
+
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: linear-gradient(135deg, var(--bg-primary) 0%, #ffffff 60%, var(--bg-primary) 100%);
@@ -1588,6 +2080,10 @@ function generateFileTranslationPage(videoId, configStr, config) {
             min-height: 100vh;
             overflow-x: hidden;
             position: relative;
+        }
+
+        [data-theme="dark"] body {
+            background: linear-gradient(135deg, var(--bg-primary) 0%, #141931 60%, var(--bg-primary) 100%);
         }
 
         body::before {
@@ -1602,6 +2098,12 @@ function generateFileTranslationPage(videoId, configStr, config) {
                 radial-gradient(circle at 80% 50%, rgba(51, 185, 225, 0.12) 0%, transparent 50%);
             pointer-events: none;
             z-index: 0;
+        }
+
+        [data-theme="dark"] body::before {
+            background:
+                radial-gradient(circle at 20% 50%, rgba(8, 164, 213, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 50%, rgba(51, 185, 225, 0.15) 0%, transparent 50%);
         }
 
         .container {
@@ -2320,9 +2822,113 @@ function generateFileTranslationPage(videoId, configStr, config) {
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
         }
+
+        /* Dark mode overrides */
+        [data-theme="dark"] .card {
+            background: rgba(20, 25, 49, 0.85);
+        }
+
+        [data-theme="dark"] .instructions-modal {
+            background: rgba(20, 25, 49, 0.95);
+        }
+
+        [data-theme="dark"] .instructions-overlay {
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        [data-theme="dark"] input[type="file"],
+        [data-theme="dark"] select,
+        [data-theme="dark"] textarea,
+        [data-theme="dark"] input[type="number"] {
+            background: var(--surface-light);
+            color: var(--text-primary);
+        }
+
+        [data-theme="dark"] .file-input-label {
+            background: var(--surface-light);
+        }
+
+        [data-theme="dark"] .btn-secondary {
+            background: var(--surface);
+        }
+
+        /* Theme Toggle Button */
+        .theme-toggle {
+            position: fixed;
+            top: 2rem;
+            right: 2rem;
+            width: 48px;
+            height: 48px;
+            background: rgba(255, 255, 255, 0.9);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 9999;
+            box-shadow: 0 4px 12px var(--shadow);
+            backdrop-filter: blur(10px);
+        }
+
+        [data-theme="dark"] .theme-toggle {
+            background: rgba(20, 25, 49, 0.9);
+            border-color: var(--border);
+        }
+
+        .theme-toggle:hover {
+            transform: translateY(-2px) scale(1.05);
+            box-shadow: 0 8px 20px var(--shadow);
+            border-color: var(--primary);
+        }
+
+        .theme-toggle:active {
+            transform: translateY(0) scale(0.98);
+        }
+
+        .theme-toggle-icon {
+            font-size: 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .theme-toggle-icon.sun {
+            display: block;
+        }
+
+        .theme-toggle-icon.moon {
+            display: none;
+        }
+
+        [data-theme="dark"] .theme-toggle-icon.sun {
+            display: none;
+        }
+
+        [data-theme="dark"] .theme-toggle-icon.moon {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .theme-toggle {
+                top: 1rem;
+                right: 1rem;
+                width: 42px;
+                height: 42px;
+            }
+
+            .theme-toggle-icon {
+                font-size: 1.25rem;
+            }
+        }
     </style>
 </head>
 <body>
+    <!-- Theme Toggle Button -->
+    <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+        <span class="theme-toggle-icon sun">☀️</span>
+        <span class="theme-toggle-icon moon">🌙</span>
+    </button>
+
     <div class="container">
         <div class="header">
             <div class="logo-icon">📄</div>
@@ -2875,6 +3481,56 @@ function generateFileTranslationPage(videoId, configStr, config) {
             error.textContent = '⚠️ ' + message;
             error.classList.add('active');
         }
+
+        // Theme switching functionality
+        (function() {
+            const html = document.documentElement;
+            const themeToggle = document.getElementById('themeToggle');
+
+            // Check for saved theme preference or default to system preference
+            function getPreferredTheme() {
+                const savedTheme = localStorage.getItem('theme');
+                if (savedTheme) {
+                    return savedTheme;
+                }
+
+                // Check system preference
+                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    return 'dark';
+                }
+
+                return 'light';
+            }
+
+            // Apply theme
+            function setTheme(theme) {
+                html.setAttribute('data-theme', theme);
+                localStorage.setItem('theme', theme);
+            }
+
+            // Initialize theme on page load
+            const initialTheme = getPreferredTheme();
+            setTheme(initialTheme);
+
+            // Toggle theme on button click
+            if (themeToggle) {
+                themeToggle.addEventListener('click', function() {
+                    const currentTheme = html.getAttribute('data-theme');
+                    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+                    setTheme(newTheme);
+                });
+            }
+
+            // Listen for system theme changes
+            if (window.matchMedia) {
+                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+                    // Only auto-switch if user hasn't manually set a preference
+                    if (!localStorage.getItem('theme')) {
+                        setTheme(e.matches ? 'dark' : 'light');
+                    }
+                });
+            }
+        })();
     </script>
 </body>
 </html>
