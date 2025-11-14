@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker 1.1.1
+
+**Bug Fixes:**
+- Fixed Gemini model defaults: Old session tokens with deprecated models (gemini-flash-latest, gemini-2.0-flash-exp) now automatically use current stable model
+- Fixed compression middleware crashes on some environments
+- Fixed encryption key regeneration on server restart (was causing session loss)
+- Fixed session token error messages displaying incorrectly in Stremio
+
+**Configuration:**
+- Added environment variable support for AI translation settings (temperature, top-K, top-P, thinking budget, output tokens, timeout, retries)
+- Model defaults consolidated to single source of truth (easier to maintain, eliminates redundancy)
+- Deprecated model override system with easy re-enable flag for future user selection
+
 ## SubMaker 1.1.0
 
 **Translation Engine - Complete Rewrite:**
