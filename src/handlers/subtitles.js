@@ -192,19 +192,19 @@ function buildPartialSrtWithTail(mergedSrt) {
  */
 function createSessionTokenErrorSubtitle() {
   const srt = `1
-00:00:00,000 --> 00:00:10,000
+00:00:00,000 --> 00:00:03,000
 ⚠️ Configuration Error
 
 2
-00:00:10,001 --> 00:00:25,000
+00:00:03,001 --> 00:00:06,000
 Your session token was not found or has expired.
 
 3
-00:00:25,001 --> 00:00:40,000
+00:00:06,001 --> 00:00:09,000
 Please recreate your SubMaker configuration to continue using the addon.
 
 4
-00:00:40,001 --> 04:00:00,000
+00:00:09,001 --> 04:00:00,000
 Visit the addon configuration page and set up your preferences again.`;
 
   return srt;
