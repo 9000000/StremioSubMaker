@@ -9,6 +9,7 @@ const { getLanguageName, getDisplayName } = require('../utils/languages');
 const { LRUCache } = require('lru-cache');
 const syncCache = require('../utils/syncCache');
 const { StorageFactory, StorageAdapter } = require('../storage');
+const { getCached: getDownloadCached, saveCached: saveDownloadCached } = require('../utils/downloadCache');
 const log = require('../utils/logger');
 const { generateCacheKeys } = require('../utils/cacheKeys');
 
@@ -58,12 +59,19 @@ const inFlightSearches = new LRUCache({
   updateAgeOnGet: false,
 });
 
-// Performance: LRU cache for completed subtitle search results (max 5000 entries)
+// Performance: LRU cache for completed subtitle search results
 // Caches completed subtitle searches to avoid repeated API calls for identical queries
 // This significantly reduces latency and API load for popular content (e.g., trending shows)
+// IMPORTANT: Cache is user-scoped (includes config hash) to prevent cache sharing between different configs
+// Environment variable configuration:
+// - SUBTITLE_SEARCH_CACHE_MAX: Maximum number of cached searches (default: 15000)
+// - SUBTITLE_SEARCH_CACHE_TTL_MS: Time-to-live in milliseconds (default: 600000 = 10 minutes)
+const SUBTITLE_SEARCH_CACHE_MAX = parseInt(process.env.SUBTITLE_SEARCH_CACHE_MAX) || 15000;
+const SUBTITLE_SEARCH_CACHE_TTL_MS = parseInt(process.env.SUBTITLE_SEARCH_CACHE_TTL_MS) || (10 * 60 * 1000); // 10 minutes
+
 const subtitleSearchResultsCache = new LRUCache({
-  max: 5000, // Max 5000 searches cached
-  ttl: 1000 * 60 * 60, // 1 hour TTL (subtitles don't change frequently)
+  max: SUBTITLE_SEARCH_CACHE_MAX,
+  ttl: SUBTITLE_SEARCH_CACHE_TTL_MS,
   updateAgeOnGet: true, // Popular content stays cached longer
 });
 
@@ -619,6 +627,9 @@ verifyBypassCacheIntegrity();
 cacheMetrics.totalCacheSize = calculateCacheSize();
 log.debug(() => `[Cache] Initial cache size: ${(cacheMetrics.totalCacheSize / 1024 / 1024 / 1024).toFixed(2)}GB`);
 
+// Log subtitle search cache configuration
+log.debug(() => `[Subtitle Search Cache] Initialized: max=${SUBTITLE_SEARCH_CACHE_MAX} entries, ttl=${Math.floor(SUBTITLE_SEARCH_CACHE_TTL_MS / 1000 / 60)}min, user-scoped=true`);
+
 // Log metrics every 30 minutes
 setInterval(logCacheMetrics, 1000 * 60 * 30);
 
@@ -1069,7 +1080,7 @@ function calculateFilenameMatchScore(streamFilename, subtitleName) {
 }
 
 /**
- * Sort subtitles by filename match score
+ * Sort subtitles by filename match score with secondary quality-based ranking
  * @param {Array} subtitles - Array of subtitle objects
  * @param {string} streamFilename - Stream filename from Stremio
  * @returns {Array} - Sorted subtitles (best matches first)
@@ -1084,8 +1095,45 @@ function rankSubtitlesByFilename(subtitles, streamFilename) {
     _matchScore: calculateFilenameMatchScore(streamFilename, sub.name || '')
   }));
 
-  // Sort by match score descending (highest first)
-  withScores.sort((a, b) => b._matchScore - a._matchScore);
+  // Two-tier ranking system:
+  // 1. Primary: Filename match score (for subtitle sync accuracy)
+  // 2. Secondary: Quality metrics (downloads, rating, upload date)
+  //    - Used as tiebreaker when filename scores are similar
+  withScores.sort((a, b) => {
+    // Primary sort: Filename match score (descending - higher is better)
+    const scoreDiff = b._matchScore - a._matchScore;
+
+    // If scores are significantly different (>100 points), use filename score
+    if (Math.abs(scoreDiff) > 100) {
+      return scoreDiff;
+    }
+
+    // Secondary sort: Quality metrics for similar filename scores
+    // Downloads (popularity indicator) - higher is better
+    const downloadDiff = (b.downloads || 0) - (a.downloads || 0);
+    if (downloadDiff !== 0) {
+      return downloadDiff;
+    }
+
+    // Rating (quality indicator) - higher is better
+    const ratingDiff = (b.rating || 0) - (a.rating || 0);
+    if (ratingDiff !== 0) {
+      return ratingDiff;
+    }
+
+    // Upload date (recency tiebreaker) - newer is better
+    // Parse dates and handle null/undefined
+    const getTimestamp = (dateStr) => {
+      if (!dateStr) return 0;
+      const timestamp = new Date(dateStr).getTime();
+      return isNaN(timestamp) ? 0 : timestamp;
+    };
+
+    const dateA = getTimestamp(a.uploadDate);
+    const dateB = getTimestamp(b.uploadDate);
+
+    return dateB - dateA;
+  });
 
   // Remove the temporary score property before returning
   return withScores.map(({ _matchScore, ...rest }) => rest);
@@ -1142,8 +1190,16 @@ function createSubtitleHandler(config) {
         languages: allLanguages
       };
 
-      // Create deduplication key based on video info and languages
-      const dedupKey = `subtitle-search:${videoInfo.imdbId}:${videoInfo.type}:${videoInfo.season || ''}:${videoInfo.episode || ''}:${allLanguages.join(',')}`;
+      // Get user config hash for cache isolation
+      // Each user's config (API keys, provider settings) gets their own cached results
+      const userHash = (config && typeof config.__configHash === 'string' && config.__configHash.length > 0)
+        ? config.__configHash
+        : 'default';
+
+      // Create user-scoped deduplication key based on video info, languages, and config hash
+      // This ensures different users (or same user with different configs) get separate cached results
+      // Cache automatically purges when user changes config (different hash = different cache key)
+      const dedupKey = `subtitle-search:${videoInfo.imdbId}:${videoInfo.type}:${videoInfo.season || ''}:${videoInfo.episode || ''}:${allLanguages.join(',')}:${userHash}`;
 
       // Collect subtitles from all enabled providers with deduplication
       const foundSubtitles = await deduplicateSearch(dedupKey, async () => {
@@ -1255,11 +1311,23 @@ function createSubtitleHandler(config) {
       // Filter results to only allowed languages
       let filteredFoundSubtitles = foundSubtitles.filter(sub => sub.languageCode && normalizedAllLangs.has(sub.languageCode));
 
-      // Rank subtitles by filename match before creating response lists
+      // Rank subtitles by filename match + quality metrics before creating response lists
       // This ensures the best matches appear first in Stremio UI
       if (streamFilename) {
         filteredFoundSubtitles = rankSubtitlesByFilename(filteredFoundSubtitles, streamFilename);
-        log.debug(() => '[Subtitles] Ranked subtitles by filename match');
+        log.debug(() => `[Subtitles] Ranked ${filteredFoundSubtitles.length} subtitles by filename match + quality (downloads, rating, date)`);
+
+        // Debug: Log top 5 ranked subtitles for verification
+        if (filteredFoundSubtitles.length > 0) {
+          const top5 = filteredFoundSubtitles.slice(0, 5);
+          log.debug(() => ['[Subtitles] Top 5 ranked:', top5.map(s => ({
+            name: s.name,
+            provider: s.provider,
+            downloads: s.downloads,
+            rating: s.rating,
+            uploadDate: s.uploadDate
+          }))]);
+        }
       }
 
       // Limit to top 12 subtitles per language (applied AFTER ranking all sources)
@@ -1753,42 +1821,53 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
     log.debug(() => `[Translation] Background translation started for ${sourceFileId} to ${targetLanguage}`);
     cacheMetrics.apiCalls++;
 
-    // Download subtitle from provider
-    let sourceContent = null;
-    log.debug(() => `[Translation] Downloading subtitle from provider`);
-
-    if (sourceFileId.startsWith('subdl_')) {
-      // SubDL subtitle
-      if (!config.subtitleProviders?.subdl?.enabled) {
-        throw new Error('SubDL provider is disabled');
-      }
-
-      const subdl = new SubDLService(config.subtitleProviders.subdl.apiKey);
-      sourceContent = await subdl.downloadSubtitle(sourceFileId);
-    } else if (sourceFileId.startsWith('subsource_')) {
-      // SubSource subtitle
-      if (!config.subtitleProviders?.subsource?.enabled) {
-        throw new Error('SubSource provider is disabled');
-      }
-
-      const subsource = new SubSourceService(config.subtitleProviders.subsource.apiKey);
-      sourceContent = await subsource.downloadSubtitle(sourceFileId);
-    } else if (sourceFileId.startsWith('v3_')) {
-      // OpenSubtitles V3 subtitle
-      if (!config.subtitleProviders?.opensubtitles?.enabled) {
-        throw new Error('OpenSubtitles provider is disabled');
-      }
-
-      const opensubtitlesV3 = new OpenSubtitlesV3Service();
-      sourceContent = await opensubtitlesV3.downloadSubtitle(sourceFileId);
+    // Fetch subtitle content, preferring 10min download cache first
+    // This avoids re-downloading the same source when translating after a direct download
+    let sourceContent = getDownloadCached(sourceFileId);
+    if (sourceContent) {
+      log.debug(() => `[Translation] Using cached source subtitle for ${sourceFileId} (${sourceContent.length} bytes)`);
     } else {
-      // OpenSubtitles subtitle (Auth implementation - default)
-      if (!config.subtitleProviders?.opensubtitles?.enabled) {
-        throw new Error('OpenSubtitles provider is disabled');
+      // Download subtitle from provider
+      log.debug(() => `[Translation] Cache miss – downloading source subtitle from provider`);
+
+      if (sourceFileId.startsWith('subdl_')) {
+        // SubDL subtitle
+        if (!config.subtitleProviders?.subdl?.enabled) {
+          throw new Error('SubDL provider is disabled');
+        }
+
+        const subdl = new SubDLService(config.subtitleProviders.subdl.apiKey);
+        sourceContent = await subdl.downloadSubtitle(sourceFileId);
+      } else if (sourceFileId.startsWith('subsource_')) {
+        // SubSource subtitle
+        if (!config.subtitleProviders?.subsource?.enabled) {
+          throw new Error('SubSource provider is disabled');
+        }
+
+        const subsource = new SubSourceService(config.subtitleProviders.subsource.apiKey);
+        sourceContent = await subsource.downloadSubtitle(sourceFileId);
+      } else if (sourceFileId.startsWith('v3_')) {
+        // OpenSubtitles V3 subtitle
+        if (!config.subtitleProviders?.opensubtitles?.enabled) {
+          throw new Error('OpenSubtitles provider is disabled');
+        }
+
+        const opensubtitlesV3 = new OpenSubtitlesV3Service();
+        sourceContent = await opensubtitlesV3.downloadSubtitle(sourceFileId);
+      } else {
+        // OpenSubtitles subtitle (Auth implementation - default)
+        if (!config.subtitleProviders?.opensubtitles?.enabled) {
+          throw new Error('OpenSubtitles provider is disabled');
+        }
+
+        const opensubtitles = new OpenSubtitlesService(config.subtitleProviders.opensubtitles);
+        sourceContent = await opensubtitles.downloadSubtitle(sourceFileId);
       }
 
-      const opensubtitles = new OpenSubtitlesService(config.subtitleProviders.opensubtitles);
-      sourceContent = await opensubtitles.downloadSubtitle(sourceFileId);
+      // Save the freshly downloaded source to the 10min download cache for subsequent operations
+      try {
+        saveDownloadCached(sourceFileId, sourceContent);
+      } catch (_) {}
     }
 
     // Validate source size before translation

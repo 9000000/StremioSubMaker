@@ -18,6 +18,20 @@ Auto-sync subtitles in development!
 
 ---
 
+## 🎉 Try It Now - No Setup Required!
+
+**Want to jump straight in?**
+
+### **[https://submaker.elfhosted.com](https://submaker.elfhosted.com)**
+
+Just click the link, configure your languages, and install the addon. Done!
+
+**A huge thanks to [ElfHosted](https://elfhosted.com)** for making SubMaker accessible to everyone in the Stremio community!
+
+> **For self-hosting, keep reading the installation guide below.**
+
+---
+
 ## ✨ Why SubMaker?
 
 - 🌍 **190+ Languages** - Full ISO-639-2 support including regional variants (PT-BR, etc.)

@@ -668,35 +668,6 @@
             animation: spin 1s linear infinite;
         }
 
-        /* Info Banner */
-        .info-banner {
-            background: linear-gradient(135deg, rgba(8, 164, 213, 0.10) 0%, rgba(51, 185, 225, 0.10) 100%);
-            border: 2px solid var(--primary);
-            border-radius: 16px;
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-            display: flex;
-            gap: 1rem;
-            align-items: start;
-        }
-
-        .info-banner-icon {
-            font-size: 2rem;
-            flex-shrink: 0;
-        }
-
-        .info-banner-content h3 {
-            color: var(--primary-light);
-            margin-bottom: 0.5rem;
-            font-size: 1.125rem;
-        }
-
-        .info-banner-content p {
-            color: var(--text-secondary);
-            line-height: 1.6;
-            margin: 0.25rem 0;
-        }
-
         /* Model Fetching Status */
         .model-status {
             display: flex;
@@ -889,7 +860,10 @@
 
         .footer-heart {
             color: var(--danger);
-            animation: heartbeat 1.5s ease-in-out infinite;
+            animation: heartPulse 3s ease-in-out infinite;
+            display: inline-block;
+            text-shadow: 0 0 0 transparent;
+            transition: all 0.3s ease;
         }
 
         .footer p {
@@ -907,10 +881,17 @@
             color: var(--primary);
         }
 
-        @keyframes heartbeat {
-            0%, 100% { transform: scale(1); }
-            10%, 30% { transform: scale(1.1); }
-            20%, 40% { transform: scale(1); }
+        @keyframes heartPulse {
+            0%, 100% {
+                transform: scale(1);
+                opacity: 0.9;
+                text-shadow: 0 0 0 transparent;
+            }
+            50% {
+                transform: scale(1.08);
+                opacity: 1;
+                text-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+            }
         }
 
         /* Responsive */
@@ -1062,6 +1043,7 @@
 
         .modal-content {
             padding: 2rem;
+            text-align: center;
         }
 
         .modal-content h3 {
@@ -1071,6 +1053,7 @@
             margin: 1.5rem 0 0.75rem 0;
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 0.5rem;
         }
 
@@ -1079,10 +1062,12 @@
         }
 
         .modal-content ol {
-            margin: 0.75rem 0;
+            margin: 0.75rem auto;
             padding-left: 1.5rem;
             color: var(--text-primary);
             line-height: 1.8;
+            text-align: left;
+            display: inline-block;
         }
 
         .modal-content li {
@@ -1218,18 +1203,6 @@
         </div>
 
         <div id="alertContainer"></div>
-
-        <div class="info-banner" id="quickStartBanner" style="display: none;">
-            <div class="info-banner-icon">🚀</div>
-            <div class="info-banner-content">
-                <h3>Quick Start Guide</h3>
-                <p><strong>1.</strong> Get a free <a href="https://makersuite.google.com/app/apikey" target="_blank" style="color: var(--primary-light); text-decoration: underline;">Gemini API key</a> and enter it in the AI Translation section</p>
-                <p><strong>2.</strong> Select <strong>up to 3</strong> source languages (languages you'll translate from)</p>
-                <p><strong>3.</strong> Select target languages (languages you want subtitles in)</p>
-                <p><strong>4.</strong> (Optional) Add your OpenSubtitles account for higher download limits</p>
-                <p><strong>5.</strong> Click "Save Configuration" and install the addon in Stremio!</p>
-            </div>
-        </div>
 
         <script>
         (function(){
@@ -1564,7 +1537,6 @@
                     <div class="card-title-group">
                         <div class="card-icon">🔬</div>
                         <h2 class="card-title">
-                            <input type="checkbox" id="advancedSettingsEnabled" style="margin-right: 8px; vertical-align: middle;">
                             Advanced Settings (EXPERIMENTAL)
                         </h2>
                     </div>
@@ -1574,7 +1546,7 @@
                 <div class="card-content">
                     <div class="highlight-box" style="margin-bottom: 1.5rem;">
                         <p style="font-size: 0.9rem; margin: 0;">
-                            <strong>Fine-tune AI behavior:</strong> Override default model, sampling parameters, and enable experimental features. Changes here affect translation quality, speed, and uniqueness.
+                            <strong>Fine-tune AI behavior:</strong> Override default model and sampling parameters. When any setting is changed from defaults, <strong style="color: var(--warning);">Bypass Cache is automatically enabled</strong> to ensure your experimental translations don't pollute the shared database.
                         </p>
                     </div>
 
@@ -1610,17 +1582,6 @@
                             <span class="label-description">Probability threshold (0.0-1.0). Lower = more focused, Higher = more diverse. Default: 0.95</span>
                         </label>
                         <input type="number" id="advancedTopP" min="0" max="1" step="0.05" value="0.95" placeholder="0.95">
-                    </div>
-
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="advancedQQ">
-                            <strong>QQ Mode (Quantum Quality)</strong>
-                            <span class="label-description" style="display: block; margin-top: 0.5rem;">
-                                <strong style="color: var(--warning);">⚠️ Automatically enables Bypass Cache.</strong><br>
-                                Each translation uses unique parameters for maximum quality variation. Translations won't be shared in the main database.
-                            </span>
-                        </label>
                     </div>
                 </div>
             </div>
@@ -1677,7 +1638,7 @@
                 <ol>
                     <li>Add desired API keys to <strong>"Subtitles Sources"</strong> section.</li>
                     <li>Add a Gemini API Key to <strong>AI section</strong>.</li>
-                    <li>Select up to <strong>3 source languages</strong>.</li>
+                    <li>Select <strong>source languages</strong>.</li>
                     <li>Select <strong>target languages</strong>.</li>
                     <li><strong>Install on Stremio</strong>.</li>
                 </ol>

@@ -133,43 +133,71 @@ class OpenSubtitlesV3Service {
   }
 
   /**
-   * Download subtitle content from V3 API
+   * Download subtitle content from V3 API with retry logic
    * @param {string} fileId - File ID from search results (contains encoded URL)
+   * @param {number} maxRetries - Maximum number of retries (default: 3)
    * @returns {Promise<string>} - Subtitle content as text
    */
-  async downloadSubtitle(fileId) {
-    try {
-      log.debug(() => ['[OpenSubtitles V3] Downloading subtitle:', fileId]);
-
-      // Extract encoded URL from fileId
-      // Format: v3_{base64url_encoded_url}
-      if (!fileId.startsWith('v3_')) {
-        throw new Error('Invalid V3 file ID format');
-      }
-
-      const encodedUrl = fileId.substring(3); // Remove 'v3_' prefix
-      const downloadUrl = Buffer.from(encodedUrl, 'base64url').toString('utf-8');
-
-      log.debug(() => '[OpenSubtitles V3] Decoded download URL');
-
-      // Download the subtitle file directly
-      const response = await axios.get(downloadUrl, {
-        responseType: 'text',
-        headers: {
-          'User-Agent': USER_AGENT
-        },
-        timeout: 12000, // 12 second timeout for download
-        httpAgent,
-        httpsAgent
-      });
-
-      const subtitleContent = response.data;
-      log.debug(() => '[OpenSubtitles V3] Subtitle downloaded successfully');
-      return subtitleContent;
-
-    } catch (error) {
-      handleDownloadError(error, 'OpenSubtitles V3');
+  async downloadSubtitle(fileId, maxRetries = 3) {
+    // Extract encoded URL from fileId
+    // Format: v3_{base64url_encoded_url}
+    if (!fileId.startsWith('v3_')) {
+      throw new Error('Invalid V3 file ID format');
     }
+
+    const encodedUrl = fileId.substring(3); // Remove 'v3_' prefix
+    const downloadUrl = Buffer.from(encodedUrl, 'base64url').toString('utf-8');
+
+    log.debug(() => '[OpenSubtitles V3] Decoded download URL');
+
+    // Retry logic with exponential backoff
+    let lastError;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        log.debug(() => `[OpenSubtitles V3] Downloading subtitle (attempt ${attempt}/${maxRetries}): ${fileId}`);
+
+        // Download the subtitle file directly
+        const response = await axios.get(downloadUrl, {
+          responseType: 'text',
+          headers: {
+            'User-Agent': USER_AGENT
+          },
+          timeout: 12000, // 12 second timeout for download
+          httpAgent,
+          httpsAgent
+        });
+
+        const subtitleContent = response.data;
+        log.debug(() => '[OpenSubtitles V3] Subtitle downloaded successfully');
+        return subtitleContent;
+
+      } catch (error) {
+        lastError = error;
+        const status = error.response?.status;
+
+        // Don't retry for non-retryable errors (404, auth errors, etc.)
+        if (status === 404 || status === 401 || status === 403) {
+          log.debug(() => `[OpenSubtitles V3] Non-retryable error (${status}), aborting retries`);
+          break;
+        }
+
+        // For 469 (database error) and 5xx errors, retry with backoff
+        if ((status === 469 || status >= 500) && attempt < maxRetries) {
+          const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff, max 5s
+          log.warn(() => `[OpenSubtitles V3] Download failed (status ${status}), retrying in ${backoffMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+          continue;
+        }
+
+        // Last attempt or non-retryable error - log and throw
+        if (attempt === maxRetries) {
+          log.error(() => `[OpenSubtitles V3] All ${maxRetries} download attempts failed`);
+        }
+      }
+    }
+
+    // All retries exhausted - throw the last error
+    handleDownloadError(lastError, 'OpenSubtitles V3');
   }
 
   /**

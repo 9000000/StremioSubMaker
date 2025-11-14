@@ -115,19 +115,6 @@ Translate to {target_language}.`;
 
         // Show instructions modal on first visit
         showInstructionsModalIfNeeded();
-
-        // Quick Start banner: show only on first run
-        try {
-            var qs = document.getElementById('quickStartBanner');
-            if (qs) {
-                if (isFirstRun) {
-                    qs.style.display = 'flex';
-                } else {
-                    // Remove from DOM to avoid layout space
-                    qs.remove();
-                }
-            }
-        } catch (_) {}
     }
 
     function normalizeLanguageCodes(codes) {
@@ -283,7 +270,7 @@ Translate to {target_language}.`;
             },
             fileTranslationEnabled: false, // enable file upload translation feature
             advancedSettings: {
-                enabled: false, // Enable advanced settings override
+                enabled: false, // Auto-set to true if any setting differs from defaults (forces bypass cache)
                 geminiModel: '', // Override model (empty = use default)
                 maxOutputTokens: 65536,
                 chunkSize: 12000,
@@ -292,10 +279,53 @@ Translate to {target_language}.`;
                 thinkingBudget: 0, // 0 = disabled, -1 = dynamic, >0 = fixed
                 temperature: 0.8,
                 topP: 0.95,
-                topK: 40,
-                qq: false // Quantum Quality mode (forces bypass cache)
+                topK: 40
             }
         };
+    }
+
+    /**
+     * Check if advanced settings differ from defaults
+     * @returns {boolean} - True if any advanced setting is modified
+     */
+    function areAdvancedSettingsModified() {
+        const defaults = getDefaultConfig().advancedSettings;
+
+        const advModelEl = document.getElementById('advancedModel');
+        const advThinkingEl = document.getElementById('advancedThinkingBudget');
+        const advTempEl = document.getElementById('advancedTemperature');
+        const advTopPEl = document.getElementById('advancedTopP');
+
+        if (!advModelEl || !advThinkingEl || !advTempEl || !advTopPEl) {
+            return false; // Elements not loaded yet
+        }
+
+        // Check if any value differs from defaults
+        const modelChanged = advModelEl.value !== (defaults.geminiModel || '');
+        const thinkingChanged = parseInt(advThinkingEl.value) !== defaults.thinkingBudget;
+        const tempChanged = parseFloat(advTempEl.value) !== defaults.temperature;
+        const topPChanged = parseFloat(advTopPEl.value) !== defaults.topP;
+
+        return modelChanged || thinkingChanged || tempChanged || topPChanged;
+    }
+
+    /**
+     * Update bypass cache state based on advanced settings
+     */
+    function updateBypassCacheForAdvancedSettings() {
+        const bypassEl = document.getElementById('bypassCache');
+        if (!bypassEl) return;
+
+        const isModified = areAdvancedSettingsModified();
+
+        if (isModified) {
+            // Advanced settings are modified: force and lock bypass cache
+            bypassEl.checked = true;
+            bypassEl.disabled = true;
+        } else {
+            // Advanced settings at defaults: unlock bypass cache
+            bypassEl.disabled = false;
+        }
     }
 
     async function loadLanguages() {
@@ -538,14 +568,16 @@ Translate to {target_language}.`;
         // Form submission
         document.getElementById('configForm').addEventListener('submit', handleSubmit);
 
-        // Gemini API key auto-fetch - DISABLED
-        // const apiKeyInput = document.getElementById('geminiApiKey');
-        // apiKeyInput.addEventListener('input', debounce((e) => {
-        //     const apiKey = e.target.value.trim();
-        //     if (apiKey && apiKey !== lastFetchedApiKey) {
-        //         autoFetchModels(apiKey);
-        //     }
-        // }, 1000));
+        // Gemini API key auto-fetch - triggers when API key is typed/pasted
+        const apiKeyInput = document.getElementById('geminiApiKey');
+        if (apiKeyInput) {
+            apiKeyInput.addEventListener('input', debounce((e) => {
+                const apiKey = e.target.value.trim();
+                if (apiKey && apiKey.length >= 10 && apiKey !== lastFetchedApiKey) {
+                    autoFetchModels(apiKey);
+                }
+            }, 1500));
+        }
 
         // Search functionality
         document.getElementById('sourceSearch').addEventListener('input', (e) => {
@@ -655,24 +687,30 @@ Translate to {target_language}.`;
             }
         });
 
-        // Advanced Settings - QQ mode auto-enables bypass cache
-        const advQQEl = document.getElementById('advancedQQ');
-        if (advQQEl) {
-            advQQEl.addEventListener('change', (e) => {
-                const bypassEl = document.getElementById('bypassCache');
-                if (bypassEl) {
-                    if (e.target.checked) {
-                        // QQ mode ON: force bypass cache and lock it
-                        bypassEl.checked = true;
-                        bypassEl.disabled = true;
-                        showAlert('QQ Mode enabled! Bypass Cache is now automatically enabled and locked.', 'info');
-                    } else {
-                        // QQ mode OFF: unlock bypass cache
-                        bypassEl.disabled = false;
-                    }
+        // Advanced Settings - Auto-enable bypass cache when any setting is modified
+        const advModelEl = document.getElementById('advancedModel');
+        const advThinkingEl = document.getElementById('advancedThinkingBudget');
+        const advTempEl = document.getElementById('advancedTemperature');
+        const advTopPEl = document.getElementById('advancedTopP');
+
+        // Fetch models when dropdown is clicked (on-demand fallback)
+        if (advModelEl) {
+            advModelEl.addEventListener('focus', async () => {
+                const apiKey = document.getElementById('geminiApiKey').value.trim();
+                // Only fetch if we have an API key and haven't fetched yet
+                if (apiKey && apiKey.length >= 10 && apiKey !== lastFetchedApiKey) {
+                    console.log('[Advanced Settings] Fetching models on dropdown focus...');
+                    await autoFetchModels(apiKey);
                 }
             });
         }
+
+        [advModelEl, advThinkingEl, advTempEl, advTopPEl].forEach(el => {
+            if (el) {
+                el.addEventListener('change', updateBypassCacheForAdvancedSettings);
+                el.addEventListener('input', updateBypassCacheForAdvancedSettings);
+            }
+        });
 
         // Secret experimental mode: Click the heart to reveal advanced settings
         const secretHeart = document.getElementById('secretHeart');
@@ -986,8 +1024,10 @@ Translate to {target_language}.`;
         if (!apiKey || apiKey.length < 10) return;
 
         const statusDiv = document.getElementById('modelStatus');
-        statusDiv.innerHTML = '<div class="spinner-small"></div> Fetching models...';
-        statusDiv.className = 'model-status fetching';
+        if (statusDiv) {
+            statusDiv.innerHTML = '<div class="spinner-small"></div> Fetching models...';
+            statusDiv.className = 'model-status fetching';
+        }
 
         try {
             const response = await fetch('/api/gemini-models', {
@@ -1001,90 +1041,63 @@ Translate to {target_language}.`;
             }
 
             const models = await response.json();
-            const modelSelect = document.getElementById('geminiModel');
-
-            // Clear and populate model dropdown
-            modelSelect.innerHTML = '<option value="">Select a model...</option>';
-
-            // Filter to only show models containing "pro" or "flash" (case-insensitive)
-            const filteredModels = models.filter(model => {
-                const nameLower = model.name.toLowerCase();
-                return nameLower.includes('pro') || nameLower.includes('flash');
-            });
-
-            filteredModels.forEach(model => {
-                const option = document.createElement('option');
-                option.value = model.name;
-                option.textContent = `${model.displayName}`;
-
-                if (currentConfig.geminiModel === model.name) {
-                    option.selected = true;
-                }
-
-                modelSelect.appendChild(option);
-            });
-
-            // Select default if none selected
-            if (!modelSelect.value && filteredModels.length > 0) {
-                // Default: gemini-2.5-flash-lite-preview-09-2025 (exact match preferred)
-                const defaultModel = filteredModels.find(m => m.name === 'gemini-2.5-flash-lite-preview-09-2025');
-                const flashLiteAny = filteredModels.find(m => m.name.includes('flash-lite'));
-                const flashModel = filteredModels.find(m => m.name.includes('flash'));
-
-                if (defaultModel) {
-                    modelSelect.value = defaultModel.name;
-                } else if (flashLiteAny) {
-                    modelSelect.value = flashLiteAny.name;
-                } else if (flashModel) {
-                    modelSelect.value = flashModel.name;
-                } else if (filteredModels.length > 0) {
-                    modelSelect.value = filteredModels[0].name;
-                }
-            }
 
             lastFetchedApiKey = apiKey;
-            statusDiv.innerHTML = '✓ Models loaded successfully!';
-            statusDiv.className = 'model-status success';
 
-            setTimeout(() => {
-                statusDiv.innerHTML = '';
-                statusDiv.className = 'model-status';
-            }, 3000);
+            if (statusDiv) {
+                statusDiv.innerHTML = '✓ Models loaded successfully!';
+                statusDiv.className = 'model-status success';
 
-            // Also populate advanced model dropdown
-            await populateAdvancedModels(models, filteredModels);
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                    statusDiv.className = 'model-status';
+                }, 3000);
+            }
+
+            // Populate advanced model dropdown with ALL models (no filtering, no auto-selection)
+            await populateAdvancedModels(models);
 
         } catch (error) {
-            statusDiv.innerHTML = '✗ Failed to fetch models. Check your API key.';
-            statusDiv.className = 'model-status error';
+            console.error('Failed to fetch models:', error);
+            if (statusDiv) {
+                statusDiv.innerHTML = '✗ Failed to fetch models. Check your API key.';
+                statusDiv.className = 'model-status error';
 
-            setTimeout(() => {
-                statusDiv.innerHTML = '';
-                statusDiv.className = 'model-status';
-            }, 5000);
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                    statusDiv.className = 'model-status';
+                }, 5000);
+            }
         }
     }
 
-    async function populateAdvancedModels(allModels, filteredModels) {
+    async function populateAdvancedModels(models) {
         const advModelSelect = document.getElementById('advancedModel');
-        if (!advModelSelect) return;
+        if (!advModelSelect) {
+            console.log('[Advanced Settings] Model dropdown not found in DOM');
+            return;
+        }
 
-        // Clear and populate advanced model dropdown
+        console.log(`[Advanced Settings] Populating dropdown with ${models.length} models`);
+
+        // Clear and populate advanced model dropdown with ALL models
         advModelSelect.innerHTML = '<option value="">Use Default Model</option>';
 
-        // Use filtered models (pro/flash only)
-        filteredModels.forEach(model => {
+        // Show ALL models (no filtering)
+        models.forEach(model => {
             const option = document.createElement('option');
             option.value = model.name;
             option.textContent = `${model.displayName}`;
 
-            // Check if this model is selected in advanced settings
+            // Preserve user's saved selection if it exists
             if (currentConfig.advancedSettings?.geminiModel === model.name) {
                 option.selected = true;
             }
 
             advModelSelect.appendChild(option);
         });
+
+        console.log('[Advanced Settings] Dropdown populated successfully');
     }
 
     function handleQuickAction(e) {
@@ -1351,15 +1364,12 @@ Translate to {target_language}.`;
         if (advTimeoutEl) advTimeoutEl.value = currentConfig.advancedSettings?.translationTimeout || 600;
         if (advRetriesEl) advRetriesEl.value = currentConfig.advancedSettings?.maxRetries || 5;
 
-        // Load new advanced settings fields
-        const advEnabledEl = document.getElementById('advancedSettingsEnabled');
+        // Load advanced settings fields
         const advModelEl = document.getElementById('advancedModel');
         const advThinkingEl = document.getElementById('advancedThinkingBudget');
         const advTempEl = document.getElementById('advancedTemperature');
         const advTopPEl = document.getElementById('advancedTopP');
-        const advQQEl = document.getElementById('advancedQQ');
 
-        if (advEnabledEl) advEnabledEl.checked = currentConfig.advancedSettings?.enabled || false;
         if (advModelEl) {
             // Will be populated by fetchAvailableModels
             advModelEl.value = currentConfig.advancedSettings?.geminiModel || '';
@@ -1367,14 +1377,9 @@ Translate to {target_language}.`;
         if (advThinkingEl) advThinkingEl.value = currentConfig.advancedSettings?.thinkingBudget ?? 0;
         if (advTempEl) advTempEl.value = currentConfig.advancedSettings?.temperature ?? 0.8;
         if (advTopPEl) advTopPEl.value = currentConfig.advancedSettings?.topP ?? 0.95;
-        if (advQQEl) {
-            advQQEl.checked = currentConfig.advancedSettings?.qq || false;
-            // If QQ is enabled, auto-enable bypass cache
-            if (advQQEl.checked && bypassEl) {
-                bypassEl.checked = true;
-                bypassEl.disabled = true; // Lock it when QQ is enabled
-            }
-        }
+
+        // Check if advanced settings are modified and update bypass cache accordingly
+        updateBypassCacheForAdvancedSettings();
     }
 
     async function handleSubmit(e) {
@@ -1423,32 +1428,32 @@ Translate to {target_language}.`;
                 persistent: true
             },
             bypassCache: (function() {
-                const qqEnabled = document.getElementById('advancedQQ')?.checked || false;
+                const advSettingsModified = areAdvancedSettingsModified();
                 const cacheDisabled = !document.getElementById('cacheEnabled').checked;
                 const bypassChecked = document.getElementById('bypassCache')?.checked || false;
-                return qqEnabled || cacheDisabled || bypassChecked;
+                return advSettingsModified || cacheDisabled || bypassChecked;
             })(),
             bypassCacheConfig: {
                 enabled: (function() {
-                    const qqEnabled = document.getElementById('advancedQQ')?.checked || false;
+                    const advSettingsModified = areAdvancedSettingsModified();
                     const cacheDisabled = !document.getElementById('cacheEnabled').checked;
                     const bypassChecked = document.getElementById('bypassCache')?.checked || false;
-                    return qqEnabled || cacheDisabled || bypassChecked;
+                    return advSettingsModified || cacheDisabled || bypassChecked;
                 })(),
                 duration: 12
             },
             tempCache: { // Deprecated: kept for backward compatibility
                 enabled: (function() {
-                    const qqEnabled = document.getElementById('advancedQQ')?.checked || false;
+                    const advSettingsModified = areAdvancedSettingsModified();
                     const cacheDisabled = !document.getElementById('cacheEnabled').checked;
                     const bypassChecked = document.getElementById('bypassCache')?.checked || false;
-                    return qqEnabled || cacheDisabled || bypassChecked;
+                    return advSettingsModified || cacheDisabled || bypassChecked;
                 })(),
                 duration: 12
             },
             fileTranslationEnabled: document.getElementById('fileTranslationEnabled').checked,
             advancedSettings: {
-                enabled: (function(){ const el = document.getElementById('advancedSettingsEnabled'); return el ? el.checked : false; })(),
+                enabled: areAdvancedSettingsModified(), // Auto-detect if any setting differs from defaults
                 geminiModel: (function(){ const el = document.getElementById('advancedModel'); return el ? el.value : ''; })(),
                 maxOutputTokens: (function(){ const el = document.getElementById('maxOutputTokens'); return parseInt(el ? el.value : '') || 65536; })(),
                 chunkSize: (function(){ const el = document.getElementById('chunkSize'); return parseInt(el ? el.value : '') || 10000; })(),
@@ -1457,8 +1462,7 @@ Translate to {target_language}.`;
                 thinkingBudget: (function(){ const el = document.getElementById('advancedThinkingBudget'); return el ? parseInt(el.value) : 0; })(),
                 temperature: (function(){ const el = document.getElementById('advancedTemperature'); return el ? parseFloat(el.value) : 0.8; })(),
                 topP: (function(){ const el = document.getElementById('advancedTopP'); return el ? parseFloat(el.value) : 0.95; })(),
-                topK: 40, // Keep default topK
-                qq: (function(){ const el = document.getElementById('advancedQQ'); return el ? el.checked : false; })()
+                topK: 40 // Keep default topK
             }
         };
 

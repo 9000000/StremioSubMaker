@@ -19,8 +19,10 @@ const { parseConfig, getDefaultConfig, buildManifest } = require('./src/utils/co
 const { version } = require('./src/utils/version');
 const { getAllLanguages, getLanguageName } = require('./src/utils/languages');
 const { generateCacheKeys } = require('./src/utils/cacheKeys');
+const { getCached: getDownloadCached, saveCached: saveDownloadCached, getCacheStats: getDownloadCacheStats } = require('./src/utils/downloadCache');
 const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, createLoadingSubtitle, createSessionTokenErrorSubtitle, readFromPartialCache, readFromBypassCache, hasCachedTranslation, purgeTranslationCache, translationStatus } = require('./src/handlers/subtitles');
 const GeminiService = require('./src/services/gemini');
+const { translateInParallel } = require('./src/utils/parallelTranslation');
 const syncCache = require('./src/utils/syncCache');
 const { generateSubtitleSyncPage } = require('./src/utils/syncPageGenerator');
 const {
@@ -64,14 +66,7 @@ const firstClickTracker = new LRUCache({
     updateAgeOnGet: false,
 });
 
-// Performance: LRU cache for subtitle search results to reduce API calls
-// Caches completed subtitle searches for identical IMDB ID + languages combinations
-// This prevents repeated API calls for the same content (e.g., multiple users watching same episode)
-const subtitleSearchCache = new LRUCache({
-    max: 5000, // Max 5000 subtitle searches cached
-    ttl: 1000 * 60 * 60, // 1 hour TTL (subtitles don't change frequently)
-    updateAgeOnGet: true, // Extend TTL on access (popular content stays cached longer)
-});
+// Download cache is now in src/utils/downloadCache.js (shared with translation flow)
 
 /**
  * Deduplicates requests by caching in-flight promises
@@ -724,18 +719,42 @@ app.post('/api/translate-file', fileTranslationLimiter, validateRequest(fileTran
         const estimatedTokens = gemini.estimateTokenCount(content);
         log.debug(() => `[File Translation API] Estimated tokens: ${estimatedTokens}`);
 
-        // Translate
+        // Use parallel translation for large files (>threshold tokens)
+        // Parallel translation provides:
+        // - Faster processing through concurrent API calls
+        // - Better context preservation with chunk overlap
+        // - Improved reliability with per-chunk retries
+        const parallelThreshold = parseInt(process.env.PARALLEL_TRANSLATION_THRESHOLD) || 15000;
+        const useParallel = estimatedTokens > parallelThreshold;
         let translatedContent;
-        if (estimatedTokens > 7000) {
-            // Use chunked translation for large files
-            log.debug(() => '[File Translation API] Using chunked translation');
-            translatedContent = await gemini.translateSubtitleInChunks(
+
+        if (useParallel) {
+            log.debug(() => `[File Translation API] Using parallel translation (${estimatedTokens} tokens)`);
+
+            // Parallel translation configuration (environment variables with fallbacks)
+            const maxConcurrency = parseInt(process.env.PARALLEL_MAX_CONCURRENCY) || 3;
+            const targetChunkTokens = parseInt(process.env.PARALLEL_CHUNK_SIZE) || 12000;
+            const contextSize = parseInt(process.env.PARALLEL_CONTEXT_SIZE) || 3;
+
+            // Parallel translation with context preservation
+            translatedContent = await translateInParallel(
                 content,
-                'detected source language',
+                gemini,
                 targetLangName,
-                config.translationPrompt
+                {
+                    customPrompt: config.translationPrompt,
+                    maxConcurrency,
+                    targetChunkTokens,
+                    contextSize,
+                    onProgress: (current, total) => {
+                        log.debug(() => `[File Translation API] Progress: ${current}/${total} chunks (concurrency: ${maxConcurrency})`);
+                    }
+                }
             );
         } else {
+            log.debug(() => `[File Translation API] Using single-call translation (${estimatedTokens} tokens)`);
+
+            // Single API call for smaller files
             translatedContent = await gemini.translateSubtitle(
                 content,
                 'detected source language',
@@ -744,7 +763,8 @@ app.post('/api/translate-file', fileTranslationLimiter, validateRequest(fileTran
             );
         }
 
-        log.debug(() => '[File Translation API] Translation completed');
+        log.debug(() => `[File Translation API] Translation completed (${useParallel ? 'parallel' : 'single-call'})`);
+
 
         // Return translated content as plain text
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -776,23 +796,38 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
         config.__configHash = computeConfigHash(configStr);
 
         const langCode = language.replace('.srt', '');
-        
-        // Create deduplication key based on file ID and language
+
+        // Create deduplication key (includes config+language to separate concurrent user requests)
         const dedupKey = `download:${configStr}:${fileId}:${langCode}`;
 
-        // Check if already in flight BEFORE logging
+        // STEP 1: Check download cache first (fastest path - shared with translation flow)
+        const cachedContent = getDownloadCached(fileId);
+        if (cachedContent) {
+            const cacheStats = getDownloadCacheStats();
+            log.debug(() => `[Download Cache] HIT for ${fileId} in ${langCode} (${cachedContent.length} bytes) - Cache: ${cacheStats.size}/${cacheStats.max} entries, ${cacheStats.sizeMB}/${cacheStats.maxSizeMB}MB`);
+
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${fileId}.srt"`);
+            res.send(cachedContent);
+            return;
+        }
+
+        // STEP 2: Cache miss - check if already in flight
         const isAlreadyInFlight = inFlightRequests.has(dedupKey);
 
         if (isAlreadyInFlight) {
-            log.debug(() => `[Download] Duplicate request detected for ${fileId} in ${langCode} - waiting for in-flight download`);
+            log.debug(() => `[Download Cache] MISS for ${fileId} in ${langCode} - Duplicate in-flight request detected, waiting...`);
         } else {
-            log.debug(() => `[Download] New request for subtitle ${fileId} in ${langCode}`);
+            log.debug(() => `[Download Cache] MISS for ${fileId} in ${langCode} - Starting new download`);
         }
 
-        // Deduplicate download requests
+        // STEP 3: Download with deduplication (prevents concurrent downloads of same subtitle)
         const content = await deduplicate(dedupKey, () =>
             handleSubtitleDownload(fileId, langCode, config)
         );
+
+        // STEP 4: Save to cache for future requests (shared with translation flow)
+        saveDownloadCached(fileId, content);
 
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${fileId}.srt"`);
@@ -1324,6 +1359,193 @@ function generateFileTranslationPage(videoId, configStr, config) {
         `<option value="${escapeHtml(lang.code)}">${escapeHtml(lang.name)}</option>`
     ).join('');
 
+    // Comprehensive language list for Gemini (no mapping needed)
+    const allLanguages = [
+        { code: 'af', name: 'Afrikaans' },
+        { code: 'sq', name: 'Albanian' },
+        { code: 'am', name: 'Amharic' },
+        { code: 'ar', name: 'Arabic' },
+        { code: 'ar-DZ', name: 'Arabic (Algeria)' },
+        { code: 'ar-BH', name: 'Arabic (Bahrain)' },
+        { code: 'ar-EG', name: 'Arabic (Egypt)' },
+        { code: 'ar-IQ', name: 'Arabic (Iraq)' },
+        { code: 'ar-JO', name: 'Arabic (Jordan)' },
+        { code: 'ar-KW', name: 'Arabic (Kuwait)' },
+        { code: 'ar-LB', name: 'Arabic (Lebanon)' },
+        { code: 'ar-LY', name: 'Arabic (Libya)' },
+        { code: 'ar-MA', name: 'Arabic (Morocco)' },
+        { code: 'ar-OM', name: 'Arabic (Oman)' },
+        { code: 'ar-QA', name: 'Arabic (Qatar)' },
+        { code: 'ar-SA', name: 'Arabic (Saudi Arabia)' },
+        { code: 'ar-SY', name: 'Arabic (Syria)' },
+        { code: 'ar-TN', name: 'Arabic (Tunisia)' },
+        { code: 'ar-AE', name: 'Arabic (UAE)' },
+        { code: 'ar-YE', name: 'Arabic (Yemen)' },
+        { code: 'hy', name: 'Armenian' },
+        { code: 'az', name: 'Azerbaijani' },
+        { code: 'eu', name: 'Basque' },
+        { code: 'be', name: 'Belarusian' },
+        { code: 'bn', name: 'Bengali' },
+        { code: 'bs', name: 'Bosnian' },
+        { code: 'bg', name: 'Bulgarian' },
+        { code: 'my', name: 'Burmese' },
+        { code: 'ca', name: 'Catalan' },
+        { code: 'ceb', name: 'Cebuano' },
+        { code: 'zh', name: 'Chinese' },
+        { code: 'zh-CN', name: 'Chinese (Simplified)' },
+        { code: 'zh-TW', name: 'Chinese (Traditional)' },
+        { code: 'zh-HK', name: 'Chinese (Hong Kong)' },
+        { code: 'zh-SG', name: 'Chinese (Singapore)' },
+        { code: 'co', name: 'Corsican' },
+        { code: 'hr', name: 'Croatian' },
+        { code: 'cs', name: 'Czech' },
+        { code: 'da', name: 'Danish' },
+        { code: 'nl', name: 'Dutch' },
+        { code: 'nl-BE', name: 'Dutch (Belgium)' },
+        { code: 'nl-NL', name: 'Dutch (Netherlands)' },
+        { code: 'en', name: 'English' },
+        { code: 'en-AU', name: 'English (Australia)' },
+        { code: 'en-CA', name: 'English (Canada)' },
+        { code: 'en-IN', name: 'English (India)' },
+        { code: 'en-IE', name: 'English (Ireland)' },
+        { code: 'en-NZ', name: 'English (New Zealand)' },
+        { code: 'en-PH', name: 'English (Philippines)' },
+        { code: 'en-SG', name: 'English (Singapore)' },
+        { code: 'en-ZA', name: 'English (South Africa)' },
+        { code: 'en-GB', name: 'English (UK)' },
+        { code: 'en-US', name: 'English (US)' },
+        { code: 'eo', name: 'Esperanto' },
+        { code: 'et', name: 'Estonian' },
+        { code: 'fi', name: 'Finnish' },
+        { code: 'fr', name: 'French' },
+        { code: 'fr-BE', name: 'French (Belgium)' },
+        { code: 'fr-CA', name: 'French (Canada)' },
+        { code: 'fr-FR', name: 'French (France)' },
+        { code: 'fr-CH', name: 'French (Switzerland)' },
+        { code: 'fy', name: 'Frisian' },
+        { code: 'gl', name: 'Galician' },
+        { code: 'ka', name: 'Georgian' },
+        { code: 'de', name: 'German' },
+        { code: 'de-AT', name: 'German (Austria)' },
+        { code: 'de-DE', name: 'German (Germany)' },
+        { code: 'de-CH', name: 'German (Switzerland)' },
+        { code: 'el', name: 'Greek' },
+        { code: 'gu', name: 'Gujarati' },
+        { code: 'ht', name: 'Haitian Creole' },
+        { code: 'ha', name: 'Hausa' },
+        { code: 'haw', name: 'Hawaiian' },
+        { code: 'he', name: 'Hebrew' },
+        { code: 'hi', name: 'Hindi' },
+        { code: 'hmn', name: 'Hmong' },
+        { code: 'hu', name: 'Hungarian' },
+        { code: 'is', name: 'Icelandic' },
+        { code: 'ig', name: 'Igbo' },
+        { code: 'id', name: 'Indonesian' },
+        { code: 'ga', name: 'Irish' },
+        { code: 'it', name: 'Italian' },
+        { code: 'it-IT', name: 'Italian (Italy)' },
+        { code: 'it-CH', name: 'Italian (Switzerland)' },
+        { code: 'ja', name: 'Japanese' },
+        { code: 'jv', name: 'Javanese' },
+        { code: 'kn', name: 'Kannada' },
+        { code: 'kk', name: 'Kazakh' },
+        { code: 'km', name: 'Khmer' },
+        { code: 'rw', name: 'Kinyarwanda' },
+        { code: 'ko', name: 'Korean' },
+        { code: 'ko-KR', name: 'Korean (South Korea)' },
+        { code: 'ko-KP', name: 'Korean (North Korea)' },
+        { code: 'ku', name: 'Kurdish' },
+        { code: 'ky', name: 'Kyrgyz' },
+        { code: 'lo', name: 'Lao' },
+        { code: 'la', name: 'Latin' },
+        { code: 'lv', name: 'Latvian' },
+        { code: 'lt', name: 'Lithuanian' },
+        { code: 'lb', name: 'Luxembourgish' },
+        { code: 'mk', name: 'Macedonian' },
+        { code: 'mg', name: 'Malagasy' },
+        { code: 'ms', name: 'Malay' },
+        { code: 'ml', name: 'Malayalam' },
+        { code: 'mt', name: 'Maltese' },
+        { code: 'mi', name: 'Maori' },
+        { code: 'mr', name: 'Marathi' },
+        { code: 'mn', name: 'Mongolian' },
+        { code: 'ne', name: 'Nepali' },
+        { code: 'no', name: 'Norwegian' },
+        { code: 'nb', name: 'Norwegian (Bokmål)' },
+        { code: 'nn', name: 'Norwegian (Nynorsk)' },
+        { code: 'ny', name: 'Nyanja (Chichewa)' },
+        { code: 'or', name: 'Odia (Oriya)' },
+        { code: 'ps', name: 'Pashto' },
+        { code: 'fa', name: 'Persian (Farsi)' },
+        { code: 'pl', name: 'Polish' },
+        { code: 'pt', name: 'Portuguese' },
+        { code: 'pt-BR', name: 'Portuguese (Brazil)' },
+        { code: 'pt-PT', name: 'Portuguese (Portugal)' },
+        { code: 'pa', name: 'Punjabi' },
+        { code: 'ro', name: 'Romanian' },
+        { code: 'ru', name: 'Russian' },
+        { code: 'sm', name: 'Samoan' },
+        { code: 'gd', name: 'Scottish Gaelic' },
+        { code: 'sr', name: 'Serbian' },
+        { code: 'sr-Cyrl', name: 'Serbian (Cyrillic)' },
+        { code: 'sr-Latn', name: 'Serbian (Latin)' },
+        { code: 'st', name: 'Sesotho' },
+        { code: 'sn', name: 'Shona' },
+        { code: 'sd', name: 'Sindhi' },
+        { code: 'si', name: 'Sinhala' },
+        { code: 'sk', name: 'Slovak' },
+        { code: 'sl', name: 'Slovenian' },
+        { code: 'so', name: 'Somali' },
+        { code: 'es', name: 'Spanish' },
+        { code: 'es-AR', name: 'Spanish (Argentina)' },
+        { code: 'es-BO', name: 'Spanish (Bolivia)' },
+        { code: 'es-CL', name: 'Spanish (Chile)' },
+        { code: 'es-CO', name: 'Spanish (Colombia)' },
+        { code: 'es-CR', name: 'Spanish (Costa Rica)' },
+        { code: 'es-CU', name: 'Spanish (Cuba)' },
+        { code: 'es-DO', name: 'Spanish (Dominican Republic)' },
+        { code: 'es-EC', name: 'Spanish (Ecuador)' },
+        { code: 'es-SV', name: 'Spanish (El Salvador)' },
+        { code: 'es-GT', name: 'Spanish (Guatemala)' },
+        { code: 'es-HN', name: 'Spanish (Honduras)' },
+        { code: 'es-MX', name: 'Spanish (Mexico)' },
+        { code: 'es-NI', name: 'Spanish (Nicaragua)' },
+        { code: 'es-PA', name: 'Spanish (Panama)' },
+        { code: 'es-PY', name: 'Spanish (Paraguay)' },
+        { code: 'es-PE', name: 'Spanish (Peru)' },
+        { code: 'es-PR', name: 'Spanish (Puerto Rico)' },
+        { code: 'es-ES', name: 'Spanish (Spain)' },
+        { code: 'es-UY', name: 'Spanish (Uruguay)' },
+        { code: 'es-VE', name: 'Spanish (Venezuela)' },
+        { code: 'su', name: 'Sundanese' },
+        { code: 'sw', name: 'Swahili' },
+        { code: 'sv', name: 'Swedish' },
+        { code: 'sv-FI', name: 'Swedish (Finland)' },
+        { code: 'sv-SE', name: 'Swedish (Sweden)' },
+        { code: 'tl', name: 'Tagalog (Filipino)' },
+        { code: 'tg', name: 'Tajik' },
+        { code: 'ta', name: 'Tamil' },
+        { code: 'tt', name: 'Tatar' },
+        { code: 'te', name: 'Telugu' },
+        { code: 'th', name: 'Thai' },
+        { code: 'tr', name: 'Turkish' },
+        { code: 'tk', name: 'Turkmen' },
+        { code: 'uk', name: 'Ukrainian' },
+        { code: 'ur', name: 'Urdu' },
+        { code: 'ug', name: 'Uyghur' },
+        { code: 'uz', name: 'Uzbek' },
+        { code: 'vi', name: 'Vietnamese' },
+        { code: 'cy', name: 'Welsh' },
+        { code: 'xh', name: 'Xhosa' },
+        { code: 'yi', name: 'Yiddish' },
+        { code: 'yo', name: 'Yoruba' },
+        { code: 'zu', name: 'Zulu' }
+    ];
+
+    const allLanguageOptions = allLanguages.map(lang =>
+        `<option value="${escapeHtml(lang.code)}">${escapeHtml(lang.name)}</option>`
+    ).join('');
+
     return `
 <!DOCTYPE html>
 <html lang="en">
@@ -1472,24 +1694,178 @@ function generateFileTranslationPage(videoId, configStr, config) {
             transform: translateY(-2px);
         }
 
-        .info-box {
-            background: rgba(8, 164, 213, 0.08);
-            border: 1px solid rgba(8, 164, 213, 0.2);
-            border-radius: 12px;
-            padding: 1.25rem;
-            margin-bottom: 1.5rem;
-            color: var(--text-secondary);
+        /* Instructions Popup Modal */
+        .instructions-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(8px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            padding: 2rem;
+            animation: fadeIn 0.3s ease;
         }
 
-        .info-box strong {
+        .instructions-overlay.show {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .instructions-modal {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            padding: 2.5rem;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3);
+            position: relative;
+            animation: slideInScale 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            border: 2px solid var(--primary);
+        }
+
+        @keyframes slideInScale {
+            from {
+                opacity: 0;
+                transform: scale(0.9) translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .instructions-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .instructions-modal-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .instructions-modal-close {
+            background: transparent;
+            border: none;
+            font-size: 2rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+        }
+
+        .instructions-modal-close:hover {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+            transform: rotate(90deg);
+        }
+
+        .instructions-modal-content {
+            color: var(--text-secondary);
+            line-height: 1.8;
+        }
+
+        .instructions-modal-content strong {
             color: var(--text-primary);
             font-weight: 600;
         }
 
-        .info-box ul, .info-box ol {
+        .instructions-modal-content ol {
             margin-left: 1.5rem;
-            margin-top: 0.5rem;
-            line-height: 1.8;
+            margin-top: 1rem;
+        }
+
+        .instructions-modal-content li {
+            margin: 0.75rem 0;
+            padding-left: 0.5rem;
+        }
+
+        .instructions-modal-footer {
+            padding-top: 1.5rem;
+            margin-top: 1.5rem;
+            border-top: 2px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
+        .instructions-modal-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            user-select: none;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .instructions-modal-checkbox input[type="checkbox"] {
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+        }
+
+        .instructions-modal-btn {
+            padding: 0.75rem 1.5rem;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            box-shadow: 0 4px 12px var(--glow);
+        }
+
+        .instructions-modal-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px var(--glow);
+        }
+
+        .help-button {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            font-size: 1.75rem;
+            cursor: pointer;
+            box-shadow: 0 8px 24px var(--glow);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .help-button:hover {
+            transform: scale(1.1) rotate(15deg);
+            box-shadow: 0 12px 32px var(--glow);
         }
 
         .form-group {
@@ -1595,6 +1971,30 @@ function generateFileTranslationPage(videoId, configStr, config) {
             border-color: var(--primary);
             box-shadow: 0 0 0 4px var(--glow);
             transform: translateY(-1px);
+        }
+
+        .language-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.625rem;
+            margin-top: 0.75rem;
+            padding: 0.625rem 0;
+            cursor: pointer;
+            user-select: none;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            transition: color 0.2s ease;
+        }
+
+        .language-toggle:hover {
+            color: var(--primary);
+        }
+
+        .language-toggle input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: var(--primary);
         }
 
         .btn {
@@ -1742,6 +2142,184 @@ function generateFileTranslationPage(videoId, configStr, config) {
             display: block;
             animation: fadeInUp 0.3s ease;
         }
+
+        /* Advanced Settings Section */
+        .advanced-settings {
+            margin-top: 2rem;
+            padding: 0;
+            background: var(--surface-light);
+            border: 2px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .advanced-settings-header {
+            padding: 1.25rem 1.5rem;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(135deg, rgba(8, 164, 213, 0.05) 0%, rgba(51, 185, 225, 0.05) 100%);
+            transition: background 0.2s ease;
+        }
+
+        .advanced-settings-header:hover {
+            background: linear-gradient(135deg, rgba(8, 164, 213, 0.1) 0%, rgba(51, 185, 225, 0.1) 100%);
+        }
+
+        .advanced-settings-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .advanced-settings-icon {
+            font-size: 1.25rem;
+        }
+
+        .advanced-settings-toggle {
+            font-size: 1.5rem;
+            color: var(--text-secondary);
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .advanced-settings.expanded .advanced-settings-toggle {
+            transform: rotate(180deg);
+        }
+
+        .advanced-settings-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .advanced-settings.expanded .advanced-settings-content {
+            max-height: 2000px;
+        }
+
+        .advanced-settings-inner {
+            padding: 1.5rem;
+            border-top: 2px solid var(--border);
+        }
+
+        .highlight-box {
+            background: rgba(255, 165, 0, 0.1);
+            border: 2px solid rgba(255, 165, 0, 0.3);
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .highlight-box p {
+            margin: 0;
+            font-size: 0.9rem;
+            color: var(--text-primary);
+        }
+
+        .highlight-box strong {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .highlight-box em {
+            color: var(--warning);
+            font-style: normal;
+            font-weight: 600;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 0.875rem 1rem;
+            background: var(--surface);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            resize: vertical;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        textarea:hover {
+            border-color: var(--primary);
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px var(--glow);
+        }
+
+        input[type="number"] {
+            width: 100%;
+            padding: 0.875rem 1rem;
+            background: var(--surface);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        input[type="number"]:hover {
+            border-color: var(--primary);
+        }
+
+        input[type="number"]:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px var(--glow);
+        }
+
+        .btn-secondary {
+            background: var(--surface-light);
+            color: var(--text-primary);
+            border: 2px solid var(--border);
+            box-shadow: none;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--surface);
+            border-color: var(--primary);
+        }
+
+        .model-status {
+            margin-top: 0.5rem;
+            font-size: 0.875rem;
+            padding: 0.5rem;
+            border-radius: 8px;
+        }
+
+        .model-status.fetching {
+            color: var(--primary);
+            background: rgba(8, 164, 213, 0.1);
+        }
+
+        .model-status.success {
+            color: #10b981;
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .model-status.error {
+            color: var(--danger);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .spinner-small {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(8, 164, 213, 0.2);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
     </style>
 </head>
 <body>
@@ -1752,20 +2330,42 @@ function generateFileTranslationPage(videoId, configStr, config) {
             <div class="subtitle">Upload and translate your subtitle files</div>
         </div>
 
-        <div class="card">
-            <div class="info-box">
-                <strong>✨ Supported formats:</strong> SRT, VTT, ASS, SSA
-                <br><br>
-                <strong>📝 How it works:</strong>
-                <ol>
-                    <li>Upload your subtitle file (any supported format)</li>
-                    <li>Select your target language</li>
-                    <li>Click "Translate" and wait for the magic</li>
-                    <li>Download your translated subtitle</li>
-                    <li>Load it into Stremio manually</li>
-                </ol>
+        <!-- Instructions Modal -->
+        <div class="instructions-overlay" id="instructionsOverlay">
+            <div class="instructions-modal">
+                <div class="instructions-modal-header">
+                    <div class="instructions-modal-title">
+                        <span>📝</span>
+                        <span>How It Works</span>
+                    </div>
+                    <button class="instructions-modal-close" id="closeInstructions">×</button>
+                </div>
+                <div class="instructions-modal-content">
+                    <p><strong>✨ Supported formats:</strong> SRT, VTT, ASS, SSA</p>
+                    <br>
+                    <p><strong>📋 Steps:</strong></p>
+                    <ol>
+                        <li>Upload your subtitle file (any supported format)</li>
+                        <li>Select your target language</li>
+                        <li>Click "Translate" and wait for the magic ✨</li>
+                        <li>Download your translated subtitle</li>
+                        <li>Drag it to Stremio 🎬</li>
+                    </ol>
+                    <div class="instructions-modal-footer">
+                        <label class="instructions-modal-checkbox">
+                            <input type="checkbox" id="dontShowInstructions">
+                            Don't show this again
+                        </label>
+                        <button class="instructions-modal-btn" id="gotItBtn">Got it!</button>
+                    </div>
+                </div>
             </div>
+        </div>
 
+        <!-- Floating Help Button -->
+        <button class="help-button" id="showInstructions" title="Show Instructions">?</button>
+
+        <div class="card">
             <form id="translationForm">
                 <div class="form-group">
                     <label for="fileInput">
@@ -1792,6 +2392,104 @@ function generateFileTranslationPage(videoId, configStr, config) {
                         <option value="">Choose a language...</option>
                         ${languageOptions}
                     </select>
+                    <label class="language-toggle">
+                        <input type="checkbox" id="showAllLanguages">
+                        <span>Show all languages</span>
+                    </label>
+                </div>
+
+                <!-- Advanced Settings -->
+                <div class="advanced-settings" id="advancedSettings">
+                    <div class="advanced-settings-header" id="advancedSettingsHeader">
+                        <div class="advanced-settings-title">
+                            <span class="advanced-settings-icon">🔬</span>
+                            <span>Advanced Settings (EXPERIMENTAL)</span>
+                        </div>
+                        <div class="advanced-settings-toggle">▼</div>
+                    </div>
+                    <div class="advanced-settings-content">
+                        <div class="advanced-settings-inner">
+                            <div class="highlight-box">
+                                <p>
+                                    <strong>Fine-tune AI behavior for this translation only:</strong> Override model and parameters.
+                                    <em>These settings are temporary and won't be saved to your config.</em>
+                                </p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="advancedModel">
+                                    Translation Model Override
+                                    <span class="label-description">Override the default model for this translation only.</span>
+                                </label>
+                                <select id="advancedModel">
+                                    <option value="">Use Default Model (${config.geminiModel || 'gemini-2.5-flash-lite-preview-09-2025'})</option>
+                                </select>
+                                <div class="model-status" id="modelStatus"></div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="customPrompt">
+                                    Custom Translation Prompt
+                                    <span class="label-description">Custom prompt template. Use {target_language} as placeholder. Leave empty for default.</span>
+                                </label>
+                                <textarea id="customPrompt" placeholder="Example: Translate the following subtitles to {target_language}..."></textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="advancedThinkingBudget">
+                                    Thinking Budget (Extended Reasoning)
+                                    <span class="label-description">0 = disabled, -1 = dynamic (auto-adjust), or fixed token count (1-32768).</span>
+                                </label>
+                                <input type="number" id="advancedThinkingBudget" min="-1" max="32768" step="1" value="0" placeholder="0">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="advancedTemperature">
+                                    Temperature (Creativity)
+                                    <span class="label-description">Controls randomness (0.0-2.0). Lower = deterministic, Higher = creative. Default: 0.8</span>
+                                </label>
+                                <input type="number" id="advancedTemperature" min="0" max="2" step="0.1" value="0.8" placeholder="0.8">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="advancedTopP">
+                                    Top-P (Nucleus Sampling)
+                                    <span class="label-description">Probability threshold (0.0-1.0). Lower = focused, Higher = diverse. Default: 0.95</span>
+                                </label>
+                                <input type="number" id="advancedTopP" min="0" max="1" step="0.05" value="0.95" placeholder="0.95">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="advancedTopK">
+                                    Top-K (Token Selection)
+                                    <span class="label-description">Number of top tokens to consider (1-100). Default: 40</span>
+                                </label>
+                                <input type="number" id="advancedTopK" min="1" max="100" step="1" value="40" placeholder="40">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="advancedMaxTokens">
+                                    Max Output Tokens
+                                    <span class="label-description">Maximum tokens in output (1024-65536). Default: 65536</span>
+                                </label>
+                                <input type="number" id="advancedMaxTokens" min="1024" max="65536" step="1024" value="65536" placeholder="65536">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="advancedTimeout">
+                                    Translation Timeout (seconds)
+                                    <span class="label-description">Maximum time to wait for translation (60-1200). Default: 600</span>
+                                </label>
+                                <input type="number" id="advancedTimeout" min="60" max="1200" step="30" value="600" placeholder="600">
+                            </div>
+
+                            
+
+                            <button type="button" class="btn btn-secondary" id="resetDefaultsBtn">
+                                🔄 Reset to Defaults
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <button type="submit" class="btn" id="translateBtn">
@@ -1812,6 +2510,9 @@ function generateFileTranslationPage(videoId, configStr, config) {
                 <a href="#" id="downloadLink" class="download-btn" download="translated.srt">
                     ⬇️ Download Translated Subtitle
                 </a>
+                <button type="button" class="btn btn-secondary" id="translateAnotherBtn" style="margin-top: 1rem;">
+                    🔄 Translate Another One
+                </button>
             </div>
 
             <div class="error" id="error"></div>
@@ -1828,6 +2529,200 @@ function generateFileTranslationPage(videoId, configStr, config) {
         const result = document.getElementById('result');
         const error = document.getElementById('error');
         const downloadLink = document.getElementById('downloadLink');
+        const showAllLanguagesCheckbox = document.getElementById('showAllLanguages');
+
+        // Language lists
+        const configuredLanguages = \`<option value="">Choose a language...</option>${languageOptions}\`;
+        const allLanguagesList = \`<option value="">Choose a language...</option>${allLanguageOptions}\`;
+
+        // Language toggle functionality
+        showAllLanguagesCheckbox.addEventListener('change', function() {
+            const currentValue = targetLang.value; // Save current selection
+
+            if (this.checked) {
+                // Switch to all languages
+                targetLang.innerHTML = allLanguagesList;
+            } else {
+                // Switch back to configured languages
+                targetLang.innerHTML = configuredLanguages;
+            }
+
+            // Restore selection if it exists in the new list
+            if (currentValue) {
+                const optionExists = Array.from(targetLang.options).some(opt => opt.value === currentValue);
+                if (optionExists) {
+                    targetLang.value = currentValue;
+                }
+            }
+        });
+
+        // Advanced settings elements
+        const advancedSettings = document.getElementById('advancedSettings');
+        const advancedSettingsHeader = document.getElementById('advancedSettingsHeader');
+        const advancedModel = document.getElementById('advancedModel');
+        const customPrompt = document.getElementById('customPrompt');
+        const advancedThinkingBudget = document.getElementById('advancedThinkingBudget');
+        const advancedTemperature = document.getElementById('advancedTemperature');
+        const advancedTopP = document.getElementById('advancedTopP');
+        const advancedTopK = document.getElementById('advancedTopK');
+        const advancedMaxTokens = document.getElementById('advancedMaxTokens');
+        const advancedTimeout = document.getElementById('advancedTimeout');
+        
+        const resetDefaultsBtn = document.getElementById('resetDefaultsBtn');
+        const translateAnotherBtn = document.getElementById('translateAnotherBtn');
+        const modelStatus = document.getElementById('modelStatus');
+
+        // Advanced settings toggle
+        advancedSettingsHeader.addEventListener('click', () => {
+            advancedSettings.classList.toggle('expanded');
+        });
+
+        // Default values for reset
+        const defaults = {
+            thinkingBudget: 0,
+            temperature: 0.8,
+            topP: 0.95,
+            topK: 40,
+            maxTokens: 65536,
+            timeout: 600
+        };
+
+        // Reset to defaults
+        resetDefaultsBtn.addEventListener('click', () => {
+            advancedModel.value = '';
+            customPrompt.value = '';
+            advancedThinkingBudget.value = defaults.thinkingBudget;
+            advancedTemperature.value = defaults.temperature;
+            advancedTopP.value = defaults.topP;
+            advancedTopK.value = defaults.topK;
+            advancedMaxTokens.value = defaults.maxTokens;
+            advancedTimeout.value = defaults.timeout;
+        });
+
+        // Translate another one button
+        translateAnotherBtn.addEventListener('click', () => {
+            // Hide result
+            result.classList.remove('active');
+            // Show form
+            form.style.display = 'block';
+            // Clear file input
+            fileInput.value = '';
+            fileName.textContent = '';
+            fileName.classList.remove('active');
+            // Scroll to top
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+
+        // Fetch models from API
+        async function fetchModels() {
+            const geminiApiKey = '${config.geminiApiKey || ''}';
+
+            if (!geminiApiKey || geminiApiKey.length < 10) {
+                return;
+            }
+
+            modelStatus.innerHTML = '<div class="spinner-small"></div> Fetching models...';
+            modelStatus.className = 'model-status fetching';
+
+            try {
+                const response = await fetch('/api/gemini-models', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ apiKey: geminiApiKey })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch models');
+                }
+
+                const models = await response.json();
+
+                modelStatus.innerHTML = '✓ Models loaded!';
+                modelStatus.className = 'model-status success';
+
+                setTimeout(() => {
+                    modelStatus.innerHTML = '';
+                    modelStatus.className = 'model-status';
+                }, 3000);
+
+                // Populate model dropdown
+                advancedModel.innerHTML = '<option value="">Use Default Model (${config.geminiModel || 'gemini-2.5-flash-lite-preview-09-2025'})</option>';
+
+                models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.name;
+                    option.textContent = model.displayName || model.name;
+                    advancedModel.appendChild(option);
+                });
+
+            } catch (error) {
+                console.error('Failed to fetch models:', error);
+                modelStatus.innerHTML = '✗ Failed to fetch models';
+                modelStatus.className = 'model-status error';
+
+                setTimeout(() => {
+                    modelStatus.innerHTML = '';
+                    modelStatus.className = 'model-status';
+                }, 5000);
+            }
+        }
+
+        // Auto-fetch models when advanced settings are opened
+        let modelsFetched = false;
+        advancedSettingsHeader.addEventListener('click', () => {
+            if (!modelsFetched && advancedSettings.classList.contains('expanded')) {
+                modelsFetched = true;
+                fetchModels();
+            }
+        });
+
+        // Instructions modal handlers
+        const instructionsOverlay = document.getElementById('instructionsOverlay');
+        const showInstructionsBtn = document.getElementById('showInstructions');
+        const closeInstructionsBtn = document.getElementById('closeInstructions');
+        const gotItBtn = document.getElementById('gotItBtn');
+        const dontShowAgainCheckbox = document.getElementById('dontShowInstructions');
+
+        // Function to close modal with checkbox check
+        function closeInstructionsModal() {
+            if (dontShowAgainCheckbox && dontShowAgainCheckbox.checked) {
+                localStorage.setItem('submaker_file_upload_dont_show_instructions', 'true');
+            }
+            instructionsOverlay.classList.remove('show');
+        }
+
+        // Show modal on first visit
+        const dontShowInstructions = localStorage.getItem('submaker_file_upload_dont_show_instructions');
+        if (!dontShowInstructions) {
+            setTimeout(() => {
+                instructionsOverlay.classList.add('show');
+            }, 500);
+        }
+
+        // Show instructions button click
+        showInstructionsBtn.addEventListener('click', () => {
+            instructionsOverlay.classList.add('show');
+        });
+
+        // Close instructions button click
+        closeInstructionsBtn.addEventListener('click', closeInstructionsModal);
+
+        // Got it button click
+        gotItBtn.addEventListener('click', closeInstructionsModal);
+
+        // Close modal when clicking outside
+        instructionsOverlay.addEventListener('click', (e) => {
+            if (e.target === instructionsOverlay) {
+                closeInstructionsModal();
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && instructionsOverlay.classList.contains('show')) {
+                closeInstructionsModal();
+            }
+        });
 
         // Handle file selection
         fileInput.addEventListener('change', (e) => {
@@ -1893,6 +2788,48 @@ function generateFileTranslationPage(videoId, configStr, config) {
                 // Read file content
                 const fileContent = await file.text();
 
+                // Build config with advanced settings
+                const baseConfig = ${JSON.stringify(config)};
+
+                // Apply advanced settings if any are changed from defaults
+                const selectedModel = advancedModel.value;
+                const selectedPrompt = customPrompt.value.trim();
+                const thinkingBudget = parseInt(advancedThinkingBudget.value);
+                const temperature = parseFloat(advancedTemperature.value);
+                const topP = parseFloat(advancedTopP.value);
+                const topK = parseInt(advancedTopK.value);
+                const maxTokens = parseInt(advancedMaxTokens.value);
+                const timeout = parseInt(advancedTimeout.value);
+                
+
+                // Create modified config with advanced settings
+                const modifiedConfig = { ...baseConfig };
+
+                // Override model if selected
+                if (selectedModel) {
+                    modifiedConfig.geminiModel = selectedModel;
+                }
+
+                // Override prompt if provided
+                if (selectedPrompt) {
+                    modifiedConfig.translationPrompt = selectedPrompt;
+                }
+
+                // Apply advanced settings
+                modifiedConfig.advancedSettings = {
+                    ...baseConfig.advancedSettings,
+                    geminiModel: selectedModel || '',
+                    thinkingBudget: thinkingBudget,
+                    temperature: temperature,
+                    topP: topP,
+                    topK: topK,
+                    maxOutputTokens: maxTokens,
+                    translationTimeout: timeout
+                };
+
+                // Serialize config (proper UTF-8 to base64 encoding)
+                const configStr = btoa(unescape(encodeURIComponent(JSON.stringify(modifiedConfig))));
+
                 // Send to translation API
                 const response = await fetch('/api/translate-file', {
                     method: 'POST',
@@ -1902,7 +2839,7 @@ function generateFileTranslationPage(videoId, configStr, config) {
                     body: JSON.stringify({
                         content: fileContent,
                         targetLanguage: targetLang.value,
-                        configStr: '${configStr}'
+                        configStr: configStr
                     })
                 });
 

@@ -1,8 +1,8 @@
 services:
   # Stremio SubMaker application
-  stremio-submaker:
+  submaker:
     build: .
-    container_name: stremio-submaker
+    container_name: submaker
     ports:
       - "${PORT:-7001}:7001"
     # Load ALL environment variables from .env file

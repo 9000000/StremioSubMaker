@@ -168,6 +168,13 @@ function normalizeConfig(config) {
     mergedConfig.geminiModel = mergedConfig.advancedSettings.geminiModel;
   }
 
+  // Force bypass cache when advanced settings are enabled
+  // This ensures experimental translations don't pollute the shared database
+  if (mergedConfig.advancedSettings?.enabled) {
+    log.debug(() => '[Config] Advanced settings enabled: Forcing bypass cache');
+    mergedConfig.bypassCache = true;
+  }
+
   // Enforce permanent disk caching regardless of client config
   mergedConfig.translationCache.enabled = true;
   mergedConfig.translationCache.persistent = true;
@@ -380,10 +387,14 @@ function buildManifest(config, baseUrl = '') {
   const logo = baseUrl ? `${baseUrl}/logo.png` : 'https://i.imgur.com/5qJc5Y5.png';
   const background = baseUrl ? `${baseUrl}/background.svg` : 'https://i.imgur.com/5qJc5Y5.png';
 
+  // ElfHosted branding support
+  const isElfHosted = process.env.ELFHOSTED === 'true';
+  const addonName = isElfHosted ? 'SubMaker | ElfHosted' : 'SubMaker - Subtitle Translator';
+
   return {
     id: 'com.stremio.submaker',
     version: version,
-    name: 'SubMaker - Subtitle Translator',
+    name: addonName,
     description: description,
 
     catalogs: [],

@@ -30,10 +30,10 @@ const log = require('./logger');
  */
 const httpAgent = new http.Agent({
   keepAlive: true,
-  maxSockets: 50,        // Max 50 concurrent connections per host
-  maxFreeSockets: 10,    // Keep 10 idle connections ready for reuse
+  maxSockets: 100,       // Max 100 concurrent connections per host
+  maxFreeSockets: 20,    // Keep 20 idle connections ready for reuse
   timeout: 60000,        // 60 second socket timeout
-  keepAliveMsecs: 30000  // Send keepalive probes every 30s
+  keepAliveMsecs: 30000  // Send keepalive probes every 30s (TCP keep-alive interval)
 });
 
 /**
@@ -42,13 +42,13 @@ const httpAgent = new http.Agent({
  */
 const httpsAgent = new https.Agent({
   keepAlive: true,
-  maxSockets: 50,        // Max 50 concurrent connections per host
-  maxFreeSockets: 10,    // Keep 10 idle connections ready for reuse
+  maxSockets: 100,       // Max 100 concurrent connections per host
+  maxFreeSockets: 20,    // Keep 20 idle connections ready for reuse
   timeout: 60000,        // 60 second socket timeout
-  keepAliveMsecs: 30000  // Send keepalive probes every 30s
+  keepAliveMsecs: 30000  // Send keepalive probes every 30s (TLS over TCP)
 });
 
-log.debug(() => '[HTTP Agents] Connection pooling initialized: maxSockets=50, maxFreeSockets=10, keepAlive=true');
+log.debug(() => '[HTTP Agents] Connection pooling initialized: maxSockets=100, maxFreeSockets=20, keepAlive=true');
 
 module.exports = {
   httpAgent,

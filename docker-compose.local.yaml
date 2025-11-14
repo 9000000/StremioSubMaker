@@ -1,8 +1,8 @@
 # Local development setup without Redis (uses filesystem storage)
 services:
-  stremio-submaker:
+  submaker:
     build: .
-    container_name: stremio-submaker-local
+    container_name: submaker-local
     ports:
       - "${PORT:-7001}:7001"
     # Load ALL environment variables from .env file
