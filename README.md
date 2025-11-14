@@ -136,10 +136,6 @@ Languages to **fetch** subtitles in (Single language recommended)
 Languages to **translate to** (unlimited)
 - Example: French, German, Japanese
 
-### Gemini Model Selection
-- Flash or Flash-Lite Latest recommended. 
-- Do not use Pro or other models. (takes too long/fails)
-
 **Provider Configuration**
 - OpenSubtitles: Optional username/password for higher limits
 - SubDL: Requires API key
