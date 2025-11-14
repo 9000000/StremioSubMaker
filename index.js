@@ -19,7 +19,7 @@ const { parseConfig, getDefaultConfig, buildManifest } = require('./src/utils/co
 const { version } = require('./src/utils/version');
 const { getAllLanguages, getLanguageName } = require('./src/utils/languages');
 const { generateCacheKeys } = require('./src/utils/cacheKeys');
-const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, createLoadingSubtitle, readFromPartialCache, readFromBypassCache, hasCachedTranslation, purgeTranslationCache, translationStatus } = require('./src/handlers/subtitles');
+const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, createLoadingSubtitle, createSessionTokenErrorSubtitle, readFromPartialCache, readFromBypassCache, hasCachedTranslation, purgeTranslationCache, translationStatus } = require('./src/handlers/subtitles');
 const GeminiService = require('./src/services/gemini');
 const syncCache = require('./src/utils/syncCache');
 const { generateSubtitleSyncPage } = require('./src/utils/syncPageGenerator');
@@ -801,6 +801,33 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
     } catch (error) {
         log.error(() => '[Download] Error:', error);
         res.status(404).send('Subtitle not found');
+    }
+});
+
+// Custom route: Serve error subtitles for config errors (BEFORE SDK router to take precedence)
+app.get('/addon/:config/error-subtitle/:errorType.srt', (req, res) => {
+    try {
+        const { errorType } = req.params;
+
+        log.debug(() => `[Error Subtitle] Serving error subtitle for: ${errorType}`);
+
+        let content;
+        switch (errorType) {
+            case 'session-token-not-found':
+                content = createSessionTokenErrorSubtitle();
+                break;
+            default:
+                content = createSessionTokenErrorSubtitle(); // Default to session token error
+                break;
+        }
+
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${errorType}.srt"`);
+        res.send(content);
+
+    } catch (error) {
+        log.error(() => '[Error Subtitle] Error:', error);
+        res.status(500).send('Error subtitle unavailable');
     }
 });
 

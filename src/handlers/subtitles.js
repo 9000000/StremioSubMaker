@@ -186,6 +186,30 @@ function buildPartialSrtWithTail(mergedSrt) {
   }
 }
 
+/**
+ * Create an error subtitle for session token not found
+ * @returns {string} - SRT formatted error subtitle
+ */
+function createSessionTokenErrorSubtitle() {
+  const srt = `1
+00:00:00,000 --> 00:00:10,000
+⚠️ Configuration Error
+
+2
+00:00:10,001 --> 00:00:25,000
+Your session token was not found or has expired.
+
+3
+00:00:25,001 --> 00:00:40,000
+Please recreate your SubMaker configuration to continue using the addon.
+
+4
+00:00:40,001 --> 04:00:00,000
+Visit the addon configuration page and set up your preferences again.`;
+
+  return srt;
+}
+
 // Create a concise error subtitle when a source file looks invalid/corrupted
 function createInvalidSubtitleMessage(reason = 'The subtitle file appears to be invalid or incomplete.') {
   const srt = `1
@@ -1085,6 +1109,18 @@ function createSubtitleHandler(config) {
       }
 
       log.debug(() => `[Subtitles] Video info: ${JSON.stringify(videoInfo)}`);
+
+      // Check if this is a session token error - if so, return error entry immediately
+      if (config.__sessionTokenError === true) {
+        log.warn(() => '[Subtitles] Session token error detected - returning config error entry');
+        return {
+          subtitles: [{
+            id: 'config_error_session_token',
+            lang: '⚠️ SubMaker Config Error',
+            url: `{{ADDON_URL}}/error-subtitle/session-token-not-found.srt`
+          }]
+        };
+      }
 
       // Extract stream filename for matching
       const streamFilename = extra?.filename || '';
@@ -2119,6 +2155,7 @@ module.exports = {
   handleTranslation,
   getAvailableSubtitlesForTranslation,
   createLoadingSubtitle, // Export for loading message in translation endpoint
+  createSessionTokenErrorSubtitle, // Export for session token error subtitle
   readFromPartialCache, // Export for checking in-flight partial results during duplicate requests
   translationStatus, // Export for safety block to check if translation is in progress
   /**

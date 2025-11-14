@@ -28,7 +28,10 @@ function parseConfig(configStr, options = {}) {
         return normalizeConfig(config);
       } else {
         log.warn(() => `[Config] Session token not found: ${configStr}`);
-        return getDefaultConfig();
+        const defaultConfig = getDefaultConfig();
+        // Mark this config as having a session token error so handlers can show appropriate error messages
+        defaultConfig.__sessionTokenError = true;
+        return defaultConfig;
       }
     }
 
