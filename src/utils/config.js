@@ -150,6 +150,11 @@ function normalizeConfig(config) {
     }
   };
 
+  // If geminiModel is empty/null, use defaults (respects .env)
+  if (!mergedConfig.geminiModel || mergedConfig.geminiModel.trim() === '') {
+    mergedConfig.geminiModel = defaults.geminiModel;
+  }
+
   // Override deprecated model names with current default (if feature flag enabled)
   // TO RE-ENABLE USER MODEL SELECTION: Set OVERRIDE_DEPRECATED_MODELS = false at top of file
   if (OVERRIDE_DEPRECATED_MODELS && mergedConfig.geminiModel && DEPRECATED_MODEL_NAMES.includes(mergedConfig.geminiModel)) {

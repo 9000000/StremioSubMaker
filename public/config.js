@@ -1394,8 +1394,9 @@ Translate to {target_language}.`;
             noTranslationMode: currentConfig.noTranslationMode,
             noTranslationLanguages: currentConfig.noTranslationLanguages,
             geminiApiKey: document.getElementById('geminiApiKey').value.trim(),
-            // Always use default model (advanced settings will override if enabled)
-            geminiModel: 'gemini-2.5-flash-lite-preview-09-2025',
+            // Don't send model - let backend use its defaults (.env or hardcoded)
+            // Advanced settings will override if enabled
+            geminiModel: '',
             promptStyle: promptStyle,
             translationPrompt: translationPrompt,
             sourceLanguages: currentConfig.sourceLanguages,
