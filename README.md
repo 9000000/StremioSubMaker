@@ -26,7 +26,9 @@ Auto-sync subtitles in development!
 
 Just click the link, configure your languages, and install the addon. Done!
 
-**A huge thanks to [ElfHosted](https://elfhosted.com)** for making SubMaker accessible to everyone in the Stremio community!
+**A huge thanks to [ElfHosted](https://elfhosted.com)** for making SubMaker accessible to everyone in the Stremio community! ❤️
+
+See our [FREE Stremio Addons Guide] (https://stremio-addons-guide.elfhosted.com/)) for more great addons and features!
 
 > **For self-hosting, keep reading the installation guide below.**
 
