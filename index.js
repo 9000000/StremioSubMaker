@@ -20,7 +20,7 @@ const { version } = require('./src/utils/version');
 const { getAllLanguages, getLanguageName } = require('./src/utils/languages');
 const { generateCacheKeys } = require('./src/utils/cacheKeys');
 const { getCached: getDownloadCached, saveCached: saveDownloadCached, getCacheStats: getDownloadCacheStats } = require('./src/utils/downloadCache');
-const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, createLoadingSubtitle, createSessionTokenErrorSubtitle, readFromPartialCache, readFromBypassCache, hasCachedTranslation, purgeTranslationCache, translationStatus } = require('./src/handlers/subtitles');
+const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, createLoadingSubtitle, createSessionTokenErrorSubtitle, readFromPartialCache, readFromBypassCache, hasCachedTranslation, purgeTranslationCache, translationStatus, canUserStartTranslation } = require('./src/handlers/subtitles');
 const GeminiService = require('./src/services/gemini');
 const { translateInParallel } = require('./src/utils/parallelTranslation');
 const syncCache = require('./src/utils/syncCache');
@@ -160,10 +160,11 @@ function isLocalhost(req) {
 
 /**
  * Safety check for 3-click cache reset during active translation
- * Prevents cache reset if translation is currently in progress
+ * Prevents cache reset if translation is currently in progress OR if user cannot start a new translation
  *
  * This checks BOTH translationStatus AND inFlightTranslations to ensure
- * we catch translations that just started but haven't set status yet
+ * we catch translations that just started but haven't set status yet.
+ * Also checks the concurrency limit to prevent purging cache when re-translation would fail.
  *
  * @param {string} clickKey - The click tracker key (includes config and fileId)
  * @param {string} sourceFileId - The subtitle file ID
@@ -189,6 +190,13 @@ function shouldBlockCacheReset(clickKey, sourceFileId, config, targetLang) {
             : '';
 
         const baseCacheKey = `${sourceFileId}_${targetLang}`;
+
+        // SAFETY CHECK 1: Check if the user is at their concurrency limit
+        // If they are, don't allow the 3-click reset because re-translation would fail with rate limit error
+        if (!canUserStartTranslation(configHash)) {
+            log.warn(() => `[SafetyBlock] BLOCKING 3-click reset: User at concurrency limit, re-translation would fail (user: ${configHash || 'anonymous'})`);
+            return true;
+        }
 
         if (bypassEnabled && configHash) {
             // USER IS USING BYPASS CACHE

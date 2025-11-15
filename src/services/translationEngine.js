@@ -114,7 +114,15 @@ class TranslationEngine {
 
       } catch (error) {
         log.error(() => [`[TranslationEngine] Error in batch ${batchIndex + 1}:`, error.message]);
-        throw new Error(`Translation failed at batch ${batchIndex + 1}: ${error.message}`);
+        // Wrap error but preserve original error properties (translationErrorType, statusCode, etc.)
+        const wrappedError = new Error(`Translation failed at batch ${batchIndex + 1}: ${error.message}`);
+        // Copy all properties from original error to preserved type information
+        if (error.translationErrorType) wrappedError.translationErrorType = error.translationErrorType;
+        if (error.statusCode) wrappedError.statusCode = error.statusCode;
+        if (error.type) wrappedError.type = error.type;
+        if (error.isRetryable !== undefined) wrappedError.isRetryable = error.isRetryable;
+        if (error.originalError) wrappedError.originalError = error.originalError;
+        throw wrappedError;
       }
     }
 

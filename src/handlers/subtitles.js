@@ -213,7 +213,7 @@ Please recreate your SubMaker configuration to continue using the addon.
 
 4
 00:00:09,001 --> 04:00:00,000
-Visit the addon configuration page, set up your preferences again and re-install.
+Session Token Error\nVisit the addons page, set up preferences again and re-install.
 `;
 
   return srt;
@@ -226,12 +226,8 @@ function createInvalidSubtitleMessage(reason = 'The subtitle file appears to be 
 Subtitle Problem Detected
 
 2
-00:00:08,001 --> 00:00:18,000
-${reason}
-
-3
-00:00:18,001 --> 04:00:00,000
-Please try another subtitle from the list.`;
+00:00:08,001 --> 04:00:18,000
+${reason}\nAn error occurred. Please try again.`;
   return srt;
 }
 
@@ -248,7 +244,7 @@ function createTranslationErrorSubtitle(errorType, errorMessage) {
   // Determine error title based on type
   let errorTitle = 'Translation Failed';
   let errorExplanation = errorMessage || 'An unexpected error occurred during translation.';
-  let retryAdvice = 'Click this subtitle again to retry translation.';
+  let retryAdvice = 'An unexpected error occurred.\nClick this subtitle again to retry translation.';
 
   if (errorType === '403') {
     errorTitle = 'Translation Failed: Authentication Error (403)';
@@ -261,28 +257,28 @@ function createTranslationErrorSubtitle(errorType, errorMessage) {
   } else if (errorType === '429') {
     errorTitle = 'Translation Failed: Usage Limit Reached (429)';
     errorExplanation = 'Your Gemini API usage limit has been exceeded.\nThis may be a rate limit or quota limit.';
-    retryAdvice = '(429) Rate/Quota Limit - Gemini API is temporarily limiting requests.\nWait a few minutes, then click again to retry.';
+    retryAdvice = '(429) API Rate/Quota Limit - Gemini API is limiting your API key requests.\nWait a few minutes, then click again to retry.';
   } else if (errorType === 'MAX_TOKENS') {
     errorTitle = 'Translation Failed: Content Too Large';
     errorExplanation = 'The subtitle file is too large for a single translation.\nThe system attempted chunking but still exceeded limits.';
-    retryAdvice = '(MAX_TOKENS) Try translating a shorter subtitle file.\nPlease let us know if this persists.';
+    retryAdvice = '(MAX_TOKENS) Try translating a different subtitle file.\nAnother model may help. Please let us know if this persists.';
   } else if (errorType === 'SAFETY') {
     errorTitle = 'Translation Failed: Content Filtered';
     errorExplanation = 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.';
-    retryAdvice = '(PROHIBITED) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.';
+    retryAdvice = '(PROHIBITED_CONTENT) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.';
   } else if (errorType === 'PROHIBITED_CONTENT') {
     errorTitle = 'Translation Failed: Content Filtered';
     errorExplanation = 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.';
-    retryAdvice = '(PROHIBITED) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.';
+    retryAdvice = '(PROHIBITED_CONTENT) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.';
   } else if (errorType === 'INVALID_SOURCE') {
     errorTitle = 'Translation Failed: Invalid Source File';
     errorExplanation = 'The source subtitle file appears corrupted or invalid.\nIt may be too small or have formatting issues.';
-    retryAdvice = '(CORRUPT SOURCE) Please retry or try a different subtitle from the list.';
+    retryAdvice = '(CORRUPT_SOURCE) Please retry or try a different subtitle from the list.';
   } else if (errorType === 'other') {
     // Generic error - still provide helpful message with actual error
     errorTitle = 'Translation Failed: Unexpected Error';
     errorExplanation = errorMessage ? `Error: ${errorMessage}` : 'An unexpected error occurred during translation.';
-    retryAdvice = 'Click this subtitle again to retry.\nIf the problem persists, try a different subtitle from the list.';
+    retryAdvice = 'Unexpected error.\nClick this subtitle again to retry.\nIf the problem persists, try a different subtitle, reinstall the addon or contact us.';
   }
 
   return `1
@@ -296,6 +292,24 @@ ${errorExplanation}
 3
 00:00:25,001 --> 04:00:00,000
 ${retryAdvice}`;
+}
+
+/**
+ * Check if a user can start a new translation without hitting the concurrency limit
+ * Used by the 3-click reset safety check to prevent purging cache if re-translation would fail
+ * @param {string} userHash - The user's config hash (for per-user limit tracking)
+ * @returns {boolean} - True if the user can start a translation, false if at the limit
+ */
+function canUserStartTranslation(userHash) {
+  const effectiveUserHash = (userHash && userHash.length > 0) ? userHash : 'anonymous';
+  const currentCount = userTranslationCounts.get(effectiveUserHash) || 0;
+  const canStart = currentCount < MAX_CONCURRENT_TRANSLATIONS_PER_USER;
+
+  if (!canStart) {
+    log.debug(() => `[ConcurrencyCheck] User ${effectiveUserHash} cannot start translation: ${currentCount}/${MAX_CONCURRENT_TRANSLATIONS_PER_USER} concurrent translations already in progress`);
+  }
+
+  return canStart;
 }
 
 // Initialize cache directory
@@ -2119,28 +2133,47 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
     let errorType = 'other';
     let errorMessage = error.message;
 
-    // Check HTTP status codes first (from axios error.response)
-    const statusCode = error.response?.status;
-    if (statusCode === 403) {
-      errorType = '403';
-    } else if (statusCode === 503) {
-      errorType = '503';
-    } else if (statusCode === 429) {
-      errorType = '429';
+    // FIRST: Check for translationErrorType set by apiErrorHandler.js (most reliable)
+    if (error.translationErrorType) {
+      errorType = error.translationErrorType;
     }
-    // Then check error message content
-    else if (error.message && error.message.includes('403')) {
-      errorType = '403';
-    } else if (error.message && error.message.includes('503')) {
-      errorType = '503';
-    } else if (error.message && error.message.includes('429')) {
-      errorType = '429';
-    } else if (error.message && (error.message.includes('MAX_TOKENS') || error.message.includes('exceeded maximum token limit'))) {
-      errorType = 'MAX_TOKENS';
-    } else if (error.message && (error.message.includes('SAFETY') || error.message.includes('PROHIBITED_CONTENT') || error.message.includes('safety filters') || error.message.includes('RECITATION'))) {
-      errorType = 'PROHIBITED_CONTENT';
-    } else if (error.message && (error.message.includes('invalid') || error.message.includes('corrupted') || error.message.includes('too small'))) {
-      errorType = 'INVALID_SOURCE';
+    // SECOND: Check for statusCode set by apiErrorHandler.js
+    else if (error.statusCode) {
+      if (error.statusCode === 403) {
+        errorType = '403';
+      } else if (error.statusCode === 503) {
+        errorType = '503';
+      } else if (error.statusCode === 429) {
+        errorType = '429';
+      }
+    }
+    // THIRD: Check HTTP status codes from axios error.response
+    else if (error.response?.status) {
+      const statusCode = error.response.status;
+      if (statusCode === 403) {
+        errorType = '403';
+      } else if (statusCode === 503) {
+        errorType = '503';
+      } else if (statusCode === 429) {
+        errorType = '429';
+      }
+    }
+
+    // FOURTH: Check error message content (as fallback)
+    if (errorType === 'other' && error.message) {
+      if (error.message.includes('403')) {
+        errorType = '403';
+      } else if (error.message.includes('503')) {
+        errorType = '503';
+      } else if (error.message.includes('429')) {
+        errorType = '429';
+      } else if (error.message.includes('MAX_TOKENS') || error.message.includes('exceeded maximum token limit')) {
+        errorType = 'MAX_TOKENS';
+      } else if (error.message.includes('SAFETY') || error.message.includes('PROHIBITED_CONTENT') || error.message.includes('safety filters') || error.message.includes('RECITATION')) {
+        errorType = 'PROHIBITED_CONTENT';
+      } else if (error.message.includes('invalid') || error.message.includes('corrupted') || error.message.includes('too small')) {
+        errorType = 'INVALID_SOURCE';
+      }
     }
 
     log.debug(() => `[Translation] Caching error (type: ${errorType}) for user retry`);
@@ -2479,5 +2512,10 @@ module.exports = {
       log.error(() => ['[Purge] Error purging translation cache:', error.message]);
       return false;
     }
-  }
+  },
+  /**
+   * Check if a user can start a new translation without hitting the concurrency limit
+   * Used by the 3-click reset safety check to prevent purging cache if re-translation would fail
+   */
+  canUserStartTranslation
 };

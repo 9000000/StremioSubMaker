@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker 1.1.7
+
+**New Features:**
+- Refined error messages: Improved user-facing error descriptions for safety filter blocks, rate limits, authentication failures, and source file issues
+
+**Bug Fixes:**
+- Expanded error type mapping: Enhanced error handler to classify all error types (403, 429, 503, MAX_TOKENS, PROHIBITED_CONTENT, RECITATION, SAFETY, INVALID_SOURCE)
+- Fixed 3-click cache reset safety: Now prevents cache deletion when user is at the concurrent translation limit, avoiding abuse and data loss
+
 ## SubMaker 1.1.6
 
 **New Features:**
