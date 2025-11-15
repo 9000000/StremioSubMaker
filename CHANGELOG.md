@@ -2,6 +2,86 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker 1.1.8 (sessions-experimental-refactor branch)
+
+**🔧 Critical Session Persistence & Reliability Improvements**
+
+This release focuses on completely overhauling the session token/config persistence system to eliminate "session not found" errors that occurred during server restarts, code updates, Docker rebuilds, and deployments.
+
+**Major Changes vs. Main Branch:**
+
+The `sessions-experimental-refactor` branch includes a comprehensive refactor of how session tokens and user configurations are stored, retrieved, and validated. This addresses chronic issues where users would lose their configuration between server updates or restarts.
+
+**What's Different from Main:**
+
+1. **Session Manager Initialization**
+   - Added proper async initialization with `waitUntilReady()` method
+   - Server now waits for sessions to load before accepting requests
+   - Eliminates race conditions during startup
+
+2. **Token/Config Lifecycle Improvements**
+   - Fixed session expiration to use `createdAt` (absolute TTL) instead of `lastAccessedAt`
+   - Added token format validation (32-char hex) during loading and client-side
+   - Client-side token validation and automatic cleanup of malformed tokens
+
+3. **Storage Reliability**
+   - Session save verification: reads back data after save to ensure persistence
+   - Concurrent initialization protection in StorageFactory
+   - Better Redis fallback to filesystem on connection failures
+
+4. **Enhanced Shutdown Handling**
+   - Retry logic (3 attempts) for session saves during shutdown
+   - Increased timeout to 10 seconds for shutdown saves
+   - Better error handling and logging throughout shutdown process
+
+5. **Error Handling & Logging**
+   - Proper 404/410 handling for expired/missing tokens
+   - Graceful fallback to creating new sessions on errors
+   - `_alreadyLogged` flag to prevent duplicate error logs in translation chains
+
+6. **Memory Management**
+   - Periodic memory cleanup (hourly) for sessions not accessed in 30 days
+   - Evicted sessions remain in persistent storage and reload if accessed
+   - Prevents memory leaks with frequently accessed sessions
+
+**New Features:**
+
+- **Session Save Verification**: All session saves are verified by reading back from storage, ensuring data persistence
+- **Token Format Validation**: Invalid token formats are detected and filtered during loading, preventing corruption
+- **Consecutive Save Failure Tracking**: Critical alerts after 5 consecutive save failures (25 minutes) for monitoring
+- **Memory Cleanup**: Automatic hourly cleanup of old sessions from memory while preserving in storage
+- **Startup Readiness**: Server waits for session manager to load all sessions before accepting requests
+
+**Bug Fixes:**
+
+- **CRITICAL**: Fixed server accepting requests before sessions loaded (race condition during startup)
+- **CRITICAL**: Fixed sessions not persisting between restarts due to missing save verification
+- Fixed session expiration using wrong timestamp (lastAccessedAt instead of createdAt)
+- Fixed potential memory leak with LRU cache and sliding TTL
+- Fixed invalid tokens in storage breaking session loading
+- Fixed no alerting when storage repeatedly fails
+- Fixed client not validating token format before storage
+- Fixed concurrent StorageFactory initializations causing race conditions
+
+**Technical Details:**
+
+All session-related changes are documented in commit `0721ad2`:
+- `index.js:3781-3790`: Server startup timing fix
+- `src/utils/sessionManager.js:268-286`: Save verification
+- `src/utils/sessionManager.js:411-454`: Memory cleanup
+- `src/utils/sessionManager.js:317-322`: Token validation during loading
+- `src/utils/sessionManager.js:388-397`: Consecutive failure tracking
+- `public/config.js:62-87, 1914-1942`: Client-side token validation
+- `src/storage/StorageFactory.js:14-40`: Concurrent initialization protection
+
+**Testing:**
+- Verified sessions load before server starts accepting requests
+- Confirmed session persistence across Docker rebuilds
+- Validated token format checking and invalid token cleanup
+- Tested Redis connection failure fallback to filesystem
+
+This release should eliminate the chronic "session not found" errors users were experiencing during server lifecycle events.
+
 ## SubMaker 1.1.7
 
 **New Features:**
