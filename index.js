@@ -591,7 +591,7 @@ app.post('/api/gemini-models', async (req, res) => {
 // API endpoint to validate SubSource API key
 app.post('/api/validate-subsource', async (req, res) => {
     try {
-        const { apiKey } = req.body;
+        const { apiKey, debug } = req.body;
 
         if (!apiKey) {
             return res.status(400).json({
@@ -603,17 +603,46 @@ app.post('/api/validate-subsource', async (req, res) => {
         const axios = require('axios');
         const { httpAgent, httpsAgent } = require('./src/utils/httpAgents');
 
+        // CRITICAL FIX: Use comprehensive headers matching the production SubSourceService
+        // Missing headers can cause SubSource API to reject the request with 401/403
+        // This was the primary cause of production validation failures
+        const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+        const headers = {
+            'X-API-Key': apiKey.trim(),
+            'api-key': apiKey.trim(),
+            'User-Agent': USER_AGENT,
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://subsource.net/',
+            'Origin': 'https://subsource.net',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-site',
+            'Sec-CH-UA': '"Chromium";v="131", "Not_A Brand";v="24"',
+            'Sec-CH-UA-Mobile': '?0',
+            'Sec-CH-UA-Platform': '"Windows"',
+            'Sec-CH-UA-Platform-Version': '"15.0.0"',
+            'Sec-CH-UA-Arch': '"x86"',
+            'Sec-CH-UA-Bitness': '"64"',
+            'Sec-CH-UA-Full-Version': '"131.0.6778.86"',
+            'sec-ch-ua-full-version-list': '"Chromium";v="131.0.6778.86", "Not_A Brand";v="24.0.0.0"',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+        };
+
         // Make direct API call to test the key
         // First get movie ID
         const searchUrl = 'https://api.subsource.net/api/v1/movies/search?searchType=imdb&imdb=tt0133093';
 
+        if (debug) {
+            log.info(`[SubSource Validation] Testing API key. Request URL: ${searchUrl}`);
+        }
+
         try {
             const movieResponse = await axios.get(searchUrl, {
-                headers: {
-                    'X-API-Key': apiKey.trim(),
-                    'api-key': apiKey.trim(),
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                },
+                headers,
                 timeout: 10000,
                 httpAgent,
                 httpsAgent
@@ -627,11 +656,7 @@ app.post('/api/validate-subsource', async (req, res) => {
                 // Try to fetch subtitles with the movie ID
                 const subtitlesUrl = `https://api.subsource.net/api/v1/subtitles?movieId=${movieId}&language=english`;
                 const subtitlesResponse = await axios.get(subtitlesUrl, {
-                    headers: {
-                        'X-API-Key': apiKey.trim(),
-                        'api-key': apiKey.trim(),
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    },
+                    headers,
                     timeout: 10000,
                     httpAgent,
                     httpsAgent
@@ -654,17 +679,40 @@ app.post('/api/validate-subsource', async (req, res) => {
                 });
             }
         } catch (apiError) {
+            // Log detailed error information for production debugging
+            const statusCode = apiError.response?.status;
+            const statusText = apiError.response?.statusText;
+            const errorData = apiError.response?.data;
+
+            log.error(`[SubSource Validation] HTTP ${statusCode} ${statusText} - API Key validation failed`);
+
             // Check for authentication errors
-            if (apiError.response?.status === 401 || apiError.response?.status === 403) {
+            if (statusCode === 401 || statusCode === 403) {
+                const hint = statusCode === 401
+                    ? 'API key may be invalid, expired, or SubSource account may have issues'
+                    : 'API key may be blocked due to rate limiting, IP restrictions, or account suspension';
+
+                log.warn(`[SubSource Validation] Authentication error - ${hint}`);
+
                 res.json({
                     valid: false,
-                    error: 'Invalid API key - authentication failed'
+                    error: 'Invalid API key - authentication failed',
+                    ...(debug && { statusCode, hint })
+                });
+            } else if (statusCode === 429) {
+                log.warn(`[SubSource Validation] Rate limited by SubSource API`);
+                res.json({
+                    valid: false,
+                    error: 'Rate limited by SubSource API - please try again later',
+                    ...(debug && { statusCode })
                 });
             } else {
                 throw apiError;
             }
         }
     } catch (error) {
+        log.error(`[SubSource Validation] Unexpected error: ${error.message}`);
+
         res.json({
             valid: false,
             error: `API error: ${error.message}`
