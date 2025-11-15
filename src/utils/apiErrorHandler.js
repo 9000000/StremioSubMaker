@@ -109,8 +109,8 @@ function logApiError(error, serviceName, operation, options = {}) {
   // Log concise error message
   log.error(() => `${logPrefix} ${operation} error: ${parsed.message}`);
 
-  // Log status code if available
-  if (parsed.statusCode) {
+  // Log status code only if not already mentioned in the error message
+  if (parsed.statusCode && !parsed.message.includes(String(parsed.statusCode))) {
     log.error(() => `${logPrefix} Response status: ${parsed.statusCode}`);
   }
 

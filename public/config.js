@@ -59,6 +59,33 @@ Translate to {target_language}.`;
     const CACHE_EXPIRY_KEY = 'submaker_config_cache_expiry';
     const TOKEN_KEY = 'submaker_session_token';
 
+    /**
+     * FIXED: Validate session token format
+     * Session tokens must be 32-character hexadecimal strings
+     * @param {string} token - Token to validate
+     * @returns {boolean} - True if token is valid format
+     */
+    function isValidSessionToken(token) {
+        return token && typeof token === 'string' && /^[a-f0-9]{32}$/.test(token);
+    }
+
+    /**
+     * FIXED: Clear invalid token from storage
+     * @param {string} reason - Reason for clearing (for logging)
+     */
+    function clearInvalidToken(reason = 'unknown') {
+        const token = localStorage.getItem(TOKEN_KEY);
+        if (token && !isValidSessionToken(token)) {
+            console.warn(`[Config] Clearing invalid session token (${reason}): ${token.substring(0, 8)}...`);
+            localStorage.removeItem(TOKEN_KEY);
+            return true;
+        }
+        return false;
+    }
+
+    // Clear any invalid tokens that might exist from previous errors
+    clearInvalidToken('startup');
+
     // Initialize
     if (document.readyState !== 'loading') {
         // If DOM is already loaded (dynamic script injection), run init immediately
@@ -1857,55 +1884,112 @@ Translate to {target_language}.`;
         }
 
         // Check if we have an existing session token
-        const existingToken = localStorage.getItem(TOKEN_KEY);
+        let existingToken = localStorage.getItem(TOKEN_KEY);
         let configToken;
         let isUpdate = false;
 
         try {
             if (existingToken) {
-                // Try to update existing session first
-                const response = await fetch(`/api/update-session/${existingToken}`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(config)
-                });
+                // FIXED: Validate token format before attempting update
+                // Session tokens should be 32-character hex strings
+                const isValidTokenFormat = /^[a-f0-9]{32}$/.test(existingToken);
 
-                if (!response.ok) {
-                    throw new Error('Failed to update session: ' + await response.text());
+                if (!isValidTokenFormat) {
+                    console.warn('[Config] Invalid token format in localStorage, clearing and creating new session');
+                    localStorage.removeItem(TOKEN_KEY);
+                    existingToken = null;
+                } else {
+                    // Try to update existing session first
+                    try {
+                        const updateResponse = await fetch(`/api/update-session/${existingToken}`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(config),
+                            timeout: 10000 // 10 second timeout
+                        });
+
+                        // FIXED: Better error handling for different response codes
+                        if (updateResponse.status === 404 || updateResponse.status === 410) {
+                            // Token not found or expired - create new session
+                            console.warn('[Config] Session token not found on server (404/410), creating new session');
+                            showAlert('Session expired. Creating new session...', 'info');
+                            localStorage.removeItem(TOKEN_KEY);
+                            existingToken = null;
+                        } else if (!updateResponse.ok) {
+                            // Other errors - log and try to create new session
+                            const errorText = await updateResponse.text();
+                            console.error(`[Config] Update session failed (${updateResponse.status}):`, errorText);
+                            showAlert('Session update failed. Creating new session...', 'warning');
+                            localStorage.removeItem(TOKEN_KEY);
+                            existingToken = null;
+                        } else {
+                            // Success
+                            const sessionData = await updateResponse.json();
+                            configToken = sessionData.token;
+                            isUpdate = sessionData.updated;
+
+                            if (sessionData.updated) {
+                                showAlert('Configuration updated! Changes will take effect immediately in Stremio.', 'success');
+                            } else if (sessionData.created) {
+                                // Token was expired, new one created
+                                showAlert('Session expired. Created new session - please reinstall addon in Stremio.', 'warning');
+                                localStorage.setItem(TOKEN_KEY, configToken);
+                            }
+                        }
+                    } catch (updateError) {
+                        // Network error or timeout - log and fall back to create new session
+                        console.error('[Config] Failed to update session:', updateError.message);
+                        showAlert('Network error updating session. Creating new session...', 'warning');
+                        localStorage.removeItem(TOKEN_KEY);
+                        existingToken = null;
+                    }
                 }
-
-                const sessionData = await response.json();
-                configToken = sessionData.token;
-                isUpdate = sessionData.updated;
-
-                if (sessionData.updated) {
-                    showAlert('Configuration updated! Changes will take effect immediately in Stremio.', 'success');
-                } else if (sessionData.created) {
-                    showAlert('Session expired. Please reinstall the addon in Stremio.', 'warning');
-                }
-            } else {
-                // No existing token, create new session
-                const response = await fetch('/api/create-session', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(config)
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to create session: ' + await response.text());
-                }
-
-                const sessionData = await response.json();
-                configToken = sessionData.token;
             }
 
-            // Store token for future updates
+            // If we don't have a valid token, create new session
+            if (!existingToken) {
+                try {
+                    const createResponse = await fetch('/api/create-session', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(config),
+                        timeout: 10000 // 10 second timeout
+                    });
+
+                    if (!createResponse.ok) {
+                        const errorText = await createResponse.text();
+                        throw new Error(`Failed to create session (${createResponse.status}): ${errorText}`);
+                    }
+
+                    const sessionData = await createResponse.json();
+
+                    // FIXED: Validate response token format
+                    if (!sessionData.token || !/^[a-f0-9]{32}$/.test(sessionData.token)) {
+                        throw new Error('Server returned invalid session token format');
+                    }
+
+                    configToken = sessionData.token;
+                    isUpdate = false;
+                } catch (createError) {
+                    console.error('[Config] Failed to create session:', createError.message);
+                    showAlert('Failed to save configuration: ' + createError.message, 'error');
+                    return;
+                }
+            }
+
+            // FIXED: Validate token before storing
+            if (!configToken || !/^[a-f0-9]{32}$/.test(configToken)) {
+                throw new Error('Invalid token received from server');
+            }
+
+            // Store token for future updates (only if valid)
             localStorage.setItem(TOKEN_KEY, configToken);
         } catch (error) {
+            console.error('[Config] Unexpected error during session handling:', error);
             showAlert('Failed to save configuration: ' + error.message, 'error');
             return;
         }

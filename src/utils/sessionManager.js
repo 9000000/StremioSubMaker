@@ -29,6 +29,7 @@ class SessionManager {
         this.maxAge = options.maxAge || 90 * 24 * 60 * 60 * 1000; // 90 days (3 months) default
         this.persistencePath = options.persistencePath || path.join(process.cwd(), 'data', 'sessions.json');
         this.autoSaveInterval = options.autoSaveInterval || 5 * 60 * 1000; // 5 minutes
+        this.shutdownTimeout = options.shutdownTimeout || 10 * 1000; // 10 seconds for shutdown save
 
         // Ensure data directory exists
         this.ensureDataDir();
@@ -54,13 +55,47 @@ class SessionManager {
         // Track if we've made changes since last save
         this.dirty = false;
 
-        // Load sessions from disk on startup
-        this.loadFromDisk().catch(err => {
-            log.error(() => ['[SessionManager] Failed to load sessions from disk:', err.message]);
-        });
+        // Readiness flag - ensures sessions are loaded before handling requests
+        this.isReady = false;
+        this.loadingPromise = null;
+
+        // Load sessions from disk on startup (NOW AWAITED PROPERLY)
+        this.loadingPromise = this._initializeSessions();
 
         // Start auto-save interval
         this.startAutoSave();
+    }
+
+    /**
+     * Initialize sessions - loads from disk
+     * This MUST be awaited before using the session manager
+     * @private
+     * @returns {Promise<void>}
+     */
+    async _initializeSessions() {
+        try {
+            await this.loadFromDisk();
+            this.isReady = true;
+            log.debug(() => '[SessionManager] Ready to accept requests');
+        } catch (err) {
+            log.error(() => ['[SessionManager] Failed to load sessions from disk during init:', err.message]);
+            // Mark as ready anyway to prevent blocking startup, but log the error
+            this.isReady = true;
+        }
+    }
+
+    /**
+     * Wait for session manager to be ready
+     * Call this before any session operations in production
+     * @returns {Promise<void>}
+     */
+    async waitUntilReady() {
+        if (this.isReady) {
+            return;
+        }
+        if (this.loadingPromise) {
+            await this.loadingPromise;
+        }
     }
 
     /**
@@ -256,9 +291,11 @@ class SessionManager {
             let migratedCount = 0;
 
             for (const [token, sessionData] of Object.entries(data.sessions)) {
-                // Check if session is expired
-                const age = now - sessionData.lastAccessedAt;
-                if (age > this.maxAge) {
+                // FIXED: Check expiration using createdAt (absolute TTL) not lastAccessedAt
+                // lastAccessedAt should only be used for sliding window within the absolute max
+                const absoluteAge = now - sessionData.createdAt;
+                if (absoluteAge > this.maxAge) {
+                    log.debug(() => `[SessionManager] Session expired (created ${Math.floor(absoluteAge / 1000 / 60)}m ago): ${token}`);
                     expiredCount++;
                     continue;
                 }
@@ -286,9 +323,6 @@ class SessionManager {
             }
 
             log.debug(() => `[SessionManager] Loaded ${loadedCount} sessions from storage (${expiredCount} expired)`);
-            if (!this.dirty) {
-                this.dirty = false;
-            }
         } catch (err) {
             if (err.code === 'ENOENT') {
                 log.debug(() => '[SessionManager] No existing sessions file found, starting fresh');
@@ -343,21 +377,37 @@ class SessionManager {
                 log.warn(() => '[SessionManager] Cleared auto-save timer');
             }
 
-            // Save with timeout to prevent hanging
+            // Save with generous timeout to prevent data loss
             let saveFailed = false;
-            try {
-                // Create a promise that rejects after 3 seconds
-                const savePromise = this.saveToDisk();
-                const timeoutPromise = new Promise((_, reject) => {
-                    setTimeout(() => reject(new Error('Save operation timed out after 3 seconds')), 3000);
-                });
+            let saveAttempts = 0;
+            const maxSaveAttempts = 3;
 
-                await Promise.race([savePromise, timeoutPromise]);
-                log.warn(() => '[SessionManager] Sessions saved successfully');
-            } catch (err) {
-                saveFailed = true;
-                log.error(() => ['[SessionManager] Failed to save sessions on shutdown:', err.message]);
-                // Continue with shutdown even if save fails
+            while (saveAttempts < maxSaveAttempts && !saveFailed) {
+                try {
+                    saveAttempts++;
+                    // Use configurable timeout (default 10 seconds)
+                    const savePromise = this.saveToDisk();
+                    const timeoutPromise = new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error(`Save operation timed out after ${this.shutdownTimeout}ms`)), this.shutdownTimeout);
+                    });
+
+                    await Promise.race([savePromise, timeoutPromise]);
+                    log.warn(() => `[SessionManager] Sessions saved successfully (attempt ${saveAttempts}/${maxSaveAttempts})`);
+                    saveFailed = false;
+                    break; // Success - exit retry loop
+                } catch (err) {
+                    log.error(() => [`[SessionManager] Save attempt ${saveAttempts}/${maxSaveAttempts} failed:`, err.message]);
+                    saveFailed = true;
+
+                    // If we have more attempts, wait a bit before retrying
+                    if (saveAttempts < maxSaveAttempts) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
+                }
+            }
+
+            if (saveFailed && saveAttempts >= maxSaveAttempts) {
+                log.error(() => '[SessionManager] All save attempts failed during shutdown - sessions may be lost');
             }
 
             // Close the server if provided
@@ -369,13 +419,14 @@ class SessionManager {
                     process.exit(saveFailed ? 1 : 0);
                 });
 
-                // Force exit after 2 seconds if server close hangs
-                setTimeout(() => {
-                    log.warn(() => '[SessionManager] Forcefully exiting after timeout');
+                // Force exit after 5 seconds if server close hangs
+                const forceExitTimeout = setTimeout(() => {
+                    log.warn(() => '[SessionManager] Forcefully exiting after server close timeout');
                     // Close logger before exit
                     shutdownLogger();
                     process.exit(saveFailed ? 1 : 0);
-                }, 2000).unref(); // unref to allow process to exit naturally if server closes faster
+                }, 5000);
+                forceExitTimeout.unref(); // unref to allow process to exit naturally if server closes faster
             } else {
                 // Close logger before exit
                 shutdownLogger();

@@ -11,16 +11,41 @@ const RedisStorageAdapter = require('./RedisStorageAdapter');
  */
 class StorageFactory {
   static instance = null;
+  static initializationPromise = null; // FIX: Prevent concurrent initializations
 
   /**
    * Get or create the storage adapter instance (singleton)
    * @returns {Promise<StorageAdapter>}
    */
   static async getStorageAdapter() {
+    // FIXED: If already initialized, return immediately
     if (StorageFactory.instance) {
       return StorageFactory.instance;
     }
 
+    // FIXED: If initialization is in progress, wait for it to complete
+    if (StorageFactory.initializationPromise) {
+      return StorageFactory.initializationPromise;
+    }
+
+    // FIXED: Mark initialization as in progress
+    StorageFactory.initializationPromise = StorageFactory._initializeAdapter();
+
+    try {
+      const adapter = await StorageFactory.initializationPromise;
+      return adapter;
+    } finally {
+      // Clear the pending promise after completion
+      StorageFactory.initializationPromise = null;
+    }
+  }
+
+  /**
+   * Internal initialization logic
+   * @private
+   * @returns {Promise<StorageAdapter>}
+   */
+  static async _initializeAdapter() {
     const storageType = process.env.STORAGE_TYPE || 'filesystem';
 
     let adapter;
@@ -46,21 +71,26 @@ class StorageFactory {
       // Schedule periodic cleanup
       StorageFactory._scheduleCleanup(adapter);
 
+      log.debug(() => `[StorageFactory] Storage adapter initialized successfully (type: ${storageType})`);
       return adapter;
     } catch (error) {
       // If Redis fails, fall back to filesystem
       if (storageType === 'redis') {
-        log.debug(() => 'Falling back to filesystem storage...');
+        log.warn(() => 'Redis storage initialization failed, falling back to filesystem storage...');
         adapter = new FilesystemStorageAdapter();
-        await adapter.initialize();
-        StorageFactory.instance = adapter;
-
-        StorageFactory._scheduleCleanup(adapter);
-
-        return adapter;
+        try {
+          await adapter.initialize();
+          StorageFactory.instance = adapter;
+          StorageFactory._scheduleCleanup(adapter);
+          log.debug(() => '[StorageFactory] Fallback to filesystem storage successful');
+          return adapter;
+        } catch (fallbackError) {
+          log.error(() => ['[StorageFactory] Filesystem fallback also failed:', fallbackError.message]);
+          throw fallbackError;
+        }
       }
 
-      log.error(() => 'Failed to initialize storage adapter:', error);
+      log.error(() => ['[StorageFactory] Failed to initialize storage adapter:', error.message]);
       throw error;
     }
   }
