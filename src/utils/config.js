@@ -422,5 +422,7 @@ module.exports = {
   encodeConfig,
   getDefaultConfig,
   validateConfig,
-  buildManifest
+  buildManifest,
+  // Exported for async token resolution paths in routes
+  normalizeConfig
 };

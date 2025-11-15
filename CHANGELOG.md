@@ -19,7 +19,9 @@ This release focuses on completely overhauling the session token/config persiste
    - Client-side token validation and automatic cleanup of malformed tokens
 
 3. **Storage Reliability**
-   - Session save verification: reads back data after save to ensure persistence
+   - Per-token session persistence: each token is stored independently (no single shared blob) to prevent multi-instance clobbering
+   - Immediate per-token save on create/update/delete for durability between restarts
+   - Automatic migration: legacy `sessions` blob is migrated to per-token entries on startup
    - Concurrent initialization protection in StorageFactory
    - Better Redis fallback to filesystem on connection failures
 
@@ -40,7 +42,8 @@ This release focuses on completely overhauling the session token/config persiste
 
 **New Features:**
 
-- **Session Save Verification**: All session saves are verified by reading back from storage, ensuring data persistence
+- **Per-Token Persistence**: Sessions are saved individually and immediately, enabling safe multi-instance deployments and reducing data-loss windows
+- **Cross-Instance Token Resolution**: Routes fall back to loading tokens directly from shared storage when not found in memory (seamless across replicas)
 - **Token Format Validation**: Invalid token formats are detected and filtered during loading, preventing corruption
 - **Consecutive Save Failure Tracking**: Critical alerts after 5 consecutive save failures (25 minutes) for monitoring
 - **Memory Cleanup**: Automatic hourly cleanup of old sessions from memory while preserving in storage
@@ -49,6 +52,7 @@ This release focuses on completely overhauling the session token/config persiste
 **Bug Fixes:**
 
 - **CRITICAL**: Fixed server accepting requests before sessions loaded (race condition during startup)
+- Fixed multi-instance race where saving a single `sessions` blob could overwrite other instances’ sessions
 - Fixed session expiration using wrong timestamp (lastAccessedAt instead of createdAt)
 - Fixed potential memory leak with LRU cache and sliding TTL
 - Fixed invalid tokens in storage breaking session loading

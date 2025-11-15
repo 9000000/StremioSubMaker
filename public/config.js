@@ -291,7 +291,7 @@ Translate to {target_language}.`;
             sourceLanguages: ['eng'], // Up to 3 source languages allowed
             targetLanguages: [],
             geminiApiKey: DEFAULT_API_KEYS.GEMINI,
-            geminiModel: 'gemini-2.5-flash-preview-09-2025',
+            geminiModel: 'gemini-flash-lite-latest',
             promptStyle: 'strict', // 'natural' or 'strict'
             translationPrompt: STRICT_TRANSLATION_PROMPT,
             subtitleProviders: {
@@ -1638,7 +1638,7 @@ Translate to {target_language}.`;
 
         // Load Gemini model
         const modelSelect = document.getElementById('geminiModel');
-        const modelToUse = currentConfig.geminiModel || 'gemini-2.5-flash-preview-09-2025';
+        const modelToUse = currentConfig.geminiModel || 'gemini-flash-lite-latest';
         if (modelSelect) {
             modelSelect.value = modelToUse;
         }
@@ -1755,7 +1755,7 @@ Translate to {target_language}.`;
             geminiApiKey: document.getElementById('geminiApiKey').value.trim(),
             // Save the selected model from the dropdown
             // Advanced settings can override this if enabled
-            geminiModel: document.getElementById('geminiModel')?.value || 'gemini-2.5-flash-preview-09-2025',
+            geminiModel: document.getElementById('geminiModel')?.value || 'gemini-flash-lite-latest',
             promptStyle: promptStyle,
             translationPrompt: translationPrompt,
             sourceLanguages: currentConfig.sourceLanguages,

@@ -150,6 +150,14 @@ class SessionManager {
         this.cache.set(token, sessionData);
         this.dirty = true;
 
+        // Persist immediately (per-token) for durability across restarts and instances
+        Promise.resolve().then(async () => {
+            const adapter = await getStorageAdapter();
+            await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION);
+        }).catch(err => {
+            log.error(() => ['[SessionManager] Failed to persist new session:', err?.message || String(err)]);
+        });
+
         log.debug(() => `[SessionManager] Session created: ${token} (total: ${this.cache.size})`);
         return token;
     }
@@ -214,6 +222,14 @@ class SessionManager {
         this.cache.set(token, sessionData);
         this.dirty = true;
 
+        // Persist immediately (per-token)
+        Promise.resolve().then(async () => {
+            const adapter = await getStorageAdapter();
+            await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION);
+        }).catch(err => {
+            log.error(() => ['[SessionManager] Failed to persist updated session:', err?.message || String(err)]);
+        });
+
         log.debug(() => `[SessionManager] Session updated: ${token}`);
         return true;
     }
@@ -228,6 +244,13 @@ class SessionManager {
         if (existed) {
             this.dirty = true;
             log.debug(() => `[SessionManager] Session deleted: ${token}`);
+            // Remove from storage immediately
+            Promise.resolve().then(async () => {
+                const adapter = await getStorageAdapter();
+                await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION);
+            }).catch(err => {
+                log.error(() => ['[SessionManager] Failed to delete session from storage:', err?.message || String(err)]);
+            });
         }
         return existed;
     }
@@ -246,6 +269,35 @@ class SessionManager {
         }
 
     /**
+     * Attempt to load a session directly from storage (cross-instance support)
+     * Does NOT throw. On success, populates cache and returns decrypted config.
+     * @param {string} token
+     * @returns {Promise<Object|null>}
+     */
+    async loadSessionFromStorage(token) {
+        try {
+            if (!token) return null;
+            const adapter = await getStorageAdapter();
+            const stored = await adapter.get(token, StorageAdapter.CACHE_TYPES.SESSION);
+            if (!stored) return null;
+            const now = Date.now();
+            const absoluteAge = now - stored.createdAt;
+            if (Number.isFinite(this.maxAge) && absoluteAge > this.maxAge) {
+                try { await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION); } catch (_) {}
+                return null;
+            }
+            // Refresh last accessed and cache it
+            stored.lastAccessedAt = now;
+            this.cache.set(token, stored);
+            // Return decrypted config
+            return decryptUserConfig(stored.config);
+        } catch (err) {
+            log.error(() => ['[SessionManager] loadSessionFromStorage failed:', err?.message || String(err)]);
+            return null;
+        }
+    }
+
+    /**
      * Save sessions to storage
      * @returns {Promise<void>}
      */
@@ -257,48 +309,18 @@ class SessionManager {
         try {
             const adapter = await getStorageAdapter();
 
-            // Convert cache to serializable format
-            const sessions = {};
+            let saved = 0;
             for (const [token, sessionData] of this.cache.entries()) {
-                sessions[token] = sessionData;
-            }
-
-            const data = {
-                version: '1.0',
-                savedAt: Date.now(),
-                sessions
-            };
-
-            const expectedCount = Object.keys(sessions).length;
-
-            // Save to storage
-            await adapter.set('sessions', data, StorageAdapter.CACHE_TYPES.SESSION);
-
-            // CRITICAL FIX: Verify save succeeded by reading back the data
-            try {
-                const verification = await adapter.get('sessions', StorageAdapter.CACHE_TYPES.SESSION);
-
-                if (!verification || !verification.sessions) {
-                    throw new Error('Session save verification failed - data not found after save');
-                }
-
-                const savedCount = Object.keys(verification.sessions).length;
-                if (savedCount !== expectedCount) {
-                    throw new Error(`Session count mismatch: saved ${savedCount}, expected ${expectedCount}`);
-                }
-
-                log.debug(() => `[SessionManager] Save verified: ${savedCount} sessions persisted successfully`);
-            } catch (verifyError) {
-                log.error(() => ['[SessionManager] Save verification failed:', verifyError.message]);
-                // Don't mark as clean if verification failed
-                throw verifyError;
+                // Persist each session independently to avoid multi-instance clobbering
+                await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION);
+                saved++;
             }
 
             this.dirty = false;
             this.consecutiveSaveFailures = 0; // Reset on successful save
-            log.debug(() => `[SessionManager] Saved ${expectedCount} sessions to storage`);
+            log.debug(() => `[SessionManager] Saved ${saved} sessions to storage (per-token)`);
         } catch (err) {
-            log.error(() => ['[SessionManager] Failed to save sessions:', err]);
+            log.error(() => ['[SessionManager] Failed to save sessions:', err.message || String(err)]);
             throw err;
         }
     }
@@ -310,9 +332,28 @@ class SessionManager {
     async loadFromDisk() {
         try {
             const adapter = await getStorageAdapter();
-            const data = await adapter.get('sessions', StorageAdapter.CACHE_TYPES.SESSION);
 
-            if (!data || !data.sessions) {
+            // Migrate legacy blob if present
+            try {
+                const legacy = await adapter.get('sessions', StorageAdapter.CACHE_TYPES.SESSION);
+                if (legacy && legacy.sessions && typeof legacy.sessions === 'object') {
+                    let migrated = 0;
+                    for (const [token, sessionData] of Object.entries(legacy.sessions)) {
+                        if (!/^[a-f0-9]{32}$/.test(token)) continue;
+                        await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION);
+                        migrated++;
+                    }
+                    try { await adapter.delete('sessions', StorageAdapter.CACHE_TYPES.SESSION); } catch (_) {}
+                    if (migrated > 0) {
+                        log.warn(() => `[SessionManager] Migrated ${migrated} legacy sessions to per-token storage`);
+                    }
+                }
+            } catch (_) {
+                // ignore migration read errors
+            }
+
+            const keys = await adapter.list(StorageAdapter.CACHE_TYPES.SESSION, '*');
+            if (!keys || keys.length === 0) {
                 log.debug(() => '[SessionManager] No sessions in storage');
                 return;
             }
@@ -323,49 +364,37 @@ class SessionManager {
             let migratedCount = 0;
             let invalidTokenCount = 0;
 
-            for (const [token, sessionData] of Object.entries(data.sessions)) {
-                // CRITICAL FIX: Validate token format before loading
-                // Session tokens must be 32-character hexadecimal strings
-                if (!/^[a-f0-9]{32}$/.test(token)) {
-                    log.warn(() => `[SessionManager] Skipping invalid token format in storage: ${token.substring(0, 8)}...`);
-                    invalidTokenCount++;
-                    continue;
-                }
+            for (const token of keys) {
+                if (!/^[a-f0-9]{32}$/.test(token)) { invalidTokenCount++; continue; }
+                const sessionData = await adapter.get(token, StorageAdapter.CACHE_TYPES.SESSION);
+                if (!sessionData) continue;
 
-                // FIXED: Check expiration using createdAt (absolute TTL) not lastAccessedAt
-                // lastAccessedAt should only be used for sliding window within the absolute max
                 const absoluteAge = now - sessionData.createdAt;
-                if (absoluteAge > this.maxAge) {
-                    log.debug(() => `[SessionManager] Session expired (created ${Math.floor(absoluteAge / 1000 / 60)}m ago): ${token}`);
+                if (Number.isFinite(this.maxAge) && absoluteAge > this.maxAge) {
                     expiredCount++;
+                    try { await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION); } catch (_) {}
                     continue;
                 }
 
-                // Check if config is already encrypted
-                if (!sessionData.config._encrypted) {
-                    // Migrate old unencrypted config to encrypted format
+                if (sessionData.config && !sessionData.config._encrypted) {
                     try {
                         sessionData.config = encryptUserConfig(sessionData.config);
                         migratedCount++;
+                        await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION);
                     } catch (error) {
                         log.error(() => [`[SessionManager] Failed to encrypt config for token ${token}:`, error.message]);
-                        // Keep the unencrypted config to avoid data loss
                     }
                 }
 
-                // Restore session to cache (with encrypted config)
                 this.cache.set(token, sessionData);
                 loadedCount++;
             }
 
             if (migratedCount > 0) {
                 log.debug(() => `[SessionManager] Migrated ${migratedCount} sessions to encrypted format`);
-                this.dirty = true; // Mark as dirty to save encrypted versions
             }
-
             if (invalidTokenCount > 0) {
-                log.warn(() => `[SessionManager] Skipped ${invalidTokenCount} sessions with invalid token formats`);
-                this.dirty = true; // Mark as dirty to clean up invalid tokens on next save
+                log.warn(() => `[SessionManager] Skipped ${invalidTokenCount} non-token session keys`);
             }
 
             log.debug(() => `[SessionManager] Loaded ${loadedCount} sessions from storage (${expiredCount} expired, ${invalidTokenCount} invalid)`);

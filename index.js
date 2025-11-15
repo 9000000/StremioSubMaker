@@ -15,7 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const { parseConfig, getDefaultConfig, buildManifest } = require('./src/utils/config');
+const { parseConfig, getDefaultConfig, buildManifest, normalizeConfig } = require('./src/utils/config');
 const { version } = require('./src/utils/version');
 const { getAllLanguages, getLanguageName } = require('./src/utils/languages');
 const { generateCacheKeys } = require('./src/utils/cacheKeys');
@@ -44,6 +44,11 @@ const sessionManager = getSessionManager({
     autoSaveInterval: parseInt(process.env.SESSION_SAVE_INTERVAL) || 5 * 60 * 1000, // 5 minutes
     persistencePath: process.env.SESSION_PERSISTENCE_PATH || path.join(process.cwd(), 'data', 'sessions.json')
 });
+
+// Deployment warning: In multi-instance/Redis mode, require stable encryption key
+if ((process.env.STORAGE_TYPE || 'filesystem') === 'redis' && !process.env.ENCRYPTION_KEY) {
+    log.warn(() => '[Startup] WARNING: STORAGE_TYPE=redis without ENCRYPTION_KEY. Multiple instances must share the same encryption key to read sessions.');
+}
 
 // Security: LRU cache for routers to avoid creating them on every request (max 100 entries)
 const routerCache = new LRUCache({
@@ -1083,7 +1088,7 @@ app.post('/api/translate-file', fileTranslationLimiter, validateRequest(fileTran
         log.debug(() => `[File Translation API] Translating to ${targetLanguage}`);
 
         // Parse config
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
 
         // Get language name for better translation context
         const targetLangName = getLanguageName(targetLanguage) || targetLanguage;
@@ -1168,11 +1173,31 @@ function createAddonWithConfig(config, baseUrl = '') {
     return builder;
 }
 
+// Resolve config synchronously for base64, and asynchronously for session tokens
+async function resolveConfigAsync(configStr, req) {
+    const localhost = isLocalhost(req);
+    const isToken = /^[a-f0-9]{32}$/.test(configStr);
+    if (!isToken) {
+        return parseConfig(configStr, { isLocalhost: localhost });
+    }
+    // Token path: try in-memory first, then cross-instance storage
+    let cfg = sessionManager.getSession(configStr);
+    if (!cfg) {
+        cfg = await sessionManager.loadSessionFromStorage(configStr);
+    }
+    if (cfg) {
+        return normalizeConfig(cfg);
+    }
+    const defaultConfig = getDefaultConfig();
+    defaultConfig.__sessionTokenError = true;
+    return defaultConfig;
+}
+
 // Custom route: Download subtitle (BEFORE SDK router to take precedence)
 app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validateRequest(subtitleParamsSchema, 'params'), async (req, res) => {
     try {
         const { config: configStr, fileId, language } = req.params;
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
         config.__configHash = computeConfigHash(configStr);
 
         const langCode = language.replace('.srt', '');
@@ -1250,7 +1275,7 @@ app.get('/addon/:config/error-subtitle/:errorType.srt', (req, res) => {
 app.get('/addon/:config/translate-selector/:videoId/:targetLang', searchLimiter, validateRequest(translationSelectorParamsSchema, 'params'), async (req, res) => {
     try {
         const { config: configStr, videoId, targetLang } = req.params;
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
         config.__configHash = computeConfigHash(configStr);
 
         // Create deduplication key based on video ID and config
@@ -1286,7 +1311,7 @@ app.get('/addon/:config/translate-selector/:videoId/:targetLang', searchLimiter,
 app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, validateRequest(translationParamsSchema, 'params'), async (req, res) => {
     try {
         const { config: configStr, sourceFileId, targetLang } = req.params;
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
         config.__configHash = computeConfigHash(configStr);
 
         // Create deduplication key based on source file and target language
@@ -1414,7 +1439,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
 app.get('/addon/:config/file-translate/:videoId', async (req, res) => {
     try {
         const { config: configStr, videoId } = req.params;
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
 
         log.debug(() => `[File Translation] Request for video ${videoId}`);
 
@@ -1437,7 +1462,7 @@ app.get('/file-upload', async (req, res) => {
             return res.status(400).send('Missing config or videoId');
         }
 
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
         config.__configHash = computeConfigHash(configStr);
 
         log.debug(() => `[File Upload Page] Loading page for video ${videoId}`);
@@ -1473,7 +1498,7 @@ app.get('/addon/:config/sync-subtitles/:videoId', async (req, res) => {
     try {
         const { config: configStr, videoId } = req.params;
         const { filename } = req.query;
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
 
         log.debug(() => `[Sync Subtitles] Request for video ${videoId}, filename: ${filename}`);
 
@@ -1495,7 +1520,7 @@ app.get('/subtitle-sync', async (req, res) => {
             return res.status(400).send('Missing config or videoId');
         }
 
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
         config.__configHash = computeConfigHash(configStr);
 
         log.debug(() => `[Subtitle Sync Page] Loading page for video ${videoId}`);
@@ -1522,7 +1547,7 @@ app.get('/subtitle-sync', async (req, res) => {
 app.get('/addon/:config/xsync/:videoHash/:lang/:sourceSubId', async (req, res) => {
     try {
         const { config: configStr, videoHash, lang, sourceSubId } = req.params;
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
 
         log.debug(() => `[xSync Download] Request for ${videoHash}_${lang}_${sourceSubId}`);
 
@@ -1556,7 +1581,7 @@ app.post('/api/save-synced-subtitle', async (req, res) => {
         }
 
         // Validate config
-        const config = parseConfig(configStr, { isLocalhost: isLocalhost(req) });
+        const config = await resolveConfigAsync(configStr, req);
 
         log.debug(() => `[Save Synced] Saving synced subtitle: ${videoHash}_${languageCode}_${sourceSubId}`);
 
@@ -3658,15 +3683,15 @@ app.use('/addon/:config', (req, res, next) => {
 });
 
 // Stremio addon manifest route (AFTER middleware so URLs get replaced)
-app.get('/addon/:config/manifest.json', (req, res) => {
+app.get('/addon/:config/manifest.json', async (req, res) => {
     try {
         log.debug(() => `[Manifest] Parsing config for manifest request`);
-        const localhost = isLocalhost(req);
-        const config = parseConfig(req.params.config, { isLocalhost: localhost });
+        const config = await resolveConfigAsync(req.params.config, req);
         config.__configHash = computeConfigHash(req.params.config);
 
         // Construct base URL from request
         const host = req.get('host');
+        const localhost = isLocalhost(req);
         // For remote hosts, enforce HTTPS unless proxy header specifies otherwise.
         const protocol = localhost
             ? (req.get('x-forwarded-proto') || req.protocol)
@@ -3700,19 +3725,19 @@ app.get('/addon/:config', (req, res, next) => {
 });
 
 // Mount Stremio SDK router for each configuration
-app.use('/addon/:config', (req, res, next) => {
+app.use('/addon/:config', async (req, res, next) => {
     try {
         const configStr = req.params.config;
 
         // Check cache first
         if (!routerCache.has(configStr)) {
             log.debug(() => `[Router] Parsing config for new router (path: ${req.path})`);
-            const localhost = isLocalhost(req);
-            const config = parseConfig(configStr, { isLocalhost: localhost });
+            const config = await resolveConfigAsync(configStr, req);
             config.__configHash = computeConfigHash(configStr);
 
             // Construct base URL from request
             const host = req.get('host');
+            const localhost = isLocalhost(req);
             // For remote hosts, enforce HTTPS unless proxy header specifies otherwise.
             const protocol = localhost
                 ? (req.get('x-forwarded-proto') || req.protocol)
