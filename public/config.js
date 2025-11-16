@@ -1869,6 +1869,8 @@ Translate to {target_language}.`;
 
     async function handleSubmit(e) {
         e.preventDefault();
+        console.log('[handleSubmit] Form submission started');
+        console.log('[handleSubmit] currentConfig:', currentConfig);
 
         const promptStyle = document.getElementById('promptStyle').value;
         let translationPrompt = '';
@@ -1879,6 +1881,9 @@ Translate to {target_language}.`;
         } else if (promptStyle === 'natural') {
             translationPrompt = NATURAL_TRANSLATION_PROMPT;
         }
+
+        console.log('[handleSubmit] noTranslationMode:', currentConfig.noTranslationMode);
+        console.log('[handleSubmit] noTranslationLanguages:', currentConfig.noTranslationLanguages);
 
         const config = {
             noTranslationMode: currentConfig.noTranslationMode,
@@ -1953,15 +1958,18 @@ Translate to {target_language}.`;
 
         // Validation with visual feedback - collect all errors
         const errors = [];
+        console.log('[handleSubmit] Starting validation');
 
         const anyProviderEnabled = Object.values(config.subtitleProviders).some(p => p.enabled);
         if (!anyProviderEnabled) {
             errors.push('⚠️ Please enable at least one subtitle provider');
         }
+        console.log('[handleSubmit] anyProviderEnabled:', anyProviderEnabled);
 
         // Validate that at least one of cache options is enabled
         const cacheEnabled = document.getElementById('cacheEnabled').checked;
         const bypassCache = document.getElementById('bypassCache')?.checked || false;
+        console.log('[handleSubmit] cacheEnabled:', cacheEnabled, 'bypassCache:', bypassCache);
         if (!cacheEnabled && !bypassCache) {
             errors.push('⚠️ At least one cache option must be enabled: either "Enable SubMaker Database" or "Bypass SubMaker Database Cache"');
         }
@@ -1975,6 +1983,7 @@ Translate to {target_language}.`;
         }
 
         // If not in no-translation mode, validate Gemini API and model
+        console.log('[handleSubmit] config.noTranslationMode:', config.noTranslationMode);
         if (!config.noTranslationMode) {
             if (!validateGeminiApiKey(true)) {
                 errors.push('⚠️ Gemini API key is required');
@@ -1993,14 +2002,18 @@ Translate to {target_language}.`;
             }
         } else {
             // In no-translation mode, validate that at least one language is selected
+            console.log('[handleSubmit] No-translation mode: checking languages');
             if (!config.noTranslationLanguages || config.noTranslationLanguages.length === 0) {
                 errors.push('⚠️ Please select at least one language in no-translation mode');
+                console.log('[handleSubmit] ERROR: No languages selected in no-translation mode');
             }
         }
 
+        console.log('[handleSubmit] Validation errors:', errors);
         if (errors.length > 0) {
             // Show all errors as a single alert
             const errorMessage = errors.join('<br>');
+            console.log('[handleSubmit] Showing validation errors');
             showAlert(errorMessage, 'error');
 
             // Focus on first invalid field
@@ -2018,12 +2031,15 @@ Translate to {target_language}.`;
         let existingToken = localStorage.getItem(TOKEN_KEY);
         let configToken;
         let isUpdate = false;
+        console.log('[handleSubmit] Session handling started');
+        console.log('[handleSubmit] Existing token:', existingToken ? existingToken.substring(0, 8) + '...' : 'none');
 
         try {
             if (existingToken) {
                 // FIXED: Validate token format before attempting update
                 // Session tokens should be 32-character hex strings
                 const isValidTokenFormat = /^[a-f0-9]{32}$/.test(existingToken);
+                console.log('[handleSubmit] Token format valid:', isValidTokenFormat);
 
                 if (!isValidTokenFormat) {
                     console.warn('[Config] Invalid token format in localStorage, clearing and creating new session');
@@ -2031,6 +2047,7 @@ Translate to {target_language}.`;
                     existingToken = null;
                 } else {
                     // Try to update existing session first
+                    console.log('[handleSubmit] Attempting to update existing session');
                     try {
                         const updateResponse = await fetch(`/api/update-session/${existingToken}`, {
                             method: 'POST',
@@ -2042,6 +2059,7 @@ Translate to {target_language}.`;
                         });
 
                         // FIXED: Better error handling for different response codes
+                        console.log('[handleSubmit] Update response status:', updateResponse.status);
                         if (updateResponse.status === 404 || updateResponse.status === 410) {
                             // Token not found or expired - create new session
                             console.warn('[Config] Session token not found on server (404/410), creating new session');
@@ -2058,6 +2076,7 @@ Translate to {target_language}.`;
                         } else {
                             // Success
                             const sessionData = await updateResponse.json();
+                            console.log('[handleSubmit] Update response success, got token:', sessionData.token ? sessionData.token.substring(0, 8) + '...' : 'none');
                             configToken = sessionData.token;
                             isUpdate = sessionData.updated;
 
@@ -2081,6 +2100,7 @@ Translate to {target_language}.`;
 
             // If we don't have a valid token, create new session
             if (!existingToken) {
+                console.log('[handleSubmit] Creating new session');
                 try {
                     const createResponse = await fetch('/api/create-session', {
                         method: 'POST',
@@ -2091,12 +2111,14 @@ Translate to {target_language}.`;
                         timeout: 10000 // 10 second timeout
                     });
 
+                    console.log('[handleSubmit] Create response status:', createResponse.status);
                     if (!createResponse.ok) {
                         const errorText = await createResponse.text();
                         throw new Error(`Failed to create session (${createResponse.status}): ${errorText}`);
                     }
 
                     const sessionData = await createResponse.json();
+                    console.log('[handleSubmit] Session created, token:', sessionData.token ? sessionData.token.substring(0, 8) + '...' : 'none');
 
                     // FIXED: Validate response token format
                     if (!sessionData.token || !/^[a-f0-9]{32}$/.test(sessionData.token)) {
@@ -2129,12 +2151,14 @@ Translate to {target_language}.`;
         const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
         const baseUrl = isLocalhost ? 'http://localhost:7001' : window.location.origin;
         const installUrl = `${baseUrl}/addon/${configToken}/manifest.json`;
+        console.log('[handleSubmit] Install URL generated:', installUrl);
 
         // Save to current config
         currentConfig = config;
 
         // Cache the configuration to localStorage
         saveConfigToCache(config);
+        console.log('[handleSubmit] Config cached to localStorage');
 
         // Enable install and copy buttons
         document.getElementById('installBtn').disabled = false;
@@ -2157,6 +2181,9 @@ Translate to {target_language}.`;
         // Show appropriate message based on update vs new install
         if (!isUpdate) {
             showAlert('Configuration saved! You can now install the addon in Stremio.', 'success');
+            console.log('[handleSubmit] Save completed successfully (new config)');
+        } else {
+            console.log('[handleSubmit] Save completed successfully (updated config)');
         }
         // Update message already shown above
     }
