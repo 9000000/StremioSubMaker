@@ -2,29 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
-
-- Sessions now use a sliding inactivity TTL: expire only after 90 days without access. Persistent storage TTL is refreshed on use, and original createdAt is preserved.
-- Redis/HA optimizations:
-  - Skip Redis preload of all sessions at startup (lazy load per token); can be re-enabled with `SESSION_PRELOAD=true`.
-  - Do not mark sessions dirty on read in Redis mode and disable periodic auto-save timer to avoid redundant writes.
-  - Added strict referrer policy (`no-referrer`) via Helmet to prevent leaking `?config=` tokens in Referer headers.
-  - Note: Ensure all instances share the same `ENCRYPTION_KEY` and `REDIS_KEY_PREFIX` for cross-instance session access.
-- Enhanced session diagnostics and logging (fixes #1, #2, #8):
-  - Session creation logs now clarify "in-memory" count vs total sessions. In Redis lazy-load mode, this shows only loaded sessions, not all sessions in storage.
-  - Added `isLazyLoadingMode` flag to session stats to help operators understand session loading behavior.
-  - Detailed error context logging in session fallback mechanism: now logs specific failure modes (not found, expired, decryption error, storage error).
-  - Initialization logs clarify when Redis lazy-load mode is active and explain cross-instance fallback behavior.
-  - Encryption logs clarified: config contains encrypted individual fields (not double-encrypted full config).
-
-**Bug Fixes:**
-
-- Redis session keys were double-prefixed (client `keyPrefix` + manual prefix), causing migrated sessions to be invisible to preload scans. Removed manual prefixing in the Redis adapter and kept the client `keyPrefix` only.
-- Migration counters for sessions now increment only on successful writes; failures are logged to aid troubleshooting.
-- Fixed silent failures in session fallback loading: now logs detailed context explaining why session load failed (missing token, expired, decryption error, storage error).
-- Note for operators: if already affected, look for double-prefixed keys (e.g. `stremio:stremio:session:*`) and rename to single-prefixed (`stremio:session:*`).
-
-## SubMaker 1.2.0 (sessions-experimental-refactor branch)
+## SubMaker 1.2.0
 
 **Critical Session Persistence & Reliability Improvements**
 
@@ -70,9 +48,26 @@ This release focuses on completely overhauling the session token/config persiste
 - **Consecutive Save Failure Tracking**: Critical alerts after 5 consecutive save failures (25 minutes) for monitoring
 - **Memory Cleanup**: Automatic hourly cleanup of old sessions from memory while preserving in storage
 - **Startup Readiness**: Server waits for session manager to load all sessions before accepting requests
+- Sessions now use a sliding inactivity TTL: expire only after 90 days without access. Persistent storage TTL is refreshed on use, and original createdAt is preserved.
+- Redis/HA optimizations:
+  - Skip Redis preload of all sessions at startup (lazy load per token); can be re-enabled with `SESSION_PRELOAD=true`.
+  - Do not mark sessions dirty on read in Redis mode and disable periodic auto-save timer to avoid redundant writes.
+  - Added strict referrer policy (`no-referrer`) via Helmet to prevent leaking `?config=` tokens in Referer headers.
+  - Note: Ensure all instances share the same `ENCRYPTION_KEY` and `REDIS_KEY_PREFIX` for cross-instance session access.
+- Enhanced session diagnostics and logging (fixes #1, #2, #8):
+  - Session creation logs now clarify "in-memory" count vs total sessions. In Redis lazy-load mode, this shows only loaded sessions, not all sessions in storage.
+  - Added `isLazyLoadingMode` flag to session stats to help operators understand session loading behavior.
+  - Detailed error context logging in session fallback mechanism: now logs specific failure modes (not found, expired, decryption error, storage error).
+  - Initialization logs clarify when Redis lazy-load mode is active and explain cross-instance fallback behavior.
+  - Encryption logs clarified: config contains encrypted individual fields (not double-encrypted full config).
+
 
 **Bug Fixes:**
 
+- Redis session keys were double-prefixed (client `keyPrefix` + manual prefix), causing migrated sessions to be invisible to preload scans. Removed manual prefixing in the Redis adapter and kept the client `keyPrefix` only.
+- Migration counters for sessions now increment only on successful writes; failures are logged to aid troubleshooting.
+- Fixed silent failures in session fallback loading: now logs detailed context explaining why session load failed (missing token, expired, decryption error, storage error).
+- Note for operators: if already affected, look for double-prefixed keys (e.g. `stremio:stremio:session:*`) and rename to single-prefixed (`stremio:session:*`).
 - **CRITICAL**: Fixed server accepting requests before sessions loaded (race condition during startup)
 - Fixed multi-instance race where saving a single `sessions` blob could overwrite other instances’ sessions
 - Fixed session expiration using wrong timestamp (lastAccessedAt instead of createdAt)
@@ -82,6 +77,7 @@ This release focuses on completely overhauling the session token/config persiste
 - Fixed client not validating token format before storage
 - Fixed concurrent StorageFactory initializations causing race conditions
 - Fixed config page blank fields when opened from Stremio gear
+
 
 ## SubMaker 1.1.7
 
