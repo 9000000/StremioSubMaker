@@ -65,7 +65,7 @@ cd StremioSubMaker
 npm install
 
 # Create .env
-mv .env.example .env
+cp .env.example .env
 
 # Configure .env
 nano .env
@@ -84,7 +84,7 @@ Quick start:
 git clone https://github.com/xtremexq/StremioSubMaker.git && cd StremioSubMaker
 
 # Configure .env
-mv .env.example .env && nano .env
+cp .env.example .env && nano .env
 
 # Build and start docker
 docker-compose up -d
