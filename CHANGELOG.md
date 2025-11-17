@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - SubSource reputation increased from 1 to 2 (equal to SubDL) based on rich API features and quality metadata
 - SubSource sorting changed from rating to popular (downloads) for better filename/release matching
 - SubSource result limit increased to 100 for better diversity and matching quality
+- OpenSubtitles V3 filename extraction now batched (10 concurrent requests per batch) to reduce rate limiting errors
 
 ## SubMaker 1.2.0, 1.2.1
 

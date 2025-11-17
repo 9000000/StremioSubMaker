@@ -11,7 +11,7 @@
 const axios = require('axios');
 const { toISO6391, toISO6392 } = require('../utils/languages');
 const { handleSearchError, handleDownloadError, logApiError } = require('../utils/apiErrorHandler');
-const { httpAgent, httpsAgent } = require('../utils/httpAgents');
+const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const zlib = require('zlib');
 const log = require('../utils/logger');
 
@@ -28,6 +28,7 @@ class SubSourceService {
     this.defaultHeaders = {
       'User-Agent': USER_AGENT,
       'Accept': 'application/json, text/plain, */*',
+      'Accept-Encoding': 'gzip, deflate, br',
       'Accept-Language': 'en-US,en;q=0.9',
       'Referer': 'https://subsource.net/',
       'Origin': 'https://subsource.net',
@@ -43,9 +44,7 @@ class SubSourceService {
       'Sec-CH-UA-Arch': '"x86"',
       'Sec-CH-UA-Bitness': '"64"',
       'Sec-CH-UA-Full-Version': '"131.0.6778.86"',
-      'sec-ch-ua-full-version-list': '"Chromium";v="131.0.6778.86", "Not_A Brand";v="24.0.0.0"',
-      'Cache-Control': 'no-cache',
-      'Pragma': 'no-cache'
+      'sec-ch-ua-full-version-list': '"Chromium";v="131.0.6778.86", "Not_A Brand";v="24.0.0.0"'
     };
 
     // Add API key to headers
@@ -54,6 +53,18 @@ class SubSourceService {
       this.defaultHeaders['api-key'] = this.apiKey.trim();
       log.debug(() => '[SubSource] Initializing with API key in headers');
     }
+
+    // Reusable axios client with pooling + DNS cache
+    this.client = axios.create({
+      baseURL: this.baseURL,
+      headers: this.defaultHeaders,
+      httpAgent,
+      httpsAgent,
+      lookup: dnsLookup,
+      timeout: 15000,
+      maxRedirects: 5,
+      decompress: true
+    });
   }
 
   /**
@@ -73,11 +84,8 @@ class SubSourceService {
 
       log.debug(() => ['[SubSource] Searching for movie:', searchUrl]);
 
-      const response = await axios.get(searchUrl, {
-        headers: this.defaultHeaders,
-        responseType: 'json',
-        httpAgent,
-        httpsAgent
+      const response = await this.client.get(searchUrl, {
+        responseType: 'json'
       });
 
       // Response could be an array of movies or a single movie
@@ -85,11 +93,13 @@ class SubSourceService {
 
       if (movies.length > 0) {
         const movieId = movies[0].id || movies[0].movieId;
-        log.debug(() => ['[SubSource] Found SubSource movie ID:', movieId]);
+        const movieTitle = movies[0].title || 'Unknown';
+        const movieSeason = movies[0].season || 'N/A';
+        log.debug(() => `[SubSource] Found movieId=${movieId} for "${movieTitle}" (Season: ${movieSeason}, Total matches: ${movies.length})`);
         return movieId;
       }
 
-      log.debug(() => ['[SubSource] No movie found for IMDB ID:', imdb_id]);
+      log.debug(() => ['[SubSource] No movie found for IMDB ID:', imdb_id, season ? `Season ${season}` : '']);
       return null;
     } catch (error) {
       logApiError(error, 'SubSource', 'Get movie ID', { skipResponseData: true, skipUserMessage: true });
@@ -231,7 +241,7 @@ class SubSourceService {
       // Note: Season filtering is handled via getMovieId(imdb_id, season)
       // Note: Episode filtering is NOT supported by the API - we'll filter client-side below
 
-      log.debug(() => ['[SubSource] Searching with params:', JSON.stringify(queryParams)]);
+      log.debug(() => `[SubSource] Searching: movieId=${queryParams.movieId}, languages=[${queryParams.language || 'all'}], sort=${queryParams.sort}, limit=${queryParams.limit}${type === 'episode' ? `, episode=${episode}` : ''}`);
 
       // Try /subtitles endpoint first (more common pattern), fallback to /search if needed
       let response;
@@ -242,11 +252,8 @@ class SubSourceService {
       const url = `${this.baseURL}${endpoint}?${queryString}`;
 
       try {
-        const rawResponse = await axios.get(url, {
-          headers: this.defaultHeaders,
-          responseType: 'json',
-          httpAgent,
-          httpsAgent
+        const rawResponse = await this.client.get(url, {
+          responseType: 'json'
         });
 
         response = rawResponse.data;
@@ -256,11 +263,8 @@ class SubSourceService {
           endpoint = '/search';
           const searchUrl = `${this.baseURL}${endpoint}?${queryString}`;
 
-          const rawResponse = await axios.get(searchUrl, {
-            headers: this.defaultHeaders,
-            responseType: 'json',
-            httpAgent,
-            httpsAgent
+          const rawResponse = await this.client.get(searchUrl, {
+            responseType: 'json'
           });
 
           response = rawResponse.data;
@@ -297,6 +301,8 @@ class SubSourceService {
         log.debug(() => '[SubSource] No subtitles found in response');
         return [];
       }
+
+      log.debug(() => `[SubSource] API returned ${subtitlesData.length} subtitles (before episode filtering)`);
 
       const subtitles = subtitlesData.map(sub => {
         const originalLang = sub.language || 'en';
@@ -529,12 +535,14 @@ class SubSourceService {
 
       // Request download from SubSource API (API key is in headers)
       // According to API docs: GET /subtitles/{id}/download
-      const url = `${this.baseURL}/subtitles/${subsource_id}/download`;
-      const response = await axios.get(url, {
-        headers: this.defaultHeaders,
-        responseType: 'arraybuffer', // Get response as buffer
-        httpAgent,
-        httpsAgent
+      const url = `/subtitles/${subsource_id}/download`;
+      // Allow CDN caching; avoid forcing no-cache on downloads
+      const downloadHeaders = { ...this.defaultHeaders };
+      delete downloadHeaders['Cache-Control'];
+      delete downloadHeaders['Pragma'];
+      const response = await this.client.get(url, {
+        headers: downloadHeaders,
+        responseType: 'arraybuffer'
       });
 
       // Check if response is a ZIP file or direct SRT content

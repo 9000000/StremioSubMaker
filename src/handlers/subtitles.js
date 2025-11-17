@@ -1116,10 +1116,30 @@ function rankSubtitlesByFilename(subtitles, streamFilename, videoInfo = null) {
     return subtitles;
   }
 
-  const withScores = subtitles.map(sub => ({
-    ...sub,
-    _matchScore: calculateFilenameMatchScore(streamFilename, sub.name || '')
-  }));
+  const withScores = subtitles.map(sub => {
+    // Calculate base score using primary release name
+    let bestScore = calculateFilenameMatchScore(streamFilename, sub.name || '');
+
+    // For SubDL subtitles, also check all compatible releases from API
+    // This dramatically improves matching since SubDL provides all release variants
+    if (sub.provider === 'subdl' && Array.isArray(sub.releases) && sub.releases.length > 0) {
+      for (const releaseName of sub.releases) {
+        const releaseScore = calculateFilenameMatchScore(streamFilename, releaseName);
+        if (releaseScore > bestScore) {
+          bestScore = releaseScore;
+          // Log when a better match is found in releases array
+          if (releaseScore > 100) { // Only log significant improvements
+            log.debug(() => `[SubDL Ranking] Better match found in releases: "${releaseName}" (score: ${releaseScore} vs ${calculateFilenameMatchScore(streamFilename, sub.name || '')})`);
+          }
+        }
+      }
+    }
+
+    return {
+      ...sub,
+      _matchScore: bestScore
+    };
+  });
 
   // Add episode metadata match bonus/penalty (for TV shows)
   // This helps rank subtitles when filename matching fails (e.g., numeric IDs)
@@ -1164,14 +1184,68 @@ function rankSubtitlesByFilename(subtitles, streamFilename, videoInfo = null) {
 
   // Two-tier ranking system:
   // 1. Primary: Filename match score (for subtitle sync accuracy)
-  // 2. Secondary: Quality metrics (downloads, rating, upload date, provider reputation)
+  // 2. Secondary: Composite quality score (weighted combination of downloads, rating, date)
   //    - Used as tiebreaker when filename scores are similar
+
+  // Helper: Calculate normalized quality score (0-100) from downloads, rating, and date
+  // Missing metrics are treated neutrally (not penalized) to avoid unfairly ranking providers
+  const calculateQualityScore = (sub) => {
+    const metrics = [];
+    const weights = [];
+
+    // Normalize downloads using logarithmic scale (diminishing returns for high download counts)
+    // log10(1) = 0, log10(10) = 1, log10(100) = 2, log10(1000) = 3
+    const downloads = sub.downloads || 0;
+    if (downloads > 0) {
+      const normalizedDownloads = Math.min(100, (Math.log10(downloads + 1) / Math.log10(1000)) * 100);
+      metrics.push(normalizedDownloads);
+      weights.push(0.40);
+    }
+
+    // Normalize rating (assume 0-10 scale, though some providers use 0-5)
+    // If rating > 10, assume it's out of 100
+    const rating = sub.rating || 0;
+    if (rating > 0) {
+      const normalizedRating = rating > 10
+        ? Math.min(100, rating)
+        : (rating / 10) * 100;
+      metrics.push(normalizedRating);
+      weights.push(0.40);
+    }
+
+    // Normalize upload date (recent = 100, old = 0)
+    // Consider subtitles from last 365 days as "fresh"
+    const uploadDate = sub.uploadDate ? new Date(sub.uploadDate).getTime() : 0;
+    if (uploadDate > 0) {
+      const now = Date.now();
+      const daysSinceUpload = (now - uploadDate) / (1000 * 60 * 60 * 24);
+      const normalizedDate = Math.max(0, Math.min(100, 100 - (daysSinceUpload / 365) * 100));
+      metrics.push(normalizedDate);
+      weights.push(0.20);
+    }
+
+    // If no metrics available, return neutral score (50)
+    if (metrics.length === 0) {
+      return 50;
+    }
+
+    // Calculate weighted average, normalizing weights to sum to 1.0
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    const compositeScore = metrics.reduce((sum, metric, i) => {
+      return sum + (metric * (weights[i] / totalWeight));
+    }, 0);
+
+    return compositeScore;
+  };
+
   withScores.sort((a, b) => {
     // Primary sort: Filename match score (descending - higher is better)
     const scoreDiff = b._matchScore - a._matchScore;
 
-    // If scores are significantly different (>100 points), use filename score
-    if (Math.abs(scoreDiff) > 100) {
+    // If scores are significantly different (>1000 points), use filename score
+    // High threshold ensures filename matching is DOMINANT over quality metrics
+    // This prevents providers without download data (OpenSubtitles V3) from being unfairly penalized
+    if (Math.abs(scoreDiff) > 1000) {
       return scoreDiff;
     }
 
@@ -1184,33 +1258,13 @@ function rankSubtitlesByFilename(subtitles, streamFilename, videoInfo = null) {
       }
     }
 
-    // Secondary sort: Quality metrics for similar filename scores
-    // Downloads (popularity indicator) - higher is better
-    const downloadDiff = (b.downloads || 0) - (a.downloads || 0);
-    if (downloadDiff !== 0) {
-      return downloadDiff;
-    }
+    // Secondary sort: Composite quality score (balanced weighting of all metrics)
+    const qualityScoreA = calculateQualityScore(a);
+    const qualityScoreB = calculateQualityScore(b);
+    const qualityDiff = qualityScoreB - qualityScoreA;
 
-    // Rating (quality indicator) - higher is better
-    const ratingDiff = (b.rating || 0) - (a.rating || 0);
-    if (ratingDiff !== 0) {
-      return ratingDiff;
-    }
-
-    // Upload date (recency tiebreaker) - newer is better
-    // Parse dates and handle null/undefined
-    const getTimestamp = (dateStr) => {
-      if (!dateStr) return 0;
-      const timestamp = new Date(dateStr).getTime();
-      return isNaN(timestamp) ? 0 : timestamp;
-    };
-
-    const dateA = getTimestamp(a.uploadDate);
-    const dateB = getTimestamp(b.uploadDate);
-
-    const dateDiff = dateB - dateA;
-    if (dateDiff !== 0) {
-      return dateDiff;
+    if (Math.abs(qualityDiff) > 0.01) { // Use small threshold for floating point comparison
+      return qualityDiff;
     }
 
     // Final tiebreaker: Provider reputation (for truly equal subtitles)
@@ -1412,9 +1466,9 @@ function createSubtitleHandler(config) {
         }
       }
 
-      // Limit to top 16 subtitles per language (applied AFTER ranking all sources)
+      // Limit to top 12 subtitles per language (applied AFTER ranking all sources)
       // This prevents UI slowdown while ensuring best-quality subtitles are shown
-      const MAX_SUBS_PER_LANGUAGE = 16;
+      const MAX_SUBS_PER_LANGUAGE = 12;
       const limitedByLanguage = new Map(); // language -> subtitle array
 
       for (const sub of filteredFoundSubtitles) {

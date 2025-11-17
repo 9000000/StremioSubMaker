@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { toISO6391, toISO6392 } = require('../utils/languages');
 const { handleSearchError, handleDownloadError, handleAuthError } = require('../utils/apiErrorHandler');
-const { httpAgent, httpsAgent } = require('../utils/httpAgents');
+const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const { version } = require('../utils/version');
 const log = require('../utils/logger');
 
@@ -38,7 +38,8 @@ class OpenSubtitlesService {
     const defaultHeaders = {
       'User-Agent': USER_AGENT,
       'Content-Type': 'application/json',
-      'Accept': 'application/json'
+      'Accept': 'application/json',
+      'Accept-Encoding': 'gzip, deflate, br'
     };
 
     // Add API key if configured
@@ -54,7 +55,11 @@ class OpenSubtitlesService {
       baseURL: OPENSUBTITLES_API_URL,
       headers: defaultHeaders,
       httpAgent,
-      httpsAgent
+      httpsAgent,
+      lookup: dnsLookup,
+      timeout: 15000,
+      maxRedirects: 5,
+      decompress: true
     });
 
     // Only log initialization messages once at startup
@@ -307,13 +312,11 @@ class OpenSubtitlesService {
       log.debug(() => ['[OpenSubtitles] Got download link:', downloadLink]);
 
       // Download the subtitle file
-      const subtitleResponse = await axios.get(downloadLink, {
+      const subtitleResponse = await this.client.get(downloadLink, {
         responseType: 'text',
         headers: {
           'User-Agent': USER_AGENT
-        },
-        httpAgent,
-        httpsAgent
+        }
       });
 
       const subtitleContent = subtitleResponse.data;

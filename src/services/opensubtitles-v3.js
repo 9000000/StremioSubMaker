@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { toISO6391, toISO6392 } = require('../utils/languages');
 const { handleSearchError, handleDownloadError } = require('../utils/apiErrorHandler');
-const { httpAgent, httpsAgent } = require('../utils/httpAgents');
+const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const { version } = require('../utils/version');
 const log = require('../utils/logger');
 
@@ -21,11 +21,15 @@ class OpenSubtitlesV3Service {
       baseURL: OPENSUBTITLES_V3_BASE_URL,
       headers: {
         'User-Agent': USER_AGENT,
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate, br'
       },
       timeout: 10000, // 10 second timeout
       httpAgent,
-      httpsAgent
+      httpsAgent,
+      lookup: dnsLookup,
+      maxRedirects: 5,
+      decompress: true
     });
 
     // Only log initialization once at startup
@@ -102,7 +106,53 @@ class OpenSubtitlesV3Service {
       // This allows proper filename matching instead of just numeric IDs
       const subtitlesWithNames = await this.extractFilenames(filteredSubtitles);
 
-      return subtitlesWithNames;
+      // Filter by episode number for TV shows
+      // OpenSubtitles V3 API sometimes returns subtitles for all episodes in the season
+      let episodeFilteredSubtitles = subtitlesWithNames;
+      if (type === 'episode' && season && episode) {
+        const beforeCount = episodeFilteredSubtitles.length;
+
+        episodeFilteredSubtitles = episodeFilteredSubtitles.filter(sub => {
+          const nameLower = sub.name.toLowerCase();
+
+          // Patterns to match the correct episode (S03E02, 3x02, etc.)
+          const seasonEpisodePatterns = [
+            new RegExp(`s0*${season}e0*${episode}\\b`, 'i'),           // S03E02, S3E2
+            new RegExp(`${season}x0*${episode}\\b`, 'i'),              // 3x02
+            new RegExp(`s0*${season}\\.e0*${episode}\\b`, 'i'),        // S03.E02
+            new RegExp(`season\\s*0*${season}.*episode\\s*0*${episode}\\b`, 'i')  // Season 3 Episode 2
+          ];
+
+          // If ANY pattern matches the correct episode, keep this subtitle
+          if (seasonEpisodePatterns.some(pattern => pattern.test(nameLower))) {
+            return true;
+          }
+
+          // Check if subtitle has a DIFFERENT episode number (wrong episode)
+          // Extract season/episode from subtitle name
+          const episodeMatch = nameLower.match(/s0*(\d+)e0*(\d+)|(\d+)x0*(\d+)/i);
+          if (episodeMatch) {
+            const subSeason = parseInt(episodeMatch[1] || episodeMatch[3]);
+            const subEpisode = parseInt(episodeMatch[2] || episodeMatch[4]);
+
+            // If it explicitly mentions a different episode, filter it out
+            if (subSeason === season && subEpisode !== episode) {
+              return false; // Wrong episode - exclude
+            }
+          }
+
+          // No episode info found in name - keep it (might be generic subtitle)
+          // The ranking algorithm will handle these with lower scores
+          return true;
+        });
+
+        const filteredCount = beforeCount - episodeFilteredSubtitles.length;
+        if (filteredCount > 0) {
+          log.debug(() => `[OpenSubtitles V3] Filtered out ${filteredCount} wrong episode subtitles (requested: S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')})`);
+        }
+      }
+
+      return episodeFilteredSubtitles;
 
     } catch (error) {
       return handleSearchError(error, 'OpenSubtitles V3');
@@ -110,47 +160,56 @@ class OpenSubtitlesV3Service {
   }
 
   /**
-   * Extract filenames from subtitle URLs using parallel HEAD requests
+   * Extract filenames from subtitle URLs using batched parallel HEAD requests
    * @param {Array} subtitles - Array of subtitle objects with urls
    * @returns {Promise<Array>} - Subtitles with extracted names
    */
   async extractFilenames(subtitles) {
-    // Make parallel HEAD requests to extract filenames
-    const filenamePromises = subtitles.map(async (sub) => {
-      try {
-        // Make HEAD request to get Content-Disposition header
-        const response = await axios.head(sub.url, {
-          headers: {
-            'User-Agent': USER_AGENT
-          },
-          timeout: 3000, // 3 second timeout for HEAD requests
-          httpAgent,
-          httpsAgent
-        });
+    const BATCH_SIZE = 10;
+    const extractedNames = new Array(subtitles.length);
 
-        // Extract filename from Content-Disposition header
-        const contentDisposition = response.headers['content-disposition'];
-        if (contentDisposition) {
-          const match = contentDisposition.match(/filename="(.+?)"/);
-          if (match && match[1]) {
-            // Remove .srt extension for cleaner display
-            const filename = match[1].replace(/\.srt$/i, '');
-            return filename;
+    // Process subtitles in batches of 10 to avoid rate limiting
+    for (let i = 0; i < subtitles.length; i += BATCH_SIZE) {
+      const batch = subtitles.slice(i, i + BATCH_SIZE);
+      const batchPromises = batch.map(async (sub, batchIndex) => {
+        try {
+          // Make HEAD request to get Content-Disposition header
+          const response = await this.client.head(sub.url, {
+            headers: {
+              'User-Agent': USER_AGENT
+            },
+            timeout: 3000 // 3 second timeout for HEAD requests
+          });
+
+          // Extract filename from Content-Disposition header
+          const contentDisposition = response.headers['content-disposition'];
+          if (contentDisposition) {
+            const match = contentDisposition.match(/filename="(.+?)"/);
+            if (match && match[1]) {
+              // Remove .srt extension for cleaner display
+              const filename = match[1].replace(/\.srt$/i, '');
+              return filename;
+            }
           }
+
+          // Fallback: no filename found
+          return null;
+
+        } catch (error) {
+          // Fallback on error (timeout, network issue, etc.)
+          log.debug(() => `[OpenSubtitles V3] Failed to extract filename for ${sub.id}: ${error.message}`);
+          return null;
         }
+      });
 
-        // Fallback: no filename found
-        return null;
+      // Wait for this batch to complete
+      const batchResults = await Promise.all(batchPromises);
 
-      } catch (error) {
-        // Fallback on error (timeout, network issue, etc.)
-        log.debug(() => `[OpenSubtitles V3] Failed to extract filename for ${sub.id}: ${error.message}`);
-        return null;
-      }
-    });
-
-    // Wait for all HEAD requests to complete
-    const extractedNames = await Promise.all(filenamePromises);
+      // Store results in correct positions
+      batchResults.forEach((result, batchIndex) => {
+        extractedNames[i + batchIndex] = result;
+      });
+    }
 
     // Map subtitles with extracted names
     return subtitles.map((sub, index) => {
@@ -213,14 +272,12 @@ class OpenSubtitlesV3Service {
         log.debug(() => `[OpenSubtitles V3] Downloading subtitle (attempt ${attempt}/${maxRetries}): ${fileId}`);
 
         // Download the subtitle file directly
-        const response = await axios.get(downloadUrl, {
+        const response = await this.client.get(downloadUrl, {
           responseType: 'text',
           headers: {
             'User-Agent': USER_AGENT
           },
-          timeout: 12000, // 12 second timeout for download
-          httpAgent,
-          httpsAgent
+          timeout: 12000 // 12 second timeout for download
         });
 
         const subtitleContent = response.data;

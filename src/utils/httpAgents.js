@@ -22,6 +22,9 @@
 
 const http = require('http');
 const https = require('https');
+// Handle ESM (v7+) and CJS (v6) exports of cacheable-lookup
+let CacheableLookup = require('cacheable-lookup');
+CacheableLookup = (CacheableLookup && (CacheableLookup.default || CacheableLookup.CacheableLookup)) || CacheableLookup;
 const log = require('./logger');
 
 /**
@@ -48,9 +51,18 @@ const httpsAgent = new https.Agent({
   keepAliveMsecs: 30000  // Send keepalive probes every 30s (TLS over TCP)
 });
 
+// DNS cache to reduce lookup latency and flakiness
+const dnsCache = new CacheableLookup({
+  maxTtl: 60,      // seconds to keep successful lookups
+  errorTtl: 0,     // don't cache failed lookups
+  cache: new Map() // in-memory cache
+});
+
 log.debug(() => '[HTTP Agents] Connection pooling initialized: maxSockets=100, maxFreeSockets=20, keepAlive=true');
 
 module.exports = {
   httpAgent,
-  httpsAgent
+  httpsAgent,
+  // Expose lookup so callers can pass it in request options
+  dnsLookup: dnsCache.lookup.bind(dnsCache)
 };

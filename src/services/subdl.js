@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { toISO6391, toISO6392 } = require('../utils/languages');
 const { handleSearchError, handleDownloadError } = require('../utils/apiErrorHandler');
-const { httpAgent, httpsAgent } = require('../utils/httpAgents');
+const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const log = require('../utils/logger');
 
 const SUBDL_API_URL = 'https://api.subdl.com/api/v1';
@@ -17,10 +17,15 @@ class SubDLService {
       headers: {
         'User-Agent': USER_AGENT,
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate, br'
       },
       httpAgent,
-      httpsAgent
+      httpsAgent,
+      lookup: dnsLookup,
+      timeout: 15000,
+      maxRedirects: 5,
+      decompress: true
     });
 
     if (this.apiKey && this.apiKey.trim() !== '') {
@@ -96,7 +101,10 @@ class SubDLService {
         api_key: this.apiKey,
         imdb_id: imdb_id, // SubDL accepts 'tt' prefix
         languages: convertedLanguages.join(','),
-        type: type // 'movie' or 'tv'
+        type: type, // 'movie' or 'tv'
+        subs_per_page: 30, // Get maximum results for better ranking (max is 30)
+        releases: 1, // Get releases list for better matching with user's files
+        hi: 1 // Get hearing impaired flag for filtering
       };
 
       // For TV shows, add season and episode parameters
@@ -117,7 +125,7 @@ class SubDLService {
         return [];
       }
 
-      const subtitles = response.data.subtitles.map(sub => {
+      let subtitles = response.data.subtitles.map(sub => {
 
         const originalLang = sub.lang || 'en';
         const normalizedLang = this.normalizeLanguageCode(originalLang);
@@ -142,6 +150,10 @@ class SubDLService {
         const downloadCount = parseInt(sub.download_count);
         const downloads = (!isNaN(downloadCount) && downloadCount > 0) ? downloadCount : 0;
 
+        // Parse releases array from SubDL API (when releases=1 is set)
+        // This provides all compatible release names for better matching
+        const releases = Array.isArray(sub.releases) ? sub.releases : [];
+
         return {
           id: fileId,
           language: originalLang,
@@ -160,9 +172,70 @@ class SubDLService {
           provider: 'subdl',
           // Store SubDL-specific IDs for download
           subdl_id: sdId,
-          subtitles_id: subtitleId
+          subtitles_id: subtitleId,
+          // Store releases array for enhanced ranking
+          releases: releases
         };
       });
+
+      // CRITICAL: Filter out wrong episodes for TV shows
+      // SubDL API may return other episodes despite episode_number parameter
+      if (type === 'episode' && season && episode) {
+        const beforeCount = subtitles.length;
+
+        subtitles = subtitles.filter(sub => {
+          // Check all available names (primary + releases array)
+          const namesToCheck = [sub.name, ...(sub.releases || [])];
+
+          for (const name of namesToCheck) {
+            if (!name) continue;
+
+            const nameLower = name.toLowerCase();
+
+            // Season/Episode pattern matching
+            // Patterns: S02E03, s02e03, 2x03, S02.E03, Season 2 Episode 3
+            const seasonEpisodePatterns = [
+              new RegExp(`s0*${season}e0*${episode}\\b`, 'i'),              // S02E03, s02e03
+              new RegExp(`\\b${season}x0*${episode}\\b`, 'i'),              // 2x03
+              new RegExp(`s0*${season}\\.e0*${episode}\\b`, 'i'),           // S02.E03
+              new RegExp(`season\\s*0*${season}.*episode\\s*0*${episode}\\b`, 'i')  // Season 2 Episode 3
+            ];
+
+            // If ANY name matches the correct episode, keep this subtitle
+            if (seasonEpisodePatterns.some(pattern => pattern.test(nameLower))) {
+              return true;
+            }
+          }
+
+          // Check if subtitle has a DIFFERENT episode number (wrong episode)
+          for (const name of namesToCheck) {
+            if (!name) continue;
+
+            const nameLower = name.toLowerCase();
+
+            // Extract season/episode from subtitle name
+            const episodeMatch = nameLower.match(/s0*(\d+)e0*(\d+)|(\d+)x0*(\d+)/i);
+            if (episodeMatch) {
+              const subSeason = parseInt(episodeMatch[1] || episodeMatch[3]);
+              const subEpisode = parseInt(episodeMatch[2] || episodeMatch[4]);
+
+              // If it explicitly mentions a different episode, filter it out
+              if (subSeason === season && subEpisode !== episode) {
+                return false; // Wrong episode - exclude
+              }
+            }
+          }
+
+          // No episode info found in any name - keep it (might be generic subtitle)
+          // The ranking algorithm will handle these with lower scores
+          return true;
+        });
+
+        const filteredCount = beforeCount - subtitles.length;
+        if (filteredCount > 0) {
+          log.debug(() => `[SubDL] Filtered out ${filteredCount} wrong episode subtitles (requested: S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')})`);
+        }
+      }
 
       // Limit to 20 results per language to control response size
       const MAX_RESULTS_PER_LANGUAGE = 20;
@@ -215,14 +288,12 @@ class SubDLService {
       log.debug(() => ['[SubDL] Download URL:', downloadUrl]);
 
       // Download the subtitle file (it's a ZIP file)
-      const subtitleResponse = await axios.get(downloadUrl, {
+      const subtitleResponse = await this.client.get(downloadUrl, {
         responseType: 'arraybuffer',
         headers: {
           'User-Agent': USER_AGENT
         },
-        timeout: 12000, // 12 second timeout
-        httpAgent,
-        httpsAgent
+        timeout: 12000 // 12 second timeout
       });
 
       log.debug(() => ['[SubDL] Response status:', subtitleResponse.status]);
