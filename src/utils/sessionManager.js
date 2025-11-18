@@ -115,7 +115,7 @@ class SessionManager {
         // Storage session limits (defense-in-depth)
         this.storageMaxSessions = (Number.isFinite(options.storageMaxSessions) && options.storageMaxSessions > 0)
             ? options.storageMaxSessions
-            : null; // Default: 90k from index.js
+            : null; // Default: 60k from index.js
         this.storageMaxAge = options.storageMaxAge || 90 * 24 * 60 * 60 * 1000; // 90 days default
 
         // Session monitoring and alerting

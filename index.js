@@ -39,12 +39,12 @@ const PORT = process.env.PORT || 7001;
 
 // Initialize session manager with environment-based configuration
 // Memory limit: 30,000 sessions (LRU eviction) - reduced from 50k to balance memory usage
-// Storage limit: 90,000 sessions (oldest-accessed purge at 90 days) - new cap to prevent unbounded growth
+// Storage limit: 60,000 sessions (oldest-accessed purge at 90 days) - new cap to prevent unbounded growth
 const sessionOptions = {
     maxSessions: parseInt(process.env.SESSION_MAX_SESSIONS) || 30000, // Limit to 30k concurrent in-memory sessions
     maxAge: parseInt(process.env.SESSION_MAX_AGE) || 90 * 24 * 60 * 60 * 1000, // 90 days (3 months)
     persistencePath: process.env.SESSION_PERSISTENCE_PATH || path.join(process.cwd(), 'data', 'sessions.json'),
-    storageMaxSessions: parseInt(process.env.SESSION_STORAGE_MAX_SESSIONS) || 90000, // Limit to 90k sessions in storage
+    storageMaxSessions: parseInt(process.env.SESSION_STORAGE_MAX_SESSIONS) || 60000, // Limit to 60k sessions in storage
     storageMaxAge: parseInt(process.env.SESSION_STORAGE_MAX_AGE) || 90 * 24 * 60 * 60 * 1000 // 90 days storage retention
 };
 // Only override autoSaveInterval if explicitly provided via env; otherwise let SessionManager default apply
