@@ -233,6 +233,11 @@ function postprocessVTT(vttContent) {
         return '';
       });
 
+      // Remove orphaned ASS tags (missing opening brace, e.g., "\an8}" or "\i1}" or "\an8\fscx92}")
+      // These are malformed tags left by subsrt-ts conversion
+      // Pattern: backslash + letters/numbers/backslashes + closing brace
+      cleaned = cleaned.replace(/\\[a-z0-9\\]+\}/gi, '');
+
       // Handle escaped characters
       cleaned = cleaned.replace(/\\h/g, ' '); // non-breaking space
       cleaned = cleaned.replace(/\\N/g, '\n'); // line break
