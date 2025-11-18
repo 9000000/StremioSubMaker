@@ -367,6 +367,42 @@ const sessionCreationLimiter = rateLimit({
     }
 });
 
+// Security: Rate limiting for stats endpoint (prevents abuse and monitoring)
+const statsLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 30, // 30 requests per minute per IP
+    message: 'Too many stats requests, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+        return `stats:${ipKeyGenerator(req.ip)}`;
+    }
+});
+
+// Security: IP whitelist middleware for stats endpoint
+// Only allows localhost and optionally configured admin IPs
+const statsIpWhitelist = (req, res, next) => {
+    const clientIp = req.ip || req.connection.remoteAddress;
+
+    // Normalize IPv6 localhost to IPv4
+    const normalizedIp = clientIp === '::1' || clientIp === '::ffff:127.0.0.1' ? '127.0.0.1' : clientIp;
+
+    // Allow localhost
+    const isLocalhost = normalizedIp === '127.0.0.1' || normalizedIp === 'localhost' || clientIp === '::1';
+
+    // Allow admin IPs from environment (comma-separated)
+    const adminIps = process.env.ADMIN_IPS ? process.env.ADMIN_IPS.split(',').map(ip => ip.trim()) : [];
+    const isAdminIp = adminIps.includes(normalizedIp) || adminIps.includes(clientIp);
+
+    if (isLocalhost || isAdminIp) {
+        return next();
+    }
+
+    // Reject non-whitelisted IPs
+    log.warn(() => `[Security] Blocked stats access from non-whitelisted IP: ${clientIp}`);
+    res.status(403).json({ error: 'Access denied: Stats endpoint is restricted to localhost and admin IPs' });
+};
+
 // Enable gzip compression for all responses
 // SRT files compress extremely well (typically 5-10x reduction)
 // Use maximum compression (level 9) for best bandwidth savings
@@ -1116,7 +1152,8 @@ app.post('/api/update-session/:token', sessionCreationLimiter, async (req, res) 
 });
 
 // API endpoint to get session statistics (for monitoring)
-app.get('/api/session-stats', async (req, res) => {
+// Security: Protected by IP whitelist (localhost + admin IPs only) and rate limiting
+app.get('/api/session-stats', statsIpWhitelist, statsLimiter, async (req, res) => {
     try {
         const stats = await sessionManager.getStats();
         res.json({ ...stats, version });
