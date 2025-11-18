@@ -163,8 +163,11 @@ class OpenSubtitlesService {
       if (this.isTokenExpired()) {
         const loginResult = await this.login();
         if (!loginResult) {
-          // Authentication failed, handleAuthError already logged it
-          return [];
+          // Authentication failed; surface this so callers can react (e.g., append UX hint entries)
+          const authErr = new Error('OpenSubtitles authentication failed: invalid username/password');
+          authErr.statusCode = 400;
+          authErr.authError = true;
+          throw authErr;
         }
       }
 
@@ -358,21 +361,21 @@ class OpenSubtitlesService {
           try {
             const subsrt = require('subsrt-ts');
             let converted;
-            if (lname.endsWith('.ass')) converted = subsrt.convert(raw, { to: 'srt', from: 'ass' });
-            else if (lname.endsWith('.ssa')) converted = subsrt.convert(raw, { to: 'srt', from: 'ssa' });
-            else converted = subsrt.convert(raw, { to: 'srt' });
+            if (lname.endsWith('.ass')) converted = subsrt.convert(raw, { to: 'vtt', from: 'ass' });
+            else if (lname.endsWith('.ssa')) converted = subsrt.convert(raw, { to: 'vtt', from: 'ssa' });
+            else converted = subsrt.convert(raw, { to: 'vtt' });
             if (!converted || typeof converted !== 'string' || converted.trim().length === 0) {
               const sanitized = (raw || '').replace(/\u0000/g, '');
               if (sanitized && sanitized !== raw) {
-                if (lname.endsWith('.ass')) converted = subsrt.convert(sanitized, { to: 'srt', from: 'ass' });
-                else if (lname.endsWith('.ssa')) converted = subsrt.convert(sanitized, { to: 'srt', from: 'ssa' });
-                else converted = subsrt.convert(sanitized, { to: 'srt' });
+                if (lname.endsWith('.ass')) converted = subsrt.convert(sanitized, { to: 'vtt', from: 'ass' });
+                else if (lname.endsWith('.ssa')) converted = subsrt.convert(sanitized, { to: 'vtt', from: 'ssa' });
+                else converted = subsrt.convert(sanitized, { to: 'vtt' });
               }
             }
             if (converted && converted.trim().length > 0) return converted;
-            throw new Error('Empty SRT after conversion');
+            throw new Error('Empty VTT after conversion');
           } catch (_) {
-            const manual = (function assToSrtFallback(input) {
+            const manual = (function assToVttFallback(input) {
               if (!input || !/\[events\]/i.test(input)) return null;
               const lines = input.split(/\r?\n/); let format = []; let inEvents = false;
               for (const line of lines) {
@@ -385,7 +388,7 @@ class OpenSubtitlesService {
               const idxStart = Math.max(0, format.indexOf('start'));
               const idxEnd = Math.max(1, format.indexOf('end'));
               const idxText = format.length > 0 ? Math.max(format.indexOf('text'), format.length - 1) : 9;
-              let n = 0; const out = [];
+              const out = ['WEBVTT', ''];
               const parseTime = (t) => {
                 const m = t.trim().match(/(\d+):(\d{2}):(\d{2})[\.\:](\d{2})/);
                 if (!m) return null;
@@ -395,7 +398,7 @@ class OpenSubtitlesService {
                 const mm=String(Math.floor((ms%3600000)/60000)).padStart(2,'0');
                 const ss=String(Math.floor((ms%60000)/1000)).padStart(2,'0');
                 const mmm=String(ms%1000).padStart(3,'0');
-                return `${hh}:${mm}:${ss},${mmm}`;
+                return `${hh}:${mm}:${ss}.${mmm}`;
               };
               const cleanText = (txt) => {
                 let t = txt.replace(/\{[^}]*\}/g,'');
@@ -411,14 +414,14 @@ class OpenSubtitlesService {
                 parts.push(cur);
                 const st=parseTime(parts[idxStart]); const et=parseTime(parts[idxEnd]);
                 if (!st||!et) continue; const ct=cleanText(parts[idxText]??''); if(!ct) continue;
-                out.push(String(++n)); out.push(`${st} --> ${et}`); out.push(ct); out.push('');
+                out.push(`${st} --> ${et}`); out.push(ct); out.push('');
               }
-              return out.length?out.join('\n'):null;
+              return out.length>2?out.join('\n'):null;
             })(raw);
             if (manual && manual.trim().length>0) return manual;
           }
         }
-        throw new Error('Failed to extract or convert subtitle from ZIP (no .srt and conversion failed)');
+        throw new Error('Failed to extract or convert subtitle from ZIP (no .srt and conversion to VTT failed)');
       }
 
       // Non-ZIP: decode with BOM awareness
@@ -440,16 +443,16 @@ class OpenSubtitlesService {
       if (/\[events\]/i.test(text) || /^dialogue\s*:/im.test(text)) {
         try {
           const subsrt = require('subsrt-ts');
-          let converted = subsrt.convert(text, { to: 'srt', from: 'ass' });
+          let converted = subsrt.convert(text, { to: 'vtt', from: 'ass' });
           if (!converted || converted.trim().length === 0) {
             const sanitized = (text || '').replace(/\u0000/g, '');
-            converted = subsrt.convert(sanitized, { to: 'srt', from: 'ass' });
+            converted = subsrt.convert(sanitized, { to: 'vtt', from: 'ass' });
           }
           if (converted && converted.trim().length > 0) return converted;
         } catch (_) {
           // ignore and fallback to manual
         }
-        const manual = (function assToSrtFallback(input) {
+        const manual = (function assToVttFallback(input) {
           if (!input || !/\[events\]/i.test(input)) return null;
           const lines = input.split(/\r?\n/); let format = []; let inEvents = false;
           for (const line of lines) {
@@ -460,13 +463,13 @@ class OpenSubtitlesService {
           const idxStart = Math.max(0, format.indexOf('start'));
           const idxEnd = Math.max(1, format.indexOf('end'));
           const idxText = format.length > 0 ? Math.max(format.indexOf('text'), format.length - 1) : 9;
-          let n = 0; const out = [];
+          const out = ['WEBVTT', ''];
           const parseTime = (t) => {
             const m = t.trim().match(/(\d+):(\d{2}):(\d{2})[\.\:](\d{2})/);
             if (!m) return null; const h=+m[1]||0, mi=+m[2]||0, s=+m[3]||0, cs=+m[4]||0;
             const ms=(h*3600+mi*60+s)*1000+cs*10; const hh=String(Math.floor(ms/3600000)).padStart(2,'0');
             const mm=String(Math.floor((ms%3600000)/60000)).padStart(2,'0'); const ss=String(Math.floor((ms%60000)/1000)).padStart(2,'0');
-            const mmm=String(ms%1000).padStart(3,'0'); return `${hh}:${mm}:${ss},${mmm}`;
+            const mmm=String(ms%1000).padStart(3,'0'); return `${hh}:${mm}:${ss}.${mmm}`;
           };
           const cleanText = (txt) => { let t = txt.replace(/\{[^}]*\}/g,''); t = t.replace(/\\N/g,'\n').replace(/\\n/g,'\n').replace(/\\h/g,' ');
             t = t.replace(/[\u0000-\u001F]/g,''); return t.trim(); };
@@ -474,9 +477,9 @@ class OpenSubtitlesService {
             if (!/^dialogue\s*:/i.test(line)) continue; const payload=line.split(':').slice(1).join(':');
             const parts=[]; let cur=''; let splits=0; for (let i=0;i<payload.length;i++){const ch=payload[i]; if(ch===',' && splits<Math.max(idxText,9)){parts.push(cur);cur='';splits++;} else {cur+=ch;}}
             parts.push(cur); const st=parseTime(parts[idxStart]); const et=parseTime(parts[idxEnd]); if(!st||!et) continue;
-            const ct=cleanText(parts[idxText]??''); if(!ct) continue; out.push(String(++n)); out.push(`${st} --> ${et}`); out.push(ct); out.push('');
+            const ct=cleanText(parts[idxText]??''); if(!ct) continue; out.push(`${st} --> ${et}`); out.push(ct); out.push('');
           }
-          return out.length?out.join('\n'):null;
+          return out.length>2?out.join('\n'):null;
         })(text);
         if (manual && manual.trim().length > 0) return manual;
       }

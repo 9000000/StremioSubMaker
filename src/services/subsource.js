@@ -549,10 +549,27 @@ class SubSourceService {
           ];
 
           // Anime-friendly episode-only patterns (commonly used without Sxx)
-          // Guard with separators to avoid matching years or resolutions
+          // Broaden coverage while guarding against matching years/resolutions (e.g., 1080p)
           const animeEpisodePatterns = [
-            new RegExp(`(?<=\\b|\\s|\\[|\\()e?p?0*${targetEpisode}(?=\\b|\\s|\\]|\\)|\\.|-|_)`, 'i'), // E01 / EP01 / 01 with boundaries
-            new RegExp(`[-_\\s\\[]0*${targetEpisode}(?=[\\]_\\s\\-.])`, 'i'),                         // - 01, _01, [01]
+            // E01 / EP01 / E 01 / EP 01 / (01) / [01] / - 01 / _01 / 01v2
+            new RegExp(`(?<=\\b|\\s|\\[|\\(|-|_)e?p?\\s*0*${targetEpisode}(?:v\\d+)?(?=\\b|\\s|\\]|\\)|\\.|-|_|$)`, 'i'),
+            new RegExp(`(?:^|[\\s\\[\\(\\-_])0*${targetEpisode}(?:v\\d+)?(?=$|[\\s\\]\\)\\-_.])`, 'i'),
+
+            // Explicit words
+            new RegExp(`(?:^|[\\s\\[\\(\\-_])episode\\s*0*${targetEpisode}(?=$|[\\s\\]\\)\\-_.])`, 'i'),
+            new RegExp(`(?:^|[\\s\\[\\(\\-_])ep\\s*0*${targetEpisode}(?=$|[\\s\\]\\)\\-_.])`, 'i'),
+
+            // Spanish/Portuguese
+            new RegExp(`(?:^|[\\s\\[\\(\\-_])cap(?:itulo|\\.)?\\s*0*${targetEpisode}(?=$|[\\s\\]\\)\\-_.])`, 'i'),
+            new RegExp(`(?:^|[\\s\\[\\(\\-_])epis[oó]dio\\s*0*${targetEpisode}(?=$|[\\s\\]\\)\\-_.])`, 'i'),
+
+            // Japanese/Chinese/Korean: 第01話 / 01話 / 01集 / 1화
+            new RegExp(`第\\s*0*${targetEpisode}\\s*(?:話|集)`, 'i'),
+            new RegExp(`(?:^|[\\s\\[\\(\\-_])0*${targetEpisode}\\s*(?:話|集|화)(?=$|[\\s\\]\\)\\-_.])`, 'i'),
+
+            // Multi-episode pack ranges that include the requested episode (e.g., 01-02)
+            new RegExp(`(?:^|[\\s\\[\\(\\-_])0*${targetEpisode}\\s*[-~](?=\\s*\\d)`, 'i'),
+            new RegExp(`(?:^|[\\s\\[\\(\\-_])\\d+\\s*[-~]\\s*0*${targetEpisode}(?=$|[\\s\\]\\)\\-_.])`, 'i'),
           ];
 
           const hasCorrectEpisode = seasonEpisodePatterns.some(pattern => pattern.test(name))
@@ -560,10 +577,9 @@ class SubSourceService {
           return hasCorrectEpisode;
         });
 
-        // If nothing matched, fall back to unfiltered list to avoid empty results
-        if (filteredSubtitles.length === 0 && subtitles.length > 0) {
-          log.debug(() => '[SubSource] No matches after episode filtering; falling back to unfiltered results');
-          filteredSubtitles = subtitles;
+        // If nothing matched, do NOT fall back to unfiltered list
+        if (filteredSubtitles.length === 0) {
+          log.debug(() => '[SubSource] No matches after episode filtering; returning no results for this episode');
         }
 
         log.debug(() => [`[SubSource] After episode filtering: ${filteredSubtitles.length} subtitles`]);
@@ -651,7 +667,7 @@ class SubSourceService {
         const zip = await JSZip.loadAsync(responseBuffer, { base64: false });
 
         const entries = Object.keys(zip.files);
-        // Prefer .srt if available
+        // Prefer .srt if available (return as-is). If not, try .vtt or convert .ass/.ssa -> .vtt
         const srtEntry = entries.find(filename => filename.toLowerCase().endsWith('.srt'));
         if (srtEntry) {
           const subtitleContent = await zip.files[srtEntry].async('string');
@@ -692,42 +708,42 @@ class SubSourceService {
             return raw;
           }
 
-          // Try library conversion first
+          // Try library conversion first (to VTT)
           try {
             const subsrt = require('subsrt-ts');
             let converted;
             if (lower.endsWith('.ass')) {
-              converted = subsrt.convert(raw, { to: 'srt', from: 'ass' });
+              converted = subsrt.convert(raw, { to: 'vtt', from: 'ass' });
             } else if (lower.endsWith('.ssa')) {
-              converted = subsrt.convert(raw, { to: 'srt', from: 'ssa' });
+              converted = subsrt.convert(raw, { to: 'vtt', from: 'ssa' });
             } else {
-              converted = subsrt.convert(raw, { to: 'srt' });
+              converted = subsrt.convert(raw, { to: 'vtt' });
             }
 
             if (!converted || typeof converted !== 'string' || converted.trim().length === 0) {
               const sanitized = (raw || '').replace(/\u0000/g, '');
               if (sanitized && sanitized !== raw) {
                 if (lower.endsWith('.ass')) {
-                  converted = subsrt.convert(sanitized, { to: 'srt', from: 'ass' });
+                  converted = subsrt.convert(sanitized, { to: 'vtt', from: 'ass' });
                 } else if (lower.endsWith('.ssa')) {
-                  converted = subsrt.convert(sanitized, { to: 'srt', from: 'ssa' });
+                  converted = subsrt.convert(sanitized, { to: 'vtt', from: 'ssa' });
                 } else {
-                  converted = subsrt.convert(sanitized, { to: 'srt' });
+                  converted = subsrt.convert(sanitized, { to: 'vtt' });
                 }
               }
             }
 
             if (converted && typeof converted === 'string' && converted.trim().length > 0) {
-              log.debug(() => `[SubSource] Converted ${altEntry} to .srt successfully`);
+              log.debug(() => `[SubSource] Converted ${altEntry} to .vtt successfully`);
               return converted;
             }
-            throw new Error('Conversion to SRT resulted in empty output');
+            throw new Error('Conversion to VTT resulted in empty output');
           } catch (convErr) {
-            log.error(() => ['[SubSource] Failed to convert to .srt:', convErr.message, 'file:', altEntry]);
+            log.error(() => ['[SubSource] Failed to convert to .vtt:', convErr.message, 'file:', altEntry]);
 
             // Manual fallback for common ASS/SSA formats
             try {
-              const manual = (function assToSrtFallback(input) {
+              const manual = (function assToVttFallback(input) {
                 if (!input || !/\[events\]/i.test(input)) return null;
                 const lines = input.split(/\r?\n/);
                 let format = [];
@@ -744,9 +760,7 @@ class SubSourceService {
                 const idxStart = Math.max(0, format.indexOf('start'));
                 const idxEnd = Math.max(1, format.indexOf('end'));
                 const idxText = format.length > 0 ? Math.max(format.indexOf('text'), format.length - 1) : 9;
-
-                let n = 0;
-                const out = [];
+                const out = ['WEBVTT', ''];
                 const parseTime = (t) => {
                   const m = t.trim().match(/(\d+):(\d{2}):(\d{2})[\.\:](\d{2})/);
                   if (!m) return null;
@@ -759,7 +773,7 @@ class SubSourceService {
                   const mm = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
                   const ss = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
                   const mmm = String(ms % 1000).padStart(3, '0');
-                  return `${hh}:${mm}:${ss},${mmm}`;
+                  return `${hh}:${mm}:${ss}.${mmm}`;
                 };
                 const cleanText = (txt) => {
                   let t = txt.replace(/\{[^}]*\}/g, '');
@@ -787,18 +801,16 @@ class SubSourceService {
                   if (!st || !et) continue;
                   const ct = cleanText(text);
                   if (!ct) continue;
-                  n++;
-                  out.push(String(n));
                   out.push(`${st} --> ${et}`);
                   out.push(ct);
                   out.push('');
                 }
-                if (out.length === 0) return null;
+                if (out.length <= 2) return null;
                 return out.join('\n');
               })(raw);
 
               if (manual && manual.trim().length > 0) {
-                log.debug(() => `[SubSource] Fallback converted ${altEntry} to .srt successfully (manual parser)`);
+                log.debug(() => `[SubSource] Fallback converted ${altEntry} to .vtt successfully (manual parser)`);
                 return manual;
               }
             } catch (fallbackErr) {
@@ -808,7 +820,7 @@ class SubSourceService {
         }
 
         log.error(() => ['[SubSource] Available files in ZIP:', entries.join(', ')]);
-        throw new Error('Failed to extract or convert subtitle from ZIP (no .srt and conversion failed)');
+        throw new Error('Failed to extract or convert subtitle from ZIP (no .srt and conversion to VTT failed)');
       } else {
         // Direct SRT content - decode as UTF-8
         log.debug(() => '[SubSource] Subtitle downloaded successfully');
