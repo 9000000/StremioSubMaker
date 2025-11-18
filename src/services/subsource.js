@@ -95,7 +95,7 @@ class SubSourceService {
       httpAgent,
       httpsAgent,
       lookup: dnsLookup,
-      timeout: 15000,
+      timeout: 10000,
       maxRedirects: 5,
       decompress: true
     });
@@ -108,13 +108,13 @@ class SubSourceService {
    * Retries on: timeouts, connection resets/refused, 5xx, 429, 503
    * @param {(attemptTimeout:number)=>Promise<any>} fn
    * @param {Object} options
-   * @param {number} [options.totalTimeoutMs=15000] - Total time budget for all attempts
+   * @param {number} [options.totalTimeoutMs=10000] - Total time budget for all attempts
    * @param {number} [options.maxRetries=2] - Number of retries (in addition to first attempt)
    * @param {number} [options.baseDelay=800] - Base delay in ms for backoff
    * @param {number} [options.minAttemptTimeoutMs=2500] - Minimum per-attempt timeout
    */
   async retryWithBackoff(fn, options = {}) {
-    const totalTimeoutMs = options.totalTimeoutMs ?? 15000;
+    const totalTimeoutMs = options.totalTimeoutMs ?? 10000;
     const maxRetries = options.maxRetries ?? 2;
     const baseDelay = options.baseDelay ?? 800;
     const minAttemptTimeoutMs = options.minAttemptTimeoutMs ?? 2500;
@@ -736,7 +736,7 @@ class SubSourceService {
         headers: downloadHeaders,
         responseType: 'arraybuffer',
         timeout: attemptTimeout
-      }), { totalTimeoutMs: 15000, maxRetries: 2, baseDelay: 800, minAttemptTimeoutMs: 2500 });
+      }), { totalTimeoutMs: 10000, maxRetries: 2, baseDelay: 800, minAttemptTimeoutMs: 2500 });
 
       // Check if response is a ZIP file or direct SRT content
       const contentType = response.headers['content-type'] || '';
