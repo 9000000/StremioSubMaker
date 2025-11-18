@@ -235,8 +235,10 @@ function postprocessVTT(vttContent) {
 
       // Remove orphaned ASS tags (missing opening brace, e.g., "\an8}" or "\i1}" or "\an8\fscx92}")
       // These are malformed tags left by subsrt-ts conversion
-      // Pattern: backslash + letters/numbers/backslashes + closing brace
-      cleaned = cleaned.replace(/\\[a-z0-9\\]+\}/gi, '');
+      // For single letters after \, preserve the letter (it's text, not a tag: \T}adah! -> Tadah!)
+      // For actual tags, remove entirely (\i1}text -> text, \an8}text -> text)
+      cleaned = cleaned.replace(/\\([a-z])(\})/gi, '$1'); // Single letter: keep it
+      cleaned = cleaned.replace(/\\(?:[a-z]*\d+[a-z0-9]*|[a-z]{2,}[0-9]*|[a-z]+\\[a-z0-9\\]*)\}/gi, ''); // Real tags: remove
 
       // Handle escaped characters
       cleaned = cleaned.replace(/\\h/g, ' '); // non-breaking space
