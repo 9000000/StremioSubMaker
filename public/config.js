@@ -121,10 +121,6 @@ Translate to {target_language}.`;
             advancedSettings: {
                 enabled: false, // Auto-set to true if any setting differs from defaults (forces bypass cache)
                 geminiModel: '', // Override model (empty = use default)
-                maxOutputTokens: 65536,
-                chunkSize: 12000,
-                translationTimeout: 600, // seconds
-                maxRetries: 5,
                 thinkingBudget: modelDefaults.thinkingBudget,
                 temperature: modelDefaults.temperature,
                 topP: 0.95,
@@ -1916,30 +1912,21 @@ Translate to {target_language}.`;
         if (bypassEl) bypassEl.checked = currentConfig.bypassCache === true;
         updateCacheToggles();
 
-        // Load advanced settings (inputs may not exist in current UI)
+        // Load advanced settings
         if (!currentConfig.advancedSettings) {
             currentConfig.advancedSettings = getDefaultConfig().advancedSettings;
         }
-        const advMaxTokensEl = document.getElementById('maxOutputTokens');
-        const advChunkSizeEl = document.getElementById('chunkSize');
-        const advTimeoutEl = document.getElementById('translationTimeout');
-        const advRetriesEl = document.getElementById('maxRetries');
 
-        if (advMaxTokensEl) advMaxTokensEl.value = currentConfig.advancedSettings?.maxOutputTokens || 65536;
-        if (advChunkSizeEl) advChunkSizeEl.value = currentConfig.advancedSettings?.chunkSize || 10000;
-        if (advTimeoutEl) advTimeoutEl.value = currentConfig.advancedSettings?.translationTimeout || 600;
-        if (advRetriesEl) advRetriesEl.value = currentConfig.advancedSettings?.maxRetries || 5;
-
-        // Load advanced settings fields
         const advModelEl = document.getElementById('advancedModel');
-        const advThinkingEl = document.getElementById('advancedThinkingBudget');
+         const advThinkingEl = document.getElementById('advancedThinkingBudget');
         const advTempEl = document.getElementById('advancedTemperature');
         const advTopPEl = document.getElementById('advancedTopP');
-
+ 
         if (advModelEl) {
             // Will be populated by fetchAvailableModels
             advModelEl.value = currentConfig.advancedSettings?.geminiModel || '';
         }
+
         if (advThinkingEl) advThinkingEl.value = currentConfig.advancedSettings?.thinkingBudget ?? 0;
         if (advTempEl) advTempEl.value = currentConfig.advancedSettings?.temperature ?? 0.8;
         if (advTopPEl) advTopPEl.value = currentConfig.advancedSettings?.topP ?? 0.95;
@@ -2041,10 +2028,6 @@ Translate to {target_language}.`;
             advancedSettings: {
                 enabled: areAdvancedSettingsModified(), // Auto-detect if any setting differs from defaults
                 geminiModel: (function(){ const el = document.getElementById('advancedModel'); return el ? el.value : ''; })(),
-                maxOutputTokens: (function(){ const el = document.getElementById('maxOutputTokens'); return parseInt(el ? el.value : '') || 65536; })(),
-                chunkSize: (function(){ const el = document.getElementById('chunkSize'); return parseInt(el ? el.value : '') || 10000; })(),
-                translationTimeout: (function(){ const el = document.getElementById('translationTimeout'); return parseInt(el ? el.value : '') || 600; })(),
-                maxRetries: (function(){ const el = document.getElementById('maxRetries'); return parseInt(el ? el.value : '') || 5; })(),
                 thinkingBudget: (function(){ const el = document.getElementById('advancedThinkingBudget'); return el ? parseInt(el.value) : 0; })(),
                 temperature: (function(){ const el = document.getElementById('advancedTemperature'); return el ? parseFloat(el.value) : 0.8; })(),
                 topP: (function(){ const el = document.getElementById('advancedTopP'); return el ? parseFloat(el.value) : 0.95; })(),
