@@ -333,12 +333,10 @@ function decryptUserConfig(config) {
         const subdlKeyEncrypted = isEncrypted(decrypted.subtitleProviders.subdl.apiKey);
         log.debug(() => `[Encryption] SubDL API key exists, encrypted: ${subdlKeyEncrypted}, will decrypt: ${isConfigEncrypted || subdlKeyEncrypted}`);
         if (isConfigEncrypted || subdlKeyEncrypted) {
-          const before = decrypted.subtitleProviders.subdl.apiKey.substring(0, 30);
           decrypted.subtitleProviders.subdl.apiKey =
             decrypt(decrypted.subtitleProviders.subdl.apiKey, true);
-          const after = typeof decrypted.subtitleProviders.subdl.apiKey === 'string' ?
-            decrypted.subtitleProviders.subdl.apiKey.substring(0, 30) : 'NOT_STRING';
-          log.debug(() => `[Encryption] SubDL key decrypted: before="${before}..." after="${after}..."`);
+          const isString = typeof decrypted.subtitleProviders.subdl.apiKey === 'string';
+          log.debug(() => `[Encryption] SubDL key decrypted successfully, type: ${isString ? 'string' : 'NOT_STRING'}`);
         }
       }
 
@@ -347,12 +345,10 @@ function decryptUserConfig(config) {
         const subsourceKeyEncrypted = isEncrypted(decrypted.subtitleProviders.subsource.apiKey);
         log.debug(() => `[Encryption] SubSource API key exists, encrypted: ${subsourceKeyEncrypted}, will decrypt: ${isConfigEncrypted || subsourceKeyEncrypted}`);
         if (isConfigEncrypted || subsourceKeyEncrypted) {
-          const before = decrypted.subtitleProviders.subsource.apiKey.substring(0, 30);
           decrypted.subtitleProviders.subsource.apiKey =
             decrypt(decrypted.subtitleProviders.subsource.apiKey, true);
-          const after = typeof decrypted.subtitleProviders.subsource.apiKey === 'string' ?
-            decrypted.subtitleProviders.subsource.apiKey.substring(0, 30) : 'NOT_STRING';
-          log.debug(() => `[Encryption] SubSource key decrypted: before="${before}..." after="${after}..."`);
+          const isString = typeof decrypted.subtitleProviders.subsource.apiKey === 'string';
+          log.debug(() => `[Encryption] SubSource key decrypted successfully, type: ${isString ? 'string' : 'NOT_STRING'}`);
         }
       }
     }

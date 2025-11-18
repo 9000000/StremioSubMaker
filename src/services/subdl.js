@@ -2,6 +2,7 @@ const axios = require('axios');
 const { toISO6391, toISO6392 } = require('../utils/languages');
 const { handleSearchError, handleDownloadError } = require('../utils/apiErrorHandler');
 const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
+const { redactSensitiveData } = require('../utils/logger');
 const log = require('../utils/logger');
 
 const SUBDL_API_URL = 'https://api.subdl.com/api/v1';
@@ -121,7 +122,7 @@ class SubDLService {
         queryParams.episode_number = episode;
       }
 
-      log.debug(() => ['[SubDL] Searching with params:', JSON.stringify(queryParams)]);
+      log.debug(() => ['[SubDL] Searching with params:', JSON.stringify(redactSensitiveData(queryParams))]);
 
       const response = await this.client.get('/subtitles', {
         params: queryParams

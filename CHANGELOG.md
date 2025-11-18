@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - Robust subtitle downloads: BOM-aware decoding and ZIP extraction across OpenSubtitles and SubDL with fallback conversion of `.ass/.ssa` to `.vtt` while preserving native `.vtt`
 - Anime episode handling refinements: Default season to 1 when missing and improved episode-only filename matching and wrong-episode filtering across providers
 - Safer API error logging: Guarded parsing/logging of response payloads with essential fields to prevent logging failures
+- SubDL and SubSource API keys now properly redacted in debug logs to prevent credential exposure in debug logs
 
 ## SubMaker 1.2.3
 

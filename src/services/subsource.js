@@ -663,7 +663,7 @@ class SubSourceService {
           contentType.includes('application/x-zip')) {
         // Handle ZIP file
         const JSZip = require('jszip');
-        console.log('[SubSource] Detected ZIP file format (checking contents)');
+        log.debug(() => '[SubSource] Detected ZIP file format (checking contents)');
         const zip = await JSZip.loadAsync(responseBuffer, { base64: false });
 
         const entries = Object.keys(zip.files);

@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 const { toISO6391, toISO6392 } = require('../utils/languages');
 const { handleSearchError, handleDownloadError, handleAuthError } = require('../utils/apiErrorHandler');
 const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
@@ -7,6 +8,70 @@ const log = require('../utils/logger');
 
 const OPENSUBTITLES_API_URL = 'https://api.opensubtitles.com/api/v1';
 const USER_AGENT = `SubMaker v${version}`;
+
+const AUTH_FAILURE_TTL_MS = 5 * 60 * 1000; // Keep invalid credentials blocked for 5 minutes
+const credentialFailureCache = new Map();
+
+function getCredentialsCacheKey(username, password) {
+  if (!username) {
+    return null;
+  }
+  const normalized = String(username || '').trim().toLowerCase();
+  const secret = `${normalized}:${password || ''}`;
+  return crypto.createHash('sha256').update(secret).digest('hex');
+}
+
+function isAuthenticationFailure(error) {
+  if (!error) {
+    return false;
+  }
+
+  const status = error.response?.status;
+  if (status === 401 || status === 403) {
+    return true;
+  }
+
+  const message = String(error.response?.data?.message || error.message || '').toLowerCase();
+  if (message.includes('invalid username') || message.includes('invalid credentials') || message.includes('usernamepassword')) {
+    return true;
+  }
+
+  return false;
+}
+
+function hasCachedAuthFailure(cacheKey) {
+  if (!cacheKey) {
+    return false;
+  }
+
+  const timestamp = credentialFailureCache.get(cacheKey);
+  if (!timestamp) {
+    return false;
+  }
+
+  if (Date.now() - timestamp > AUTH_FAILURE_TTL_MS) {
+    credentialFailureCache.delete(cacheKey);
+    return false;
+  }
+
+  return true;
+}
+
+function cacheAuthFailure(cacheKey) {
+  if (!cacheKey) {
+    return;
+  }
+
+  credentialFailureCache.set(cacheKey, Date.now());
+}
+
+function clearCachedAuthFailure(cacheKey) {
+  if (!cacheKey) {
+    return;
+  }
+
+  credentialFailureCache.delete(cacheKey);
+}
 
 /**
  * Get OpenSubtitles API key at runtime (not at module load time)
@@ -27,6 +92,8 @@ class OpenSubtitlesService {
       username: config.username || '',
       password: config.password || ''
     };
+
+    this.credentialsCacheKey = getCredentialsCacheKey(this.config.username, this.config.password);
 
     this.token = null;
     this.tokenExpiry = null;
@@ -123,9 +190,13 @@ class OpenSubtitlesService {
       this.tokenExpiry = Date.now() + (24 * 60 * 60 * 1000);
 
       log.debug(() => '[OpenSubtitles] User authentication successful');
+      clearCachedAuthFailure(this.credentialsCacheKey);
       return this.token;
 
     } catch (error) {
+      if (isAuthenticationFailure(error)) {
+        cacheAuthFailure(this.credentialsCacheKey);
+      }
       return handleAuthError(error, 'OpenSubtitles');
     }
   }
@@ -136,6 +207,10 @@ class OpenSubtitlesService {
    */
   async login() {
     if (this.config.username && this.config.password) {
+      if (hasCachedAuthFailure(this.credentialsCacheKey)) {
+        log.warn(() => '[OpenSubtitles] Authentication blocked: cached invalid credentials detected');
+        return null;
+      }
       return await this.loginWithCredentials(this.config.username, this.config.password);
     }
     // No credentials provided, use basic API access
@@ -158,6 +233,13 @@ class OpenSubtitlesService {
       if (!this.config.username || !this.config.password) {
         log.error(() => '[OpenSubtitles] Username and password are required. Please configure your OpenSubtitles credentials.');
         return [];
+      }
+
+      if (hasCachedAuthFailure(this.credentialsCacheKey)) {
+        const authErr = new Error('OpenSubtitles authentication failed: invalid username/password');
+        authErr.statusCode = 401;
+        authErr.authError = true;
+        throw authErr;
       }
 
       if (this.isTokenExpired()) {
@@ -293,6 +375,12 @@ class OpenSubtitlesService {
       if (!this.config.username || !this.config.password) {
         log.error(() => '[OpenSubtitles] Username and password are required. Please configure your OpenSubtitles credentials.');
         throw new Error('OpenSubtitles credentials not configured');
+      }
+
+      if (hasCachedAuthFailure(this.credentialsCacheKey)) {
+        const authErr = new Error('OpenSubtitles authentication failed: invalid username/password');
+        authErr.statusCode = 401;
+        throw authErr;
       }
 
       if (this.isTokenExpired()) {

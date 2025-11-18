@@ -298,7 +298,80 @@ function serializeError(error, maxStackLines = 5) {
 }
 
 /**
+ * Redact sensitive data from strings (API keys, tokens, passwords)
+ * @param {string} str - String to redact
+ * @returns {string} - Redacted string
+ */
+function redactString(str) {
+    if (typeof str !== 'string') return str;
+
+    // Redact common patterns while preserving first/last few characters for debugging
+    // This helps identify which key is being used without exposing the full value
+
+    // Pattern 1: Long alphanumeric strings (likely API keys) - show first 4 and last 4 chars
+    // Examples: "3RHZ9E7RfT8c8hu1MKeZVnYpvqmqNh17" -> "3RHZ...Nh17"
+    //           "sk_91b064e5fed15240c1b655eb7ce..." -> "sk_9...7ce..."
+    str = str.replace(/\b([a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]{8,}([a-zA-Z0-9_-]{4})\b/g, '$1...[REDACTED]...$2');
+
+    // Pattern 2: JWT tokens (three base64 segments separated by dots)
+    str = str.replace(/\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, 'eyJ...[REDACTED JWT TOKEN]');
+
+    // Pattern 3: Bearer tokens in Authorization headers
+    str = str.replace(/(Bearer\s+)([^\s]+)/gi, '$1[REDACTED]');
+
+    return str;
+}
+
+/**
+ * Redact sensitive data from any value (string, object, array)
+ * @param {*} value - Value to redact
+ * @returns {*} - Redacted value (same type as input)
+ */
+function redactSensitiveData(value) {
+    // Handle primitives
+    if (value === null || value === undefined) return value;
+    if (typeof value === 'string') return redactString(value);
+    if (typeof value === 'number' || typeof value === 'boolean') return value;
+
+    // Handle arrays
+    if (Array.isArray(value)) {
+        return value.map(item => redactSensitiveData(item));
+    }
+
+    // Handle objects
+    if (typeof value === 'object') {
+        const redacted = {};
+        for (const [key, val] of Object.entries(value)) {
+            // List of sensitive keys that should be fully redacted
+            const sensitiveKeys = [
+                'api_key', 'apiKey', 'apikey', 'API_KEY',
+                'token', 'auth_token', 'authToken', 'access_token', 'accessToken',
+                'password', 'passwd', 'pwd',
+                'secret', 'client_secret', 'clientSecret',
+                'private_key', 'privateKey',
+                'authorization', 'Authorization'
+            ];
+
+            if (sensitiveKeys.includes(key)) {
+                // Show only first 4 chars for debugging, rest is redacted
+                if (typeof val === 'string' && val.length > 4) {
+                    redacted[key] = val.substring(0, 4) + '...[REDACTED]';
+                } else {
+                    redacted[key] = '[REDACTED]';
+                }
+            } else {
+                redacted[key] = redactSensitiveData(val);
+            }
+        }
+        return redacted;
+    }
+
+    return value;
+}
+
+/**
  * Create a JSON replacer that prevents logging of large/circular objects
+ * and redacts sensitive data
  * @param {number} maxDepth - Maximum object nesting depth
  * @param {number} maxStringLength - Maximum string length before truncation
  * @returns {Function} - JSON replacer function
@@ -308,6 +381,23 @@ function createSafeReplacer(maxDepth = 3, maxStringLength = 500) {
     let depth = 0;
 
     return function(key, value) {
+        // Redact sensitive keys (API keys, tokens, passwords, etc.)
+        const sensitiveKeys = [
+            'api_key', 'apiKey', 'apikey', 'API_KEY',
+            'token', 'auth_token', 'authToken', 'access_token', 'accessToken',
+            'password', 'passwd', 'pwd',
+            'secret', 'client_secret', 'clientSecret',
+            'private_key', 'privateKey',
+            'authorization', 'Authorization'
+        ];
+
+        if (sensitiveKeys.includes(key)) {
+            if (typeof value === 'string' && value.length > 4) {
+                return value.substring(0, 4) + '...[REDACTED]';
+            }
+            return '[REDACTED]';
+        }
+
         // Skip known problematic/large objects that bloat logs
         const skipKeys = [
             'request',      // Axios request object (huge)
@@ -345,10 +435,15 @@ function createSafeReplacer(maxDepth = 3, maxStringLength = 500) {
             depth++;
         }
 
-        // Truncate long strings (like response bodies, large buffers)
-        if (typeof value === 'string' && value.length > maxStringLength) {
-            return value.substring(0, maxStringLength) +
-                   `... (${value.length - maxStringLength} more characters)`;
+        // Redact sensitive data from strings
+        if (typeof value === 'string') {
+            // Truncate long strings (like response bodies, large buffers)
+            if (value.length > maxStringLength) {
+                const truncated = value.substring(0, maxStringLength) +
+                       `... (${value.length - maxStringLength} more characters)`;
+                return redactString(truncated);
+            }
+            return redactString(value);
         }
 
         // Truncate buffers
@@ -549,6 +644,7 @@ module.exports = {
     warn,
     error,
     shutdownLogger,
+    redactSensitiveData,
     // Legacy export for backward compatibility
     log: { debug, info, warn, error }
 };

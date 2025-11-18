@@ -149,13 +149,22 @@ function logApiError(error, serviceName, operation, options = {}) {
 
 /**
  * Handle API error for search operations (returns empty array)
+ * For authentication errors with authError flag, rethrows the error so callers can react
  * @param {Error} error - The error object
  * @param {string} serviceName - Name of the service
  * @param {Object} options - Additional options
  * @returns {Array} - Empty array
+ * @throws {Error} - Rethrows if error has authError flag set
  */
 function handleSearchError(error, serviceName, options = {}) {
   logApiError(error, serviceName, 'Search', options);
+
+  // Rethrow authentication errors so calling code can handle them specially
+  // (e.g., to show warning subtitles to users)
+  if (error && error.authError === true) {
+    throw error;
+  }
+
   return [];
 }
 
