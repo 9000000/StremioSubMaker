@@ -907,9 +907,11 @@ class SubSourceService {
           }
 
           // Try library conversion first (to VTT)
+          let converted = null;
+          let conversionError = null;
+
           try {
             const subsrt = require('subsrt-ts');
-            let converted;
             if (lower.endsWith('.ass')) {
               converted = subsrt.convert(raw, { to: 'vtt', from: 'ass' });
             } else if (lower.endsWith('.ssa')) {
@@ -930,18 +932,32 @@ class SubSourceService {
                 }
               }
             }
+          } catch (convErr) {
+            conversionError = convErr;
+            log.error(() => ['[SubSource] Failed to convert to .vtt:', convErr.message, 'file:', altEntry]);
+          }
 
-            if (converted && typeof converted === 'string' && converted.trim().length > 0) {
+          // Validate library conversion result
+          if (converted && typeof converted === 'string' && converted.trim().length > 0) {
+            // Validate that the converted VTT actually has subtitle content (timing cues)
+            // A valid VTT should have lines like "00:00:00.000 --> 00:00:10.000"
+            const hasTimingCues = /\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[.,]\d{3}/.test(converted);
+
+            if (hasTimingCues) {
               log.debug(() => `[SubSource] Converted ${altEntry} to .vtt successfully`);
               return converted;
+            } else {
+              log.warn(() => `[SubSource] Converted VTT has no timing cues (only ${converted.length} bytes), trying manual parser`);
             }
-            throw new Error('Conversion to VTT resulted in empty output');
-          } catch (convErr) {
-            log.error(() => ['[SubSource] Failed to convert to .vtt:', convErr.message, 'file:', altEntry]);
+          } else if (conversionError) {
+            log.warn(() => `[SubSource] Library conversion failed, trying manual parser`);
+          } else {
+            log.warn(() => `[SubSource] Library conversion resulted in empty output, trying manual parser`);
+          }
 
-            // Manual fallback for common ASS/SSA formats
-            try {
-              const manual = (function assToVttFallback(input) {
+          // Manual fallback for common ASS/SSA formats
+          try {
+            const manual = (function assToVttFallback(input) {
                 if (!input || !/\[events\]/i.test(input)) return null;
                 const lines = input.split(/\r?\n/);
                 let format = [];
@@ -1007,13 +1023,12 @@ class SubSourceService {
                 return out.join('\n');
               })(raw);
 
-              if (manual && manual.trim().length > 0) {
-                log.debug(() => `[SubSource] Fallback converted ${altEntry} to .vtt successfully (manual parser)`);
-                return manual;
-              }
-            } catch (fallbackErr) {
-              log.error(() => ['[SubSource] Manual ASS/SSA fallback failed:', fallbackErr.message, 'file:', altEntry]);
+            if (manual && manual.trim().length > 0) {
+              log.debug(() => `[SubSource] Fallback converted ${altEntry} to .vtt successfully (manual parser)`);
+              return manual;
             }
+          } catch (fallbackErr) {
+            log.error(() => ['[SubSource] Manual ASS/SSA fallback failed:', fallbackErr.message, 'file:', altEntry]);
           }
         }
 
