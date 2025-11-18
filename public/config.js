@@ -53,16 +53,16 @@ Translate to {target_language}.`;
      */
     const MODEL_SPECIFIC_DEFAULTS = {
         'gemini-2.5-flash-lite-preview-09-2025': {
-            thinkingBudget: 0,      // No thinking for lite model
-            temperature: 0.7        // Balanced temperature for quality and creativity
+            thinkingBudget: 0,
+            temperature: 0.7
         },
         'gemini-2.5-flash-preview-09-2025': {
-            thinkingBudget: -1,     // Dynamic thinking for flash model
-            temperature: 0.5        // Lower temperature for consistency
+            thinkingBudget: -1,
+            temperature: 0.5
         },
         'gemini-2.5-pro-preview-05-06': {
-            thinkingBudget: -1,     // Dynamic thinking for pro model
-            temperature: 0.5        // Lower temperature for consistency
+            thinkingBudget: -1,
+            temperature: 0.5
         }
     };
 
