@@ -18,6 +18,35 @@ const log = require('../utils/logger');
 const SUBSOURCE_API_URL = 'https://api.subsource.net/api/v1';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+/**
+ * Create an informative SRT subtitle when an episode is not found in a season pack
+ * @param {number} episode - Episode number that was not found
+ * @param {number} season - Season number
+ * @param {Array<string>} availableFiles - List of files that were found in the pack
+ * @returns {string} - SRT subtitle content
+ */
+function createEpisodeNotFoundSubtitle(episode, season, availableFiles = []) {
+  const seasonEpisodeStr = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
+
+  // Try to extract episode numbers from available files to help user
+  const foundEpisodes = availableFiles
+    .map(filename => {
+      // Match common episode patterns
+      const match = filename.match(/(?:episode|ep|e|oad|ova)\s*(\d+)/i);
+      return match ? parseInt(match[1]) : null;
+    })
+    .filter(ep => ep !== null)
+    .sort((a, b) => a - b);
+
+  const availableInfo = foundEpisodes.length > 0
+    ? `\nAvailable: Episodes ${foundEpisodes.join(', ')}`
+    : '';
+
+  return `1
+00:00:00,000 --> 04:00:00,000
+Episode ${seasonEpisodeStr} not found in this subtitle pack.${availableInfo}`;
+}
+
 class SubSourceService {
   constructor(apiKey = null) {
     this.apiKey = apiKey;
@@ -813,9 +842,10 @@ class SubSourceService {
             if (targetEntry) {
               log.debug(() => `[SubSource] Found episode file using TV show patterns: ${targetEntry}`);
             } else {
-              log.error(() => `[SubSource] Could not find episode ${seasonPackEpisode} (S${String(seasonPackSeason).padStart(2, '0')}E${String(seasonPackEpisode).padStart(2, '0')}) in season pack ZIP`);
-              log.error(() => `[SubSource] Available files: ${entries.join(', ')}`);
-              throw new Error(`Episode ${seasonPackEpisode} not found in season pack`);
+              log.warn(() => `[SubSource] Could not find episode ${seasonPackEpisode} (S${String(seasonPackSeason).padStart(2, '0')}E${String(seasonPackEpisode).padStart(2, '0')}) in season pack ZIP`);
+              log.warn(() => `[SubSource] Available files: ${entries.join(', ')}`);
+              // Return informative subtitle instead of throwing error
+              return createEpisodeNotFoundSubtitle(seasonPackEpisode, seasonPackSeason, entries);
             }
           }
         } else {

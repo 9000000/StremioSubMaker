@@ -8,6 +8,35 @@ const log = require('../utils/logger');
 const SUBDL_API_URL = 'https://api.subdl.com/api/v1';
 const USER_AGENT = 'StremioSubtitleTranslator v1.0';
 
+/**
+ * Create an informative SRT subtitle when an episode is not found in a season pack
+ * @param {number} episode - Episode number that was not found
+ * @param {number} season - Season number
+ * @param {Array<string>} availableFiles - List of files that were found in the pack
+ * @returns {string} - SRT subtitle content
+ */
+function createEpisodeNotFoundSubtitle(episode, season, availableFiles = []) {
+  const seasonEpisodeStr = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
+
+  // Try to extract episode numbers from available files to help user
+  const foundEpisodes = availableFiles
+    .map(filename => {
+      // Match common episode patterns
+      const match = filename.match(/(?:episode|ep|e|oad|ova)\s*(\d+)/i);
+      return match ? parseInt(match[1]) : null;
+    })
+    .filter(ep => ep !== null)
+    .sort((a, b) => a - b);
+
+  const availableInfo = foundEpisodes.length > 0
+    ? `\nAvailable: Episodes ${foundEpisodes.join(', ')}`
+    : '';
+
+  return `1
+00:00:00,000 --> 04:00:00,000
+Episode ${seasonEpisodeStr} not found in this subtitle pack.${availableInfo}`;
+}
+
 class SubDLService {
   constructor(apiKey = null) {
     this.apiKey = apiKey;
@@ -492,9 +521,10 @@ class SubDLService {
           if (targetEntry) {
             log.debug(() => `[SubDL] Found episode file using TV show patterns: ${targetEntry}`);
           } else {
-            log.error(() => `[SubDL] Could not find episode ${seasonPackEpisode} (S${String(seasonPackSeason).padStart(2, '0')}E${String(seasonPackEpisode).padStart(2, '0')}) in season pack ZIP`);
-            log.error(() => `[SubDL] Available files: ${entries.join(', ')}`);
-            throw new Error(`Episode ${seasonPackEpisode} not found in season pack`);
+            log.warn(() => `[SubDL] Could not find episode ${seasonPackEpisode} (S${String(seasonPackSeason).padStart(2, '0')}E${String(seasonPackEpisode).padStart(2, '0')}) in season pack ZIP`);
+            log.warn(() => `[SubDL] Available files: ${entries.join(', ')}`);
+            // Return informative subtitle instead of throwing error
+            return createEpisodeNotFoundSubtitle(seasonPackEpisode, seasonPackSeason, entries);
           }
         }
       } else {
