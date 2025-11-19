@@ -702,78 +702,45 @@ app.post('/api/gemini-models', async (req, res) => {
 
 app.post('/api/validate-subsource', async (req, res) => {
     try {
-        const { apiKey } = req.body;
+        const { apiKey } = req.body || {};
 
-        if (!apiKey) {
+        if (!apiKey || !String(apiKey).trim()) {
             return res.status(400).json({
                 valid: false,
                 error: 'API key is required'
             });
         }
 
-        const axios = require('axios');
-        const { httpAgent, httpsAgent } = require('./src/utils/httpAgents');
-
-        // Make direct API call to test the key
-        // First get movie ID
-        const searchUrl = 'https://api.subsource.net/api/v1/movies/search?searchType=imdb&imdb=tt0133093';
+        // Reuse the dedicated SubSourceService which already
+        // sets all required headers, agents, DNS cache, and timeouts.
+        const SubSourceService = require('./src/services/subsource');
+        const subsource = new SubSourceService(String(apiKey).trim());
 
         try {
-            const movieResponse = await axios.get(searchUrl, {
-                headers: {
-                    'X-API-Key': apiKey.trim(),
-                    'api-key': apiKey.trim(),
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                },
-                timeout: 10000,
-                httpAgent,
-                httpsAgent
+            // A single lightweight movie search is enough to validate the key
+            // (The Matrix — imdb: tt0133093). This uses the service's axios client
+            // and inherits robust headers and a ~7s timeout with retries.
+            const resp = await subsource.client.get('/movies/search', {
+                params: { searchType: 'imdb', imdb: 'tt0133093' },
+                responseType: 'json'
             });
 
-            const movies = Array.isArray(movieResponse.data) ? movieResponse.data : (movieResponse.data.data || []);
+            const movies = Array.isArray(resp.data) ? resp.data : (resp.data?.data || []);
 
-            if (movies.length > 0) {
-                const movieId = movies[0].id || movies[0].movieId;
-
-                // Try to fetch subtitles with the movie ID
-                const subtitlesUrl = `https://api.subsource.net/api/v1/subtitles?movieId=${movieId}&language=english`;
-                const subtitlesResponse = await axios.get(subtitlesUrl, {
-                    headers: {
-                        'X-API-Key': apiKey.trim(),
-                        'api-key': apiKey.trim(),
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                    },
-                    timeout: 10000,
-                    httpAgent,
-                    httpsAgent
-                });
-
-                // If we got here without errors, API key is valid
-                const subtitles = Array.isArray(subtitlesResponse.data) ? subtitlesResponse.data : (subtitlesResponse.data.subtitles || subtitlesResponse.data.data || []);
-
-                res.json({
-                    valid: true,
-                    message: 'API key is valid',
-                    resultsCount: subtitles.length
-                });
-            } else {
-                // No movies found, but API key worked (no auth error)
-                res.json({
-                    valid: true,
-                    message: 'API key is valid',
-                    resultsCount: 0
-                });
-            }
+            return res.json({
+                valid: true,
+                message: 'API key is valid',
+                resultsCount: movies.length || 0
+            });
         } catch (apiError) {
-            // Check for authentication errors
-            if (apiError.response?.status === 401 || apiError.response?.status === 403) {
-                res.json({
-                    valid: false,
-                    error: 'Invalid API key - authentication failed'
-                });
-            } else {
-                throw apiError;
+            const status = apiError.response?.status;
+            if (status === 401 || status === 403) {
+                return res.json({ valid: false, error: 'Invalid API key - authentication failed' });
             }
+
+            // Surface a concise message
+            const upstream = apiError.response?.data?.error || apiError.response?.data?.message;
+            return res.json({ valid: false, error: upstream || apiError.message || 'Request failed' });
         }
     } catch (error) {
         res.json({
@@ -1492,6 +1459,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
             if (partialCached && typeof partialCached.content === 'string' && partialCached.content.length > 0) {
                 log.debug(() => `[Translation] Found in-flight partial in partial cache for ${sourceFileId} (${partialCached.content.length} chars)`);
                 res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                res.setHeader('Content-Disposition', `attachment; filename="translating_${targetLang}.srt"`);
                 res.setHeader('Cache-Control', 'no-cache, must-revalidate');
                 res.setHeader('Pragma', 'no-cache');
                 return res.send(partialCached.content);
@@ -1505,6 +1473,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
             if (bypassCached && typeof bypassCached.content === 'string' && bypassCached.content.length > 0) {
                 log.debug(() => `[Translation] Found bypass cache result for ${sourceFileId} (${bypassCached.content.length} chars)`);
                 res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                res.setHeader('Content-Disposition', `attachment; filename="translated_${targetLang}.srt"`);
                 res.setHeader('Cache-Control', 'no-cache, must-revalidate');
                 res.setHeader('Pragma', 'no-cache');
                 return res.send(bypassCached.content);
@@ -1514,6 +1483,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
             log.debug(() => `[Translation] No partial found yet, serving loading message to duplicate request for ${sourceFileId}`);
             const loadingMsg = createLoadingSubtitle();
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="translating_${targetLang}.srt"`);
             res.setHeader('Cache-Control', 'no-cache, must-revalidate');
             res.setHeader('Pragma', 'no-cache');
             return res.send(loadingMsg);
@@ -1540,16 +1510,15 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', searchLimiter, val
         log.debug(() => `[Translation] Serving ${isLoadingMessage ? 'loading message' : 'translated content'} for ${sourceFileId} (was duplicate: ${isAlreadyInFlight})`);
         log.debug(() => `[Translation] Content length: ${subtitleContent.length} characters, first 200 chars: ${subtitleContent.substring(0, 200)}`);
 
-        // Don't use 'attachment' for loading messages - we want them to display inline
+        // Always use 'attachment' header for Android compatibility
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${isLoadingMessage ? 'translating' : 'translated'}_${targetLang}.srt"`);
 
         // Disable caching for loading messages so Stremio can poll for updates
         if (isLoadingMessage) {
             res.setHeader('Cache-Control', 'no-cache, must-revalidate');
             res.setHeader('Pragma', 'no-cache');
             log.debug(() => `[Translation] Set no-cache headers for loading message`);
-        } else {
-            res.setHeader('Content-Disposition', `attachment; filename="translated_${targetLang}.srt"`);
         }
 
         res.send(subtitleContent);

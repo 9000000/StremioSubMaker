@@ -105,6 +105,33 @@
             background: rgba(20, 25, 49, 0.85);
         }
 
+        /* Dark mode modal + components tuning */
+        [data-theme="dark"] .modal {
+            background:
+                linear-gradient(180deg, rgba(20, 25, 49, 0.92) 0%, rgba(20, 25, 49, 0.86) 100%),
+                var(--surface);
+            border-color: var(--border);
+            box-shadow: 0 24px 72px var(--shadow), 0 0 0 1px rgba(8, 164, 213, 0.12);
+        }
+        [data-theme="dark"] .modal-header {
+            background: linear-gradient(135deg, rgba(8, 164, 213, 0.06) 0%, rgba(51, 185, 225, 0.06) 100%);
+            border-bottom-color: var(--border);
+        }
+        [data-theme="dark"] .modal-footer {
+            background: var(--surface);
+            border-top-color: var(--border);
+        }
+        [data-theme="dark"] .reset-bar {
+            background: var(--surface);
+            border-color: var(--border);
+            box-shadow: 0 8px 24px var(--shadow);
+        }
+        [data-theme="dark"] .alert-info {
+            background: rgba(8, 164, 213, 0.16);
+            border-color: var(--primary);
+            color: var(--primary-light);
+        }
+
         [data-theme="dark"] input[type="text"],
         [data-theme="dark"] input[type="password"],
         [data-theme="dark"] select {
@@ -122,6 +149,18 @@
             background: rgba(20, 25, 49, 0.9);
             color: var(--text-primary);
             border-color: var(--border);
+        }
+
+        /* Dark/True Dark overrides for ghost hint color */
+        [data-theme="dark"] .ghost-hint .ghost-cta,
+        [data-theme="true-dark"] .ghost-hint .ghost-cta {
+            color: #ffffff;
+            mix-blend-mode: screen;
+        }
+        [data-theme="dark"] .ghost-hint .ghost-arrow,
+        [data-theme="true-dark"] .ghost-hint .ghost-arrow {
+            color: #ffffff;
+            mix-blend-mode: screen;
         }
 
         /* Fix radio button label backgrounds in dark mode */
@@ -153,6 +192,33 @@
 
         [data-theme="true-dark"] .card {
             background: rgba(10, 10, 10, 0.95);
+        }
+
+        /* True Dark mode modal + components tuning */
+        [data-theme="true-dark"] .modal {
+            background:
+                linear-gradient(180deg, rgba(10, 10, 10, 0.92) 0%, rgba(10, 10, 10, 0.86) 100%),
+                var(--surface);
+            border-color: var(--border);
+            box-shadow: 0 28px 84px var(--shadow), 0 0 0 1px rgba(8, 164, 213, 0.14);
+        }
+        [data-theme="true-dark"] .modal-header {
+            background: linear-gradient(135deg, rgba(8, 164, 213, 0.05) 0%, rgba(51, 185, 225, 0.05) 100%);
+            border-bottom-color: var(--border);
+        }
+        [data-theme="true-dark"] .modal-footer {
+            background: var(--surface);
+            border-top-color: var(--border);
+        }
+        [data-theme="true-dark"] .reset-bar {
+            background: var(--surface);
+            border-color: var(--border);
+            box-shadow: 0 10px 28px var(--shadow);
+        }
+        [data-theme="true-dark"] .alert-info {
+            background: rgba(8, 164, 213, 0.18);
+            border-color: var(--primary);
+            color: #d6f3ff;
         }
 
         [data-theme="true-dark"] input[type="text"],
@@ -744,6 +810,16 @@
             transform: none !important;
         }
 
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.12);
+            color: var(--danger);
+            border: 2px solid var(--danger);
+        }
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.18);
+            box-shadow: 0 10px 28px rgba(239, 68, 68, 0.25);
+        }
+
         .btn-group {
             display: flex;
             gap: 1rem;
@@ -1092,6 +1168,46 @@
             }
         }
 
+        /* Reset bar */
+        .reset-bar {
+            margin: 0;
+            padding: 1rem 1.25rem;
+            border: 2px dashed var(--border);
+            border-radius: 14px;
+            background: var(--surface);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            width: 100%;
+            max-width: 450px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .reset-bar .reset-text {
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .reset-btn {
+            appearance: none;
+            border: 2px solid var(--danger);
+            background: transparent;
+            color: var(--danger);
+            padding: 0.625rem 1rem;
+            border-radius: 10px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+        }
+        .reset-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 28px var(--shadow);
+            background: rgba(239, 68, 68, 0.08);
+        }
+        .reset-btn:active { transform: translateY(0); }
+
+        /* (JS positions reset bar vertically in the gap) */
+
         /* Disabled file translation option */
         #fileTranslationEnabled:disabled {
             cursor: not-allowed;
@@ -1127,11 +1243,11 @@
             pointer-events: auto;
             background: transparent;
             border: none;
-            color: #ffffff; /* white to blend on any bg */
-            mix-blend-mode: screen; /* blend with background */
+            color: #000000; /* light mode: black for readability */
+            mix-blend-mode: normal;
             padding: 0.05rem 0.25rem; /* even tighter */
             border-radius: 6px;
-            font-size: 10px; /* compact and crisper */
+            font-size: 12px; /* +2px bigger */
             line-height: 1; /* reduce vertical footprint */
             font-family: 'Tiny5', 'Silkscreen', 'VT323', 'Press Start 2P', 'Courier New', monospace; /* retro, less wide */
             font-weight: 400; /* lighter to reduce blur */
@@ -1154,7 +1270,7 @@
         .ghost-hint .ghost-arrow {
             font-size: 0.95rem;
             line-height: 1;
-            color: var(--text-secondary);
+            color: #000000; /* light mode: black */
             animation: arrowPulse 1.6s ease-in-out infinite;
         }
 
@@ -1197,34 +1313,89 @@
             display: flex;
         }
 
+        /* Fly-out animation for instructions modal */
+        .modal-overlay.fly-out {
+            animation: fadeOut 0.52s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            pointer-events: none;
+        }
+        .modal-overlay.fly-out .modal {
+            animation: flyToCorner 0.52s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+            transform-origin: center center;
+        }
+
         .modal {
-            background: var(--bg-secondary);
-            border-radius: 24px;
-            max-width: 600px;
-            width: 90%;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.75) 100%),
+                var(--bg-secondary);
+            border-radius: 20px;
+            max-width: 640px;
+            width: 92%;
             max-height: 85vh;
             /* Clip scrollbars within rounded corners */
             overflow: hidden;
-            border: 2px solid var(--primary);
-            box-shadow: 0 20px 60px var(--glow), 0 0 0 1px rgba(8, 164, 213, 0.2);
-            animation: modalSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            border: 1px solid var(--border);
+            box-shadow: 0 24px 72px var(--shadow), 0 0 0 1px rgba(8, 164, 213, 0.14);
+            animation: modalSlideIn 0.42s cubic-bezier(0.22, 1, 0.36, 1);
             position: relative;
             display: flex;
             flex-direction: column;
+            backdrop-filter: blur(10px);
         }
 
         .modal-header {
-            padding: 2rem;
-            border-bottom: 2px solid var(--border);
-            background: linear-gradient(135deg, rgba(8, 164, 213, 0.10) 0%, rgba(51, 185, 225, 0.10) 100%);
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(135deg, rgba(8, 164, 213, 0.08) 0%, rgba(51, 185, 225, 0.08) 100%);
             position: sticky;
             top: 0;
             z-index: 1;
             backdrop-filter: blur(10px);
         }
 
+        /* Instructions mini floating button (FAB) */
+        .instructions-fab {
+            position: fixed;
+            bottom: 1.25rem;
+            right: 1.25rem;
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            border: 2px solid var(--border);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: #ffffff;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            box-shadow: 0 12px 36px var(--glow);
+            z-index: 10001;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+            animation: fabPulse 2.2s ease-in-out infinite;
+        }
+        .instructions-fab:hover {
+            transform: translateY(-2px) scale(1.03);
+            box-shadow: 0 18px 48px var(--glow);
+        }
+        .instructions-fab.show { display: flex; }
+
+        /* Animations for overlay fade and fly trajectory */
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+        @keyframes flyToCorner {
+            0%   { transform: translate(0, 0) scale(1);    opacity: 1; }
+            60%  { transform: translate(calc(28vw - 28px), calc(26vh)) scale(0.55); opacity: 0.98; }
+            100% { transform: translate(calc(40vw - 40px), calc(40vh)) scale(0.2); opacity: 0.95; }
+        }
+        @keyframes fabPulse {
+            0%, 100% { box-shadow: 0 12px 36px var(--glow); opacity: 0.95; }
+            50% { box-shadow: 0 18px 64px var(--glow); opacity: 1; }
+        }
+
         .modal-header h2 {
-            font-size: 1.75rem;
+            font-size: 1.5rem;
             font-weight: 700;
             background: linear-gradient(135deg, var(--primary-light) 0%, var(--secondary) 100%);
             -webkit-background-clip: text;
@@ -1243,7 +1414,7 @@
             width: 36px;
             height: 36px;
             background: var(--surface-light);
-            border: 2px solid var(--border);
+            border: 1px solid var(--border);
             border-radius: 8px;
             display: flex;
             align-items: center;
@@ -1262,7 +1433,7 @@
         }
 
         .modal-content {
-            padding: 2rem;
+            padding: 1.5rem;
             text-align: center;
             /* Make only content area scrollable */
             overflow: auto;
@@ -1319,8 +1490,8 @@
         }
 
         .modal-footer {
-            padding: 1.5rem 2rem;
-            border-top: 2px solid var(--border);
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border);
             display: flex;
             gap: 1rem;
             justify-content: flex-end;
@@ -2220,6 +2391,12 @@
                 <input type="text" id="installUrlDisplay" readonly>
             </div>
         </form>
+
+        <!-- Full Reset CTA (positioned vertically by JS) -->
+        <div id="resetBarWrapper" class="reset-bar">
+            <div class="reset-text">Any problems? Reset settings to default →</div>
+            <button type="button" id="resetSettingsBtn" class="reset-btn">Reset</button>
+        </div>
     </div>
 
     <footer class="footer">
@@ -2247,11 +2424,16 @@
         Press <span class="kbd">?</span> for keyboard shortcuts
     </div>
 
+    <!-- Instructions Mini-FAB (appears after auto-collapse) -->
+    <button class="instructions-fab" id="instructionsFab" aria-label="Info" title="Info">
+        ℹ️
+    </button>
+
     <!-- Main Instructions Modal -->
     <div class="modal-overlay" id="instructionsModal">
         <div class="modal">
             <div class="modal-header">
-                <h2>📖 How to Use SubMaker</h2>
+                <h2>ℹ️ How to Use SubMaker</h2>
                 <div class="modal-close" id="closeInstructionsBtn">×</div>
             </div>
             <div class="modal-content">
@@ -2273,7 +2455,11 @@
                 <p>When a subtitle is clicked within the "Make" translation lists, it'll start translation.<br>
 		After 20-30 seconds, reload the same subtitle entry.<br>
                 It'll load <strong>translated</strong>!</p>
-                <p>-<br>
+                <div class="highlight-box" style="margin-top: 0.75rem; text-align: left;">
+                    <strong>Quick Tip:</strong> If a translation looks off or broken, quickly triple‑click that subtitle in the list to force a fresh re‑translation.
+                </div>
+
+                <p style="margin-top: 0.75rem;">
 		<b>PS:</b>
 		Partial translation is delivered in batches so you can start watching almost instantly.<br>
                 Complete translation may take from <strong>30 seconds-5 minutes</strong> depending on movie/episode length.</p>
@@ -2321,6 +2507,27 @@
                 <button type="button" class="btn btn-primary" id="gotItFileTranslationBtn">
                     Got it!
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reset Confirmation Modal -->
+    <div class="modal-overlay" id="resetConfirmModal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="resetConfirmTitle">
+            <div class="modal-header">
+                <h2 id="resetConfirmTitle">🧹 Reset All Settings</h2>
+                <div class="modal-close" id="closeResetConfirmBtn">×</div>
+            </div>
+            <div class="modal-content">
+                <p><strong>This will reset literally everything for this site:</strong></p>
+                <p>- Local storage, session storage, cached config and tokens</p>
+                <p>- Service worker and all caches</p>
+                <p>- Any site data stored by this app</p>
+                <p style="margin-top: 0.75rem;">The page will reload afterward.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="cancelResetBtn">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmResetBtn">Reset Everything</button>
             </div>
         </div>
     </div>
