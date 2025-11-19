@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 **Improvements:**
 
 - Version-aware config migration on app update: resets model and advanced settings to defaults while preserving API keys, provider toggles, source/target languages, and Other Settings. Ensures new/removed config fields are immediately reflected after version change.
+- Subtitles ranking improvements for all sources
+- Many config page improvements
 
 **Bug Fixes:**
 
