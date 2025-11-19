@@ -8,6 +8,8 @@
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="shortcut icon" href="favicon.svg">
     <link rel="apple-touch-icon" href="favicon.svg">
+    <!-- Retro fonts for ghost hint -->
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=Tiny5&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -1100,6 +1102,72 @@
             color: var(--text-secondary);
         }
 
+        /* Ghost Hint (Easter Egg) — minimal, delicate */
+        .ghost-hint {
+            position: fixed;
+            left: 50%; /* JS will reposition near heart */
+            top: 60%;
+            transform: translateX(-50%) translateY(6px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.05rem; /* closer to the arrow */
+            opacity: 0;
+            pointer-events: none; /* only inner CTA is clickable */
+            z-index: 1200;
+            transition: opacity 0.45s ease, transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .ghost-hint.show {
+            opacity: 0.75; /* much more visible */
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .ghost-hint .ghost-cta {
+            pointer-events: auto;
+            background: transparent;
+            border: none;
+            color: #ffffff; /* white to blend on any bg */
+            mix-blend-mode: screen; /* blend with background */
+            padding: 0.05rem 0.25rem; /* even tighter */
+            border-radius: 6px;
+            font-size: 10px; /* compact and crisper */
+            line-height: 1; /* reduce vertical footprint */
+            font-family: 'Tiny5', 'Silkscreen', 'VT323', 'Press Start 2P', 'Courier New', monospace; /* retro, less wide */
+            font-weight: 400; /* lighter to reduce blur */
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+            letter-spacing: 0; /* reduce wide spacing for retro font */
+            text-transform: none;
+            cursor: pointer;
+            user-select: none;
+            transition: transform 0.15s ease, opacity 0.2s ease;
+            animation: ghostFloat 3.2s ease-in-out infinite;
+        }
+
+        .ghost-hint .ghost-cta:hover {
+            transform: translateY(-1px);
+            opacity: 0.6;
+        }
+
+        .ghost-hint .ghost-arrow {
+            font-size: 0.95rem;
+            line-height: 1;
+            color: var(--text-secondary);
+            animation: arrowPulse 1.6s ease-in-out infinite;
+        }
+
+        @keyframes ghostFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-2px); }
+        }
+
+        @keyframes arrowPulse {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(2px); }
+        }
+
         label:has(#fileTranslationEnabled:disabled) {
             opacity: 0.6;
             cursor: not-allowed;
@@ -2164,6 +2232,12 @@
             </p>
         </div>
     </footer>
+
+    <!-- Ghost Hint (Easter Egg tooltip) -->
+    <div class="ghost-hint" id="ghostHint" aria-hidden="true">
+        <div class="ghost-cta" id="ghostHintBtn" title="Opens experimental settings">click here</div>
+        <div class="ghost-arrow" aria-hidden="true">⬇</div>
+    </div>
 
     <div class="loading-overlay" id="loadingOverlay">
         <div class="spinner"></div>

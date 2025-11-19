@@ -915,6 +915,83 @@ Translate to {target_language}.`;
             });
         }
 
+        // Ghost hint: appears near footer when user reaches bottom
+        const ghostHint = document.getElementById('ghostHint');
+        const ghostHintBtn = document.getElementById('ghostHintBtn');
+        const footerEl = document.querySelector('.footer');
+        const advancedCard = document.getElementById('advancedSettingsCard');
+        let ghostTimer = null;
+
+        function positionGhostAtHeart() {
+            if (!ghostHint) return;
+            const heart = document.getElementById('secretHeart');
+            const rect = heart ? heart.getBoundingClientRect() : null;
+            if (rect && rect.width > 0 && rect.height > 0) {
+                const cx = Math.round(rect.left + rect.width / 2); // align to whole pixels
+                const top = Math.max(10, Math.round(rect.top - 38)); // +3px higher; rounded for crisp text
+                ghostHint.style.left = `${cx}px`;
+                ghostHint.style.top = `${top}px`;
+            } else {
+                // fallback center-bottom area
+                const cx = window.innerWidth / 2;
+                const top = Math.max(10, window.innerHeight - 140);
+                ghostHint.style.left = `${cx}px`;
+                ghostHint.style.top = `${top}px`;
+            }
+        }
+
+        function hideGhost() {
+            if (ghostTimer) { clearTimeout(ghostTimer); ghostTimer = null; }
+            if (ghostHint) ghostHint.classList.remove('show');
+        }
+
+        function showGhostSoon() {
+            if (!ghostHint || !footerEl) return;
+            if (advancedCard && advancedCard.style.display !== 'none') return; // don't show if already revealed
+            if (ghostHint.classList.contains('show')) return;
+            if (ghostTimer) return;
+            ghostTimer = setTimeout(() => {
+                ghostTimer = null;
+                positionGhostAtHeart();
+                ghostHint.classList.add('show');
+                // auto-hide after a bit
+                setTimeout(() => hideGhost(), 8000);
+            }, 900); // appear after just a bit
+        }
+
+        if (ghostHintBtn) {
+            ghostHintBtn.addEventListener('click', () => {
+                // Forward to the heart action and hide hint
+                if (secretHeart) secretHeart.click();
+                hideGhost();
+            });
+        }
+
+        // Reveal on reaching footer
+        if ('IntersectionObserver' in window && footerEl) {
+            const obs = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        positionGhostAtHeart();
+                        showGhostSoon();
+                    } else {
+                        hideGhost();
+                    }
+                });
+            }, { root: null, threshold: 0.15 });
+            obs.observe(footerEl);
+        } else {
+            // Fallback: scroll position check
+            window.addEventListener('scroll', () => {
+                const nearBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 50);
+                if (nearBottom) { positionGhostAtHeart(); showGhostSoon(); } else { hideGhost(); }
+            });
+        }
+
+        // Keep the hint anchored to the heart while visible
+        window.addEventListener('resize', () => { if (ghostHint && ghostHint.classList.contains('show')) positionGhostAtHeart(); });
+        window.addEventListener('scroll', () => { if (ghostHint && ghostHint.classList.contains('show')) positionGhostAtHeart(); }, { passive: true });
+
         // Note: Modal close buttons are handled by delegated event listeners (lines 188-206)
         // No need to attach individual listeners here
     }
