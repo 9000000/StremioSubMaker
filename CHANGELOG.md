@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.6 (unreleased)
+
+**Critical Feature - Automatic Config Regeneration & Session Recovery:**
+
+This release implements comprehensive automatic recovery for corrupted, missing, or expired session configurations, ensuring users never get permanently stuck with broken configs.
+
+- **Automatic session regeneration**: New `/api/get-session/:token?autoRegenerate=true` endpoint automatically generates fresh default sessions when:
+  - Session token is missing or expired from storage
+  - Config payload is corrupted (resolves to `empty_config_00` hash)
+  - Returns regeneration metadata (`regenerated: true`, `reason`, new `token`)
+- **Smart config resolution**: `resolveConfigAsync()` now returns error-flagged default configs instead of creating tokens, preventing token proliferation during page initialization
+- **Error subtitle reinstall links**: Session token errors in Stremio now display direct reinstall links with auto-regenerated tokens for one-click recovery
+- **Config page auto-recovery**: Install page detects regenerated sessions and properly handles localStorage cleanup to prevent token mismatches
+- **Reset button enhancement**: Full reset now requests fresh default token before clearing storage, ensuring clean bootstrap on /configure/{freshToken}
+- **Session validation helper**: `regenerateDefaultConfig()` helper creates fresh default sessions tagged with regeneration metadata for error handlers
+
+**Critical Bug Fixes:**
+
+- **Fixed token mismatch on save after session loss**: Config page was storing regenerated tokens in localStorage during initialization, causing save operations to use a different token than what was installed in Stremio. Now properly clears invalid tokens and forces fresh session creation on save, requiring user to reinstall (expected behavior).
+- **Fixed multiple token creation on page load**: `resolveConfigAsync()` was creating a new token on every invocation when session was missing, leading to dozens of tokens generated during page initialization. Now only `/api/get-session?autoRegenerate=true` creates tokens (called once).
+- **Fixed error subtitle token generation**: Error subtitles now generate one-time tokens for reinstall links only when actually serving the error, not on every config resolution request.
+
+**Session Recovery Flows:**
+
+*Empty/Corrupted Config (`empty_config_00` hash):*
+1. User has corrupted config payload in session storage
+2. `/api/get-session` detects `empty_config_00` hash and auto-regenerates
+3. Config page displays warning and clears localStorage
+4. User reconfigures settings and saves
+5. Creates fresh session with new token
+
+*Missing/Expired Session Token:*
+1. Session token can't be found (deleted, expired, server restart)
+2. Error subtitle in Stremio shows direct reinstall link with fresh token
+3. Config page detects missing session and clears invalid token
+4. User saves → creates new session
+5. Reinstalls addon with new token
+
+**Impact**: Prevents users from being permanently stuck with broken configs after server restarts, session expiration, or storage corruption. Provides clear recovery paths through both Stremio error messages and the configuration page.
+
+---
+
 ## SubMaker v1.4.5 (unreleased)
 
 **Critical Bug Fix - Cloudflare Warp/Workers Cross-User Contamination Prevention:**
