@@ -367,15 +367,27 @@ function normalizeBase64Input(input) {
 
 // Helper: force browsers/proxies to avoid caching sensitive responses
 function setNoStore(res) {
+    // Standard HTTP cache prevention
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private, max-age=0');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     res.setHeader('Surrogate-Control', 'no-store');
-    // Additional headers for aggressive proxy/CDN cache prevention
+
+    // Proxy/CDN cache prevention
     res.setHeader('X-Accel-Expires', '0'); // Nginx proxy cache
-    res.setHeader('Vary', 'Cookie, Authorization, X-Config-Token'); // Prevent cross-user caching
-    res.setHeader('CDN-Cache-Control', 'no-store'); // Fastly/Cloudflare
-    res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store'); // Cloudflare specific
+    res.setHeader('CDN-Cache-Control', 'no-store'); // Fastly/generic CDN
+
+    // CRITICAL: Cloudflare-specific cache prevention (for Warp/Workers)
+    // Cloudflare Workers and Warp cache aggressively - these headers force bypass
+    res.setHeader('CF-Cache-Status', 'BYPASS'); // Signal to Cloudflare to bypass cache
+    res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store, max-age=0'); // Cloudflare-specific
+
+    // CRITICAL: Vary header MUST include all per-user identifiers
+    // Without this, Cloudflare will serve cached User A response to User B
+    res.setHeader('Vary', '*'); // Tell Cloudflare every request is unique
+
+    // Add unique timestamp to ensure response is never cached
+    res.setHeader('X-Cache-Buster', Date.now().toString());
 }
 
 // Helper: controlled CORS - allow only same-host (http/https) or explicit allowlist
