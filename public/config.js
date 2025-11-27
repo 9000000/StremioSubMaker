@@ -526,17 +526,18 @@ Translate to {target_language}.`;
                             // Check if the server regenerated a fresh token due to corruption/missing session
                             if (data.regenerated && data.token && data.token !== rawConfigParam) {
                                 console.warn('[Config] Server regenerated config:', data.reason);
-                                console.log('[Config] Switching to fresh token:', data.token);
+                                console.log('[Config] Regenerated token available:', data.token);
 
-                                // Update URL to use the regenerated token
-                                const newPath = `/configure/${data.token}`;
-                                window.history.replaceState({}, '', newPath);
+                                // DO NOT store the regenerated token in localStorage yet!
+                                // The user hasn't saved, so storing it now would cause a mismatch between
+                                // what's installed in Stremio (old token) and what gets saved (new token).
+                                // The save operation will store the appropriate token when user clicks Save.
 
-                                // Store the new token
-                                try { localStorage.setItem(TOKEN_KEY, data.token); } catch (_) {}
+                                // Clear the old invalid token from localStorage to force new session on save
+                                try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
 
-                                // Show a brief warning to the user
-                                showAlert('Config was regenerated due to corruption. Please reconfigure your settings.', 'warning');
+                                // Show a warning to the user
+                                showAlert('Config session was lost. Please reconfigure and save to create a new session.', 'warning');
                             } else {
                                 // Normal path - store the original token
                                 try { localStorage.setItem(TOKEN_KEY, rawConfigParam); } catch (_) {}
