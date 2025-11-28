@@ -3051,10 +3051,10 @@ app.get('/addon/:config/configure', (req, res) => {
     res.setHeader('Expires', '0');
 
     try {
+        const { config: configStr } = req.params;
+
         // Defense-in-depth: Prevent caching (redirect includes session token)
         setNoStore(res);
-
-        const { config: configStr } = req.params;
         log.debug(() => `[Configure] Redirecting to configure page with config`);
         // Redirect to main configure page with config parameter
         res.redirect(302, `/configure?config=${encodeURIComponent(configStr)}`);
@@ -4424,6 +4424,8 @@ app.get('/addon/:config', (req, res, next) => {
 
     try {
         const { config: configStr } = req.params;
+        // Defense-in-depth: Prevent caching (redirect includes session token)
+        setNoStore(res);
         log.debug(() => `[Addon Base] Request to base addon path, redirecting to configure page`);
         // Redirect to main configure page with config parameter
         res.redirect(302, `/configure?config=${encodeURIComponent(configStr)}`);
