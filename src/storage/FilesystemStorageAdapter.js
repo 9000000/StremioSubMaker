@@ -3,6 +3,7 @@ const StorageAdapter = require('./StorageAdapter');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { getIsolationKey } = require('../utils/isolation');
 
 /**
  * Filesystem Storage Adapter
@@ -14,7 +15,8 @@ class FilesystemStorageAdapter extends StorageAdapter {
   constructor(options = {}) {
     super();
 
-    this.baseDir = options.baseDir || path.join(process.cwd(), '.cache');
+    const isolationSegment = getIsolationKey();
+    this.baseDir = options.baseDir || path.join(process.cwd(), '.cache', isolationSegment);
 
     // Cache directories for each type
     this.directories = {

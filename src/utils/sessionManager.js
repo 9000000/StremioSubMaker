@@ -13,6 +13,13 @@ const { redactToken } = require('./security');
 // Cache decrypted configs briefly to avoid redundant decryption on rapid navigation
 const DECRYPTED_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+// Internal metadata keys injected into the encrypted payload to detect
+// cross-user/session contamination even when the wrapper appears valid.
+const META_KEYS = {
+  SESSION_TOKEN: '__sessionToken',
+  SESSION_FINGERPRINT: '__sessionFingerprint'
+};
+
 // Lightweight integrity fingerprint stored alongside each session
 // Helps detect cross-session contamination when storage returns an unexpected payload
 function computeConfigFingerprint(config) {
@@ -55,6 +62,56 @@ function computeIntegrityHash(token, fingerprint) {
     log.warn(() => ['[SessionManager] Failed to compute integrity hash:', err?.message || String(err)]);
     return 'integrity_error';
   }
+}
+
+// Clone config and stamp session metadata before encryption. The fingerprint
+// stored alongside the session deliberately excludes these metadata fields so
+// we can detect when a valid-looking payload actually belongs to another
+// session (e.g., cache/proxy mix-ups or key-prefix collisions in Redis).
+function embedSessionMetadata(config, token, fingerprint) {
+  const cloned = cloneConfig(config);
+  try {
+    Object.defineProperty(cloned, META_KEYS.SESSION_TOKEN, {
+      value: token,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+    Object.defineProperty(cloned, META_KEYS.SESSION_FINGERPRINT, {
+      value: fingerprint,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  } catch (_) {
+    // Fallback for environments that may not allow defining properties
+    cloned[META_KEYS.SESSION_TOKEN] = token;
+    cloned[META_KEYS.SESSION_FINGERPRINT] = fingerprint;
+  }
+  return cloned;
+}
+
+// Remove internal metadata fields from decrypted configs before returning them
+// to callers or caching the decrypted version. Returns both the cleaned config
+// and any extracted metadata for validation.
+function stripSessionMetadata(config) {
+  if (!config || typeof config !== 'object') {
+    return { config, metadata: {} };
+  }
+
+  const metadata = {
+    token: config[META_KEYS.SESSION_TOKEN],
+    fingerprint: config[META_KEYS.SESSION_FINGERPRINT]
+  };
+
+  try {
+    delete config[META_KEYS.SESSION_TOKEN];
+    delete config[META_KEYS.SESSION_FINGERPRINT];
+  } catch (_) {
+    // Non-critical: continue with best-effort cleanup
+  }
+
+  return { config, metadata };
 }
 
 // Safe clone helper to prevent consumers from mutating cached objects
@@ -502,10 +559,11 @@ class SessionManager extends EventEmitter {
 
         const tokenFingerprint = computeTokenFingerprint(token);
 
-        // Encrypt sensitive fields in config before storing
-        const encryptedConfig = encryptUserConfig(config);
-
+        // Compute fingerprint on the raw config and stamp metadata into the
+        // payload before encrypting so we can detect cross-session leaks.
         const fingerprint = computeConfigFingerprint(config);
+        const configWithMetadata = embedSessionMetadata(config, token, fingerprint);
+        const encryptedConfig = encryptUserConfig(configWithMetadata);
         const integrity = computeIntegrityHash(token, fingerprint);
 
         const sessionData = {
@@ -598,8 +656,12 @@ class SessionManager extends EventEmitter {
 
         // Decrypt sensitive fields in config before returning
         let decryptedConfig = null;
+        let metadata = {};
         try {
-            decryptedConfig = decryptUserConfig(sessionData.config);
+            const rawDecrypted = decryptUserConfig(sessionData.config);
+            const result = stripSessionMetadata(rawDecrypted);
+            decryptedConfig = result.config;
+            metadata = result.metadata || {};
         } catch (err) {
             log.warn(() => `[SessionManager] Failed to decrypt config for ${redactToken(token)} - deleting session`);
             this.deleteSession(token);
@@ -611,7 +673,18 @@ class SessionManager extends EventEmitter {
             this.deleteSession(token);
             return null;
         }
+        if (metadata.token && metadata.token !== token) {
+            log.warn(() => `[SessionManager] Session token metadata mismatch for ${redactToken(token)} - expected ${redactToken(metadata.token)} - deleting session`);
+            this.deleteSession(token);
+            return null;
+        }
+
         const fingerprint = computeConfigFingerprint(decryptedConfig);
+        if (metadata.fingerprint && metadata.fingerprint !== fingerprint) {
+            log.warn(() => `[SessionManager] Session fingerprint metadata mismatch for ${redactToken(token)} - deleting session`);
+            this.deleteSession(token);
+            return null;
+        }
         if (sessionData.fingerprint && fingerprint !== sessionData.fingerprint) {
             log.warn(() => `[SessionManager] Fingerprint mismatch for ${redactToken(token)} - discarding contaminated session`);
             this.deleteSession(token);
@@ -707,9 +780,11 @@ class SessionManager extends EventEmitter {
             return false;
         }
 
-        // Encrypt sensitive fields in config before storing
-        const encryptedConfig = encryptUserConfig(config);
+        // Encrypt sensitive fields in config before storing, stamping metadata to
+        // detect cross-session contamination even when wrapper objects look valid.
         const fingerprint = computeConfigFingerprint(config);
+        const configWithMetadata = embedSessionMetadata(config, token, fingerprint);
+        const encryptedConfig = encryptUserConfig(configWithMetadata);
         const integrity = computeIntegrityHash(token, fingerprint);
         const tokenFingerprint = computeTokenFingerprint(token);
 
@@ -866,8 +941,33 @@ class SessionManager extends EventEmitter {
 
             // Decrypt and return config
             try {
-                const decryptedConfig = decryptUserConfig(stored.config);
+                const { config: decryptedConfig, metadata } = stripSessionMetadata(decryptUserConfig(stored.config));
+
+                if (!decryptedConfig) {
+                    log.warn(() => `[SessionManager] loadSessionFromStorage: decrypted config was empty for token ${redactToken(token)} - deleting session`);
+                    try { await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION); } catch (_) {}
+                    this.cache.delete(token);
+                    this.decryptedCache.delete(token);
+                    return null;
+                }
+
                 const fingerprint = computeConfigFingerprint(decryptedConfig);
+
+                if (metadata?.token && metadata.token !== token) {
+                    log.warn(() => `[SessionManager] Session token metadata mismatch on storage load for ${redactToken(token)} - deleting session`);
+                    try { await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION); } catch (_) {}
+                    this.cache.delete(token);
+                    this.decryptedCache.delete(token);
+                    return null;
+                }
+
+                if (metadata?.fingerprint && metadata.fingerprint !== fingerprint) {
+                    log.warn(() => `[SessionManager] Session fingerprint metadata mismatch on storage load for ${redactToken(token)} - deleting session`);
+                    try { await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION); } catch (_) {}
+                    this.cache.delete(token);
+                    this.decryptedCache.delete(token);
+                    return null;
+                }
 
                 if (stored.fingerprint && fingerprint !== stored.fingerprint) {
                     log.warn(() => `[SessionManager] Fingerprint mismatch on storage load for ${redactToken(token)} - removing corrupted session`);
@@ -904,13 +1004,6 @@ class SessionManager extends EventEmitter {
                     } catch (persistErr) {
                         log.error(() => ['[SessionManager] Failed to persist integrity during storage load:', persistErr?.message || String(persistErr)]);
                     }
-                }
-                if (!decryptedConfig) {
-                    log.warn(() => `[SessionManager] loadSessionFromStorage: decrypted config was empty for token ${redactToken(token)} - deleting session`);
-                    try { await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION); } catch (_) {}
-                    this.cache.delete(token);
-                    this.decryptedCache.delete(token);
-                    return null;
                 }
                 this.decryptedCache.set(token, cloneConfig(decryptedConfig));
                 return cloneConfig(decryptedConfig);

@@ -1719,7 +1719,8 @@ function createSubtitleHandler(config) {
         return {
           subtitles: [{
             id: 'config_error_session_token',
-            lang: 'SubMaker Error',
+            // Prefix with "!" so Stremio lists this error entry first
+            lang: '!SubMaker Error',
             url: `{{ADDON_URL}}/error-subtitle/session-token-not-found.srt`
           }]
         };

@@ -2,6 +2,7 @@ const log = require('../utils/logger');
 const StorageAdapter = require('./StorageAdapter');
 const Redis = require('ioredis');
 const crypto = require('crypto');
+const { getIsolationKey } = require('../utils/isolation');
 
 /**
  * Redis Storage Adapter
@@ -87,7 +88,15 @@ class RedisStorageAdapter extends StorageAdapter {
    * @private
    */
   _normalizeKeyPrefix(configuredPrefix) {
-    const base = configuredPrefix ?? process.env.REDIS_KEY_PREFIX ?? 'stremio:';
+    // Default to an instance-scoped prefix to prevent cross-tenant leakage when
+    // multiple deployments share the same Redis database and forget to set
+    // REDIS_KEY_PREFIX. This ties the namespace to a deterministic isolation
+    // key so restarts keep access to existing sessions while avoiding collisions
+    // with other deployments.
+    const isolationSegment = getIsolationKey();
+    const defaultPrefix = `stremio:${isolationSegment}:`;
+
+    const base = configuredPrefix ?? process.env.REDIS_KEY_PREFIX ?? defaultPrefix;
     const canonicalPrefix = !base || base.endsWith(':') ? base : `${base}:`;
 
     const variants = new Set();
@@ -103,6 +112,9 @@ class RedisStorageAdapter extends StorageAdapter {
     if (configuredPrefix && configuredPrefix !== canonicalPrefix) {
       addVariants(configuredPrefix);
     }
+    // Always include the legacy default so deployments migrating from the old
+    // shared prefix can still read/cleanup previously stored data.
+    addVariants('stremio:');
 
     if (process.env.REDIS_KEY_PREFIX_VARIANTS) {
       process.env.REDIS_KEY_PREFIX_VARIANTS
