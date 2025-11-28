@@ -140,7 +140,7 @@ function createLoadingSubtitle() {
   const srt = `1
 00:00:00,000 --> 04:00:00,000
 TRANSLATION IN PROGRESS
-Partial results will appear as they are ready. (~15s)`;
+Click to reload. Partial results will appear as they are ready.`;
 
   // Log the loading subtitle for debugging
   log.debug(() => ['[Subtitles] Created loading subtitle with', srt.split('\n\n').length, 'entries']);
