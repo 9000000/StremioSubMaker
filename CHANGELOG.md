@@ -11,6 +11,10 @@ All notable changes to this project will be documented in this file.
 - Session manager now removes sessions immediately when decryption fails or yields empty configs, ensuring corrupted payloads cannot be reused across users.
 - Package version bumped to 1.4.6 so runtime version reporting and cache busting align with the release notes.
 - Redis storage now self-heals legacy double-prefixed keys (e.g., `stremio:stremio:*`) so sessions/configs stay visible whether the prefix includes a colon or not and across multi-instance Redis deployments.
+- Redis key prefixes are now normalized to a canonical colon-suffixed form while still accepting colon/non-colon/custom variants, preventing mixed-prefix splits like `stremiosession:*`.
+- Redis migrations reuse a raw migration client, handle cross-prefix self-healing across all variants, and clean up duplicates when targets already exist.
+- Redis pub/sub invalidation subscribes and publishes on both prefixed and unprefixed channels to keep cache invalidations working across hosts with different prefixes.
+- Startup validation now scans for double-prefixed keys across all configured prefix variants to flag misconfigurations early.
 
 ## SubMaker v1.4.5-hotfix
 
