@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 v1.4.6 hotfix.
 
+- Default storage now redis: runtime fallback is redis unless explicitly set to filesystem; documentation updated to reflect redis as default and keep filesystem as an opt-in for local dev.
+
 - Synced subtitle saves now reject missing/invalid session tokens with a 401 response, preventing cross-user pollution of the shared sync cache.
 - Service worker skips caching responses that advertise `Vary: *` or `no-store`, avoiding runtime cache failures and leaking user-specific assets.
 - Gemini config button visibility no longer flickers during init; it shows whenever a session token is present for the current origin.

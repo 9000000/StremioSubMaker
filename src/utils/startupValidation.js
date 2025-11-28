@@ -34,7 +34,7 @@ class StartupValidator {
    * Validate Redis connection and configuration (if using Redis)
    */
   async validateRedisConnection() {
-    const storageType = process.env.STORAGE_TYPE || 'filesystem';
+    const storageType = process.env.STORAGE_TYPE || 'redis';
     if (storageType !== 'redis') {
       log.debug(() => '[Startup Validation] Skipping Redis validation (filesystem mode)');
       return true;

@@ -13,7 +13,7 @@ services:
       - .env
     environment:
       # Override specific variables for local development
-      # Storage configuration - Use filesystem (default)
+      # Storage configuration - force filesystem for local use (runtime default is redis)
       - STORAGE_TYPE=filesystem
 
       # Encryption key file path (persisted in bind mount)

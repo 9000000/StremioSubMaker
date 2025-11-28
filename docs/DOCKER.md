@@ -1,104 +1,180 @@
-# 🐳 Docker Deployment Guide
+# Docker Deployment Guide
 
-## Docker Hub Image
+You can run SubMaker directly from Docker Hub without cloning the repo. Below are copy-paste compose files, minimal `.env` examples, and optional build/run instructions for source checkouts.
 
-Pre-built images are available on Docker Hub: **[xtremexq/submaker](https://hub.docker.com/r/xtremexq/submaker)**
+## Prerequisites
+- Docker 20+ and Docker Compose v2
+- An OpenSubtitles API key (required)
 
-Available tags:
-- `latest` - Latest stable release (recommended)
-- `1.3.3` - Specific version (for stability)
+## Quick Start (Docker Hub image + Redis)
 
-## Quick Start with Docker Compose
-
-### Option 1: With Redis (Recommended for Production)
-
-Uses the pre-built image from Docker Hub:
-
+1) Create a folder and enter it:
 ```bash
-# Clone the repository (for config files)
-git clone https://github.com/xtremexq/StremioSubMaker.git
-cd StremioSubMaker
+mkdir stremio-submaker && cd stremio-submaker
+```
 
-# Create .env file with your configuration
-cp .env.example .env
+2) Create `.env` (minimum settings):
+```env
+OPENSUBTITLES_API_KEY=your_opensubtitles_key
+STORAGE_TYPE=redis
+# Optional: override defaults
+# PORT=7001
+# REDIS_HOST=redis
+# REDIS_PORT=6379
+# REDIS_PASSWORD=
+# REDIS_DB=0
+# REDIS_KEY_PREFIX=stremio
+```
 
-# Edit .env and add your API keys
-nano .env
+3) Create `docker-compose.yaml` (uses Docker Hub image):
+```yaml
+version: "3.9"
 
-# Start with Redis (pulls image from Docker Hub)
+services:
+  submaker:
+    image: xtremexq/submaker:latest
+    container_name: submaker
+    ports:
+      - "${PORT:-7001}:7001"
+    env_file:
+      - .env
+    environment:
+      - STORAGE_TYPE=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      - REDIS_KEY_PREFIX=stremio
+      - ENCRYPTION_KEY_FILE=/app/keys/.encryption-key
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - stremio-network
+    volumes:
+      - app-data:/app/data
+      - app-cache:/app/.cache
+      - app-logs:/app/logs
+      - encryption-key:/app/keys
+
+  redis:
+    image: redis:7-alpine
+    container_name: stremio-redis
+    command: >
+      redis-server
+      --maxmemory 4gb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --appendonly yes
+      --appendfsync everysec
+      --no-appendfsync-on-rewrite no
+      --timeout 300
+      --tcp-keepalive 60
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - stremio-network
+
+networks:
+  stremio-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  app-data:
+  app-cache:
+  app-logs:
+  encryption-key:
+```
+
+4) Start and watch logs:
+```bash
 docker-compose up -d
-
-# View logs
 docker-compose logs -f submaker
 ```
 
-### Option 2: Filesystem Storage (Local Development)
+## Filesystem-only variant (no Redis)
 
-```bash
-# Use the local development compose file
-docker-compose -f docker-compose.local.yaml up -d
-```
+Good for single-node/local use. Storage stays on local disk.
 
-### Option 3: Build from Source
-
-To build locally instead of using the Docker Hub image:
-
-```bash
-# Edit docker-compose.yaml and uncomment the 'build: .' line
-# Then run:
-docker-compose up --build -d
-```
-
-## Configuration
-
-The application uses the `STORAGE_TYPE` environment variable to determine storage backend:
-
-- **`STORAGE_TYPE=filesystem`** (default): Uses local disk storage, perfect for npm start/local development
-- **`STORAGE_TYPE=redis`**: Uses Redis for distributed caching, required for HA deployments
-
-### Redis Configuration Options
-
-Add these to your `.env` file when using Redis:
-
+`.env`:
 ```env
-# Storage Configuration
-STORAGE_TYPE=redis
-
-# Redis Connection
-REDIS_HOST=redis
-REDIS_PORT=6379
-# Password is optional - leave empty for no authentication (default in docker-compose.yaml)
-# To enable password authentication, also update the Redis command in docker-compose.yaml
-REDIS_PASSWORD=
-REDIS_DB=0
-# Keep the trailing colon and use the exact same value across all pods/instances
-# to share the same cache/session namespace.
-REDIS_KEY_PREFIX=stremio:
-
-# API Keys
 OPENSUBTITLES_API_KEY=your_opensubtitles_key
+STORAGE_TYPE=filesystem
+# PORT=7001
 ```
 
-## Docker Run (Without Compose)
+`docker-compose.yaml`:
+```yaml
+version: "3.9"
 
-### Using Pre-built Image from Docker Hub
+services:
+  submaker:
+    image: xtremexq/submaker:latest
+    container_name: submaker
+    ports:
+      - "${PORT:-7001}:7001"
+    env_file:
+      - .env
+    environment:
+      - STORAGE_TYPE=filesystem
+      - ENCRYPTION_KEY_FILE=/app/keys/.encryption-key
+    volumes:
+      - ./data:/app/data
+      - ./.cache:/app/.cache
+      - ./logs:/app/logs
+      - ./keys:/app/keys
+    restart: unless-stopped
+```
 
-#### Run with Filesystem Storage
+Start with:
+```bash
+docker-compose up -d
+docker-compose logs -f submaker
+```
 
+## Using the repo (build or image)
+
+If you clone the repo, `docker-compose.yaml` defaults to building locally. To use the Docker Hub image instead, comment out `build: .` and uncomment the `image:` line.
+
+```bash
+git clone https://github.com/xtremexq/StremioSubMaker.git
+cd StremioSubMaker
+cp .env.example .env
+# edit .env with your keys
+docker-compose up -d          # uses build
+# or, after switching to image: ... in compose:
+# docker-compose up -d
+```
+
+## Docker run (without Compose)
+
+Filesystem storage:
 ```bash
 docker run -d \
   --name submaker \
   -p 7001:7001 \
-  -v $(pwd)/.cache:/app/.cache \
   -v $(pwd)/data:/app/data \
+  -v $(pwd)/logs:/app/logs \
   -v $(pwd)/keys:/app/keys \
+  -v $(pwd)/.cache:/app/.cache \
   -e STORAGE_TYPE=filesystem \
-  -e OPENSUBTITLES_API_KEY=your_api_key \
+  -e OPENSUBTITLES_API_KEY=your_opensubtitles_key \
   xtremexq/submaker:latest
 ```
 
-#### Run with External Redis
-
+External Redis (you supply Redis):
 ```bash
 docker run -d \
   --name submaker \
@@ -106,54 +182,26 @@ docker run -d \
   -e STORAGE_TYPE=redis \
   -e REDIS_HOST=your-redis-host \
   -e REDIS_PORT=6379 \
-  -e OPENSUBTITLES_API_KEY=your_api_key \
+  -e REDIS_PASSWORD= \
+  -e REDIS_DB=0 \
+  -e REDIS_KEY_PREFIX=stremio \
+  -e ENCRYPTION_KEY_FILE=/app/keys/.encryption-key \
+  -v $(pwd)/keys:/app/keys \
   xtremexq/submaker:latest
 ```
 
-### Build from Source
-
-If you want to build the image yourself:
-
-```bash
-# Clone the repository
-git clone https://github.com/xtremexq/StremioSubMaker.git
-cd StremioSubMaker
-
-# Build the image
-docker build -t xtremexq/submaker:custom .
-
-# Run your custom build
-docker run -d \
-  --name submaker \
-  -p 7001:7001 \
-  -e OPENSUBTITLES_API_KEY=your_api_key \
-  xtremexq/submaker:custom
-```
+## Configuration notes
+- `OPENSUBTITLES_API_KEY` is required.
+- `STORAGE_TYPE` defaults to `redis`; set to `filesystem` for single-node/local installs.
+- Encryption key: if `ENCRYPTION_KEY` is unset, the app writes a key to `/app/keys/.encryption-key`; keep that path persistent (named volume or bind mount).
+- Ports: container listens on `7001` by default; override with `PORT` env and matching host mapping.
 
 ## Troubleshooting
-
-### Container won't start
-
-1. Check logs: `docker-compose logs -f submaker`
-2. Verify `.env` file exists and contains required keys (especially `OPENSUBTITLES_API_KEY`)
-3. Ensure ports are not already in use: `lsof -i :7001`
-4. Try pulling the latest image: `docker pull xtremexq/submaker:latest`
-
-### Redis connection issues
-
-1. Verify Redis is running: `docker-compose ps`
-2. Check Redis logs: `docker-compose logs -f redis`
-3. Verify `REDIS_HOST` matches your compose service name (should be `redis`)
-4. Check Redis health: `docker exec stremio-redis redis-cli ping` (should return `PONG`)
-
-### Volume permissions
-
-If you encounter permission errors:
-```bash
-# Set proper ownership
-sudo chown -R 1000:1000 .cache data
-```
+- Check app logs: `docker-compose logs -f submaker`
+- Check Redis: `docker-compose logs -f redis` and `docker-compose ps`
+- Port in use? adjust `${PORT:-7001}` mapping or free the port (`lsof -i :7001` on Linux/macOS, `netstat -ano | findstr :7001` on Windows).
+- Refresh image: `docker pull xtremexq/submaker:latest` then `docker-compose up -d`
 
 ---
 
-[← Back to README](README.md)
+[Back to README](../README.md)

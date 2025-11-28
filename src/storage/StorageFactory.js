@@ -46,7 +46,7 @@ class StorageFactory {
    * @returns {Promise<StorageAdapter>}
    */
   static async _initializeAdapter() {
-    const storageType = process.env.STORAGE_TYPE || 'filesystem';
+    const storageType = process.env.STORAGE_TYPE || 'redis';
 
     let adapter;
 

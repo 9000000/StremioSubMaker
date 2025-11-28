@@ -78,7 +78,7 @@ if (process.env.SESSION_SAVE_INTERVAL) {
 const sessionManager = getSessionManager(sessionOptions);
 
 // Deployment warning: In multi-instance/Redis mode, require stable encryption key
-if ((process.env.STORAGE_TYPE || 'filesystem') === 'redis' && !process.env.ENCRYPTION_KEY) {
+if ((process.env.STORAGE_TYPE || 'redis') === 'redis' && !process.env.ENCRYPTION_KEY) {
     log.warn(() => '[Startup] WARNING: STORAGE_TYPE=redis without ENCRYPTION_KEY. Multiple instances must share the same encryption key to read sessions.');
 }
 
@@ -1135,7 +1135,7 @@ app.get('/health', async (req, res) => {
 
         // Check storage health
         let storageHealthy = false;
-        let storageType = process.env.STORAGE_TYPE || 'filesystem';
+        let storageType = process.env.STORAGE_TYPE || 'redis';
 
         try {
             const adapter = await getStorageAdapter();
@@ -1772,7 +1772,7 @@ app.post('/api/create-session', sessionCreationLimiter, enforceConfigPayloadSize
 
         // For localhost, can use either session or base64 (backward compatibility)
         const localhost = isLocalhost(req);
-        const storageType = process.env.STORAGE_TYPE || 'filesystem';
+        const storageType = process.env.STORAGE_TYPE || 'redis';
 
         // Use base64 only if: localhost AND not forced sessions AND not using Redis storage
         // Redis storage should always use sessions for proper data persistence
@@ -1825,7 +1825,7 @@ app.post('/api/update-session/:token', sessionCreationLimiter, enforceConfigPayl
 
         // For localhost with base64, we can't update (create new instead)
         const localhost = isLocalhost(req);
-        const storageType = process.env.STORAGE_TYPE || 'filesystem';
+        const storageType = process.env.STORAGE_TYPE || 'redis';
         const isBase64Token = !/^[a-f0-9]{32}$/.test(token);
 
         // Use base64 only if: localhost AND base64 token AND not forced sessions AND not using Redis storage
@@ -4647,7 +4647,7 @@ app.use((error, req, res, next) => {
     const logLevel = (process.env.LOG_LEVEL || 'warn').toUpperCase();
     const logToFile = process.env.LOG_TO_FILE !== 'false' ? 'ENABLED' : 'DISABLED';
     const logDir = process.env.LOG_DIR || 'logs/';
-    const storageType = (process.env.STORAGE_TYPE || 'filesystem').toUpperCase();
+    const storageType = (process.env.STORAGE_TYPE || 'redis').toUpperCase();
     // Session stats (after readiness, so counts are accurate)
     // Use synchronous access to cache size for startup banner (storage count requires async)
     const activeSessions = sessionManager.cache.size;

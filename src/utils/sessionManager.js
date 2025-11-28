@@ -228,7 +228,7 @@ function getPrefixVariants() {
 }
 
 async function getPubSubClient() {
-  const storageType = process.env.STORAGE_TYPE || 'filesystem';
+  const storageType = process.env.STORAGE_TYPE || 'redis';
   if (storageType !== 'redis') {
     return null; // Not needed in filesystem mode
   }
@@ -265,7 +265,7 @@ async function getPubSubClient() {
 }
 
 async function getPublishClient() {
-  const storageType = process.env.STORAGE_TYPE || 'filesystem';
+  const storageType = process.env.STORAGE_TYPE || 'redis';
   if (storageType !== 'redis') {
     return null; // Not needed in filesystem mode
   }
@@ -392,7 +392,7 @@ class SessionManager extends EventEmitter {
      */
     async _initializeSessions() {
         try {
-            const storageType = process.env.STORAGE_TYPE || 'filesystem';
+            const storageType = process.env.STORAGE_TYPE || 'redis';
             const sessionPreloadEnabled = process.env.SESSION_PRELOAD === 'true';
             log.debug(() => `[SessionManager] Initializing sessions (storage: ${storageType}, preload: ${sessionPreloadEnabled})`);
 
@@ -480,7 +480,7 @@ class SessionManager extends EventEmitter {
      * @private
      */
     async _publishInvalidation(token, action) {
-        if ((process.env.STORAGE_TYPE || 'filesystem') !== 'redis') {
+        if ((process.env.STORAGE_TYPE || 'redis') !== 'redis') {
             return; // Only in Redis mode
         }
 
@@ -635,7 +635,7 @@ class SessionManager extends EventEmitter {
         this.cache.set(token, sessionData);
         // In Redis mode we persist/touch per access already; avoid marking dirty to
         // prevent periodic full flushes that rewrite all sessions unnecessarily.
-        if ((process.env.STORAGE_TYPE || 'filesystem') !== 'redis') {
+        if ((process.env.STORAGE_TYPE || 'redis') !== 'redis') {
             this.dirty = true;
         }
 
@@ -845,7 +845,7 @@ class SessionManager extends EventEmitter {
      * @returns {Promise<Object>} Statistics
      */
     async getStats() {
-        const storageType = process.env.STORAGE_TYPE || 'filesystem';
+        const storageType = process.env.STORAGE_TYPE || 'redis';
         const storageCount = await this.getStorageSessionCount();
 
         return {
@@ -1057,7 +1057,7 @@ class SessionManager extends EventEmitter {
         // In HA/Redis mode, optionally skip preloading all sessions to avoid
         // SCAN + GET overhead across large datasets. Rely on lazy
         // loadSessionFromStorage() when tokens are accessed.
-        const storageType = process.env.STORAGE_TYPE || 'filesystem';
+        const storageType = process.env.STORAGE_TYPE || 'redis';
         const preloadEnabled = process.env.SESSION_PRELOAD === 'true';
         if (storageType === 'redis' && !preloadEnabled) {
             log.debug(() => '[SessionManager] Skipping session preload in Redis mode (SESSION_PRELOAD!=true)');
@@ -1150,7 +1150,7 @@ class SessionManager extends EventEmitter {
     startAutoSave() {
         // In Redis mode, touches and updates persist immediately per token.
         // Skip the periodic auto-save to reduce redundant writes.
-        if ((process.env.STORAGE_TYPE || 'filesystem') === 'redis') {
+        if ((process.env.STORAGE_TYPE || 'redis') === 'redis') {
             log.debug(() => '[SessionManager] Skipping auto-save timer in Redis mode');
             return;
         }
