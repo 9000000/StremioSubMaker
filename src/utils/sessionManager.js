@@ -552,7 +552,7 @@ class SessionManager extends EventEmitter {
      * @param {Object} config - User configuration object
      * @returns {string} Session token
      */
-    createSession(config) {
+    async createSession(config) {
         const token = this.generateToken();
 
         const tokenFingerprint = computeTokenFingerprint(token);
@@ -578,15 +578,16 @@ class SessionManager extends EventEmitter {
         this.decryptedCache.set(token, cloneConfig(config));
         this.dirty = true;
 
-        // Persist immediately (per-token) for durability across restarts and instances
-        Promise.resolve().then(async () => {
+        try {
             const adapter = await getStorageAdapter();
             // Set sliding persistence TTL equal to maxAge
             const ttlSeconds = Number.isFinite(this.maxAge) ? Math.floor(this.maxAge / 1000) : null;
             await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
-        }).catch(err => {
+        } catch (err) {
             log.error(() => ['[SessionManager] Failed to persist new session:', err?.message || String(err)]);
-        });
+            // Surface the failure so callers can decide whether to retry or abort
+            throw err;
+        }
 
         this.emit('sessionCreated', { token, source: 'local' });
         log.debug(() => `[SessionManager] Session created: ${redactToken(token)} (in-memory: ${this.cache.size})`);

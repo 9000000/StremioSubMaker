@@ -1799,7 +1799,7 @@ app.post('/api/create-session', sessionCreationLimiter, enforceConfigPayloadSize
         }
 
         // Production mode: create session
-        const token = sessionManager.createSession(config);
+        const token = await sessionManager.createSession(config);
         log.debug(() => `[Session API] Created session token: ${redactToken(token)}`);
 
         res.json({
@@ -1860,7 +1860,7 @@ app.post('/api/update-session/:token', sessionCreationLimiter, enforceConfigPayl
         if (!updated) {
             // Session doesn't exist - create new one instead
             log.debug(() => `[Session API] Session not found, creating new one`);
-            const newToken = sessionManager.createSession(config);
+            const newToken = await sessionManager.createSession(config);
             invalidateRouterCache(token, 'session token expired');
             return res.json({
                 token: newToken,
@@ -1960,7 +1960,7 @@ app.get('/api/get-session/:token', async (req, res) => {
             if (autoRegenerate) {
                 log.info(() => `[Session API] Session not found for ${redactToken(token)}, auto-regenerating fresh default config`);
 
-                const { config: freshConfig, token: freshToken } = regenerateDefaultConfig();
+                const { config: freshConfig, token: freshToken } = await regenerateDefaultConfig();
 
                 // Invalidate any cached routers for the old token
                 invalidateRouterCache(token, 'session not found, regenerated');
@@ -1983,7 +1983,7 @@ app.get('/api/get-session/:token', async (req, res) => {
         if (configHash === 'empty_config_00' && autoRegenerate) {
             log.warn(() => `[Session API] Session ${redactToken(token)} resolved to empty_config_00, auto-regenerating`);
 
-            const { config: freshConfig, token: freshToken } = regenerateDefaultConfig();
+            const { config: freshConfig, token: freshToken } = await regenerateDefaultConfig();
 
             // Invalidate cached router for the old token
             invalidateRouterCache(token, 'empty_config_00 detected, regenerated');
@@ -2380,14 +2380,14 @@ function createAddonWithConfig(config, baseUrl = '') {
  * Used when a config is corrupted (empty_config_00) or session token is missing/expired
  * @returns {Object} { config: Object, token: string } - Fresh default config and new session token
  */
-function regenerateDefaultConfig() {
+async function regenerateDefaultConfig() {
     const defaultConfig = getDefaultConfig();
     // Tag with metadata so downstream handlers know this came from regeneration
     defaultConfig.__regenerated = true;
     defaultConfig.__regeneratedAt = new Date().toISOString();
 
     // Create a fresh session for this default config
-    const newToken = sessionManager.createSession(defaultConfig);
+    const newToken = await sessionManager.createSession(defaultConfig);
 
     log.info(() => `[ConfigRegeneration] Created fresh default config session: ${redactToken(newToken)}`);
 

@@ -391,6 +391,14 @@ class RedisStorageAdapter extends StorageAdapter {
             }
 
             if (!key.startsWith(altPrefix)) continue;
+
+            // Avoid clobbering keys that are already using the canonical prefix
+            // when the alternate prefix is a prefix substring (e.g., "stremio"
+            // vs "stremio:"). Without this guard, keys that already match the
+            // canonical namespace get renamed into a double-prefixed variant
+            // ("stremio::session:abc"), making sessions/configs disappear after
+            // restart even though they still exist in Redis.
+            if (key.startsWith(targetPrefix)) continue;
             const fixedKey = `${targetPrefix}${key.slice(altPrefix.length)}`;
             if (fixedKey === key) continue;
 
@@ -538,7 +546,16 @@ class RedisStorageAdapter extends StorageAdapter {
     const migrationClient = await this._getMigrationClient('[RedisStorage] Cross-prefix fetch skipped: could not open raw client:');
     if (!migrationClient) return null;
 
-    for (const altPrefix of this.prefixVariants) {
+    // Cover double-prefixed legacy keys by expanding variants with the canonical prefix
+    const altPrefixes = new Set(this.prefixVariants);
+    for (const alt of this.prefixVariants) {
+      if (canonicalPrefix) {
+        altPrefixes.add(`${alt}${canonicalPrefix}`);
+        altPrefixes.add(`${canonicalPrefix}${alt}`);
+      }
+    }
+
+    for (const altPrefix of altPrefixes) {
       // Skip the canonical prefix – the normal get() already tried it
       if (altPrefix === canonicalPrefix) continue;
       const altContentKey = `${altPrefix}${contentKeySuffix}`;
