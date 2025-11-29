@@ -314,7 +314,9 @@ class SessionManager extends EventEmitter {
             ? options.maxSessions
             : null;
         this.maxAge = options.maxAge || 90 * 24 * 60 * 60 * 1000; // 90 days (3 months) default
+        this.snapshotEnabled = String(process.env.SESSION_SNAPSHOT_ENABLED || '').toLowerCase() === 'true';
         this.persistencePath = options.persistencePath || path.join(process.cwd(), 'data', 'sessions.json');
+        this.snapshotPath = process.env.SESSION_SNAPSHOT_PATH || this.persistencePath;
         this.autoSaveInterval = options.autoSaveInterval || 60 * 1000; // 1 minute
         this.shutdownTimeout = options.shutdownTimeout || 10 * 1000; // 10 seconds for shutdown save
 
@@ -372,6 +374,9 @@ class SessionManager extends EventEmitter {
         this.isReady = false;
         this.loadingPromise = null;
 
+        // Track pending async persistence operations to await them during shutdown
+        this.pendingPersistence = new Set();
+
         // Load sessions from disk on startup (NOW AWAITED PROPERLY)
         this.loadingPromise = this._initializeSessions();
 
@@ -380,6 +385,42 @@ class SessionManager extends EventEmitter {
 
         // Start memory cleanup interval (runs less frequently)
         this.startMemoryCleanup();
+    }
+
+    /**
+     * Track an async persistence operation so we can await it during shutdown
+     * @private
+     * @param {Promise} promise - The persistence operation to track
+     * @returns {Promise} The same promise (for chaining)
+     */
+    _trackPersistence(promise) {
+        this.pendingPersistence.add(promise);
+        promise.finally(() => {
+            this.pendingPersistence.delete(promise);
+        }).catch(() => {
+            // Errors are already logged by the individual operations
+        });
+        return promise;
+    }
+
+    /**
+     * Wait for all pending persistence operations to complete
+     * Called during shutdown to ensure no data loss
+     * @private
+     * @returns {Promise<void>}
+     */
+    async _flushPendingPersistence() {
+        if (this.pendingPersistence.size === 0) {
+            return;
+        }
+
+        log.warn(() => `[SessionManager] Waiting for ${this.pendingPersistence.size} pending persistence operation(s) to complete...`);
+        try {
+            await Promise.allSettled(Array.from(this.pendingPersistence));
+            log.warn(() => '[SessionManager] All pending persistence operations completed');
+        } catch (err) {
+            log.error(() => ['[SessionManager] Error waiting for pending persistence:', err?.message || String(err)]);
+        }
     }
 
     /**
@@ -395,6 +436,11 @@ class SessionManager extends EventEmitter {
             log.debug(() => `[SessionManager] Initializing sessions (storage: ${storageType}, preload: ${sessionPreloadEnabled})`);
 
             await this.loadFromDisk();
+            if (this.snapshotEnabled) {
+                await this.restoreFromSnapshotIfStorageEmpty();
+            } else {
+                log.debug(() => '[SessionManager] Snapshot restore disabled (SESSION_SNAPSHOT_ENABLED!=true)');
+            }
 
             // Initialize Redis pub/sub for cross-instance cache invalidation
             if (storageType === 'redis') {
@@ -540,6 +586,48 @@ class SessionManager extends EventEmitter {
     }
 
     /**
+     * Write a full snapshot of stored sessions to disk for recovery after Redis resets
+     * @returns {Promise<void>}
+     */
+    async snapshotSessionsToDisk(reason = '') {
+        try {
+            if (!this.snapshotEnabled) {
+                return;
+            }
+
+            const adapter = await getStorageAdapter();
+            const keys = await adapter.list(StorageAdapter.CACHE_TYPES.SESSION, '*');
+
+            if (!keys || keys.length === 0) {
+                log.warn(() => `[SessionManager] Snapshot skipped - no sessions in storage${reason ? ` (${reason})` : ''}`);
+                return;
+            }
+
+            const snapshot = {};
+            for (const token of keys) {
+                if (!/^[a-f0-9]{32}$/.test(token)) continue;
+                try {
+                    const sessionData = await adapter.get(token, StorageAdapter.CACHE_TYPES.SESSION);
+                    if (sessionData) {
+                        snapshot[token] = sessionData;
+                    }
+                } catch (err) {
+                    log.debug(() => `[SessionManager] Failed to include ${redactToken(token)} in snapshot: ${err.message}`);
+                }
+            }
+
+            await fs.writeFile(this.snapshotPath, JSON.stringify({
+                sessions: snapshot,
+                savedAt: new Date().toISOString()
+            }, null, 2), 'utf8');
+
+            log.debug(() => `[SessionManager] Snapshot saved to ${this.snapshotPath}${reason ? ` (${reason})` : ''}`);
+        } catch (err) {
+            log.error(() => ['[SessionManager] Failed to write session snapshot to disk:', err.message]);
+        }
+    }
+
+    /**
      * Generate a cryptographically secure random session token
      * @returns {string} 32-character hex token
      */
@@ -655,7 +743,8 @@ class SessionManager extends EventEmitter {
         }
 
         // Persist touch to refresh persistent TTL and backfill metadata when needed
-        Promise.resolve().then(async () => {
+        // Track this async operation so shutdown can wait for it to complete
+        this._trackPersistence(Promise.resolve().then(async () => {
             const adapter = await getStorageAdapter();
             const ttlSeconds = Number.isFinite(this.maxAge) ? Math.floor(this.maxAge / 1000) : null;
             await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
@@ -664,7 +753,7 @@ class SessionManager extends EventEmitter {
             }
         }).catch(err => {
             log.error(() => ['[SessionManager] Failed to refresh session TTL on access:', err?.message || String(err)]);
-        });
+        }));
 
         // Use cached decrypted config when available to avoid redundant decrypt/log spam on page changes
         const cachedDecrypted = this.decryptedCache.get(token);
@@ -744,13 +833,13 @@ class SessionManager extends EventEmitter {
             sessionData.integrity = expectedIntegrity;
             this.cache.set(token, sessionData);
             this.dirty = true;
-            Promise.resolve().then(async () => {
+            this._trackPersistence(Promise.resolve().then(async () => {
                 const adapter = await getStorageAdapter();
                 const ttlSeconds = Number.isFinite(this.maxAge) ? Math.floor(this.maxAge / 1000) : null;
                 await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
             }).catch(err => {
                 log.error(() => ['[SessionManager] Failed to persist integrity backfill:', err?.message || String(err)]);
-            });
+            }));
         }
 
         // Backfill missing fingerprint for legacy sessions
@@ -762,13 +851,13 @@ class SessionManager extends EventEmitter {
             // Backfill integrity so future checks can detect contamination
             sessionData.integrity = computeIntegrityHash(token, fingerprint);
 
-            Promise.resolve().then(async () => {
+            this._trackPersistence(Promise.resolve().then(async () => {
                 const adapter = await getStorageAdapter();
                 const ttlSeconds = Number.isFinite(this.maxAge) ? Math.floor(this.maxAge / 1000) : null;
                 await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
             }).catch(err => {
                 log.error(() => ['[SessionManager] Failed to persist fingerprint backfill:', err?.message || String(err)]);
-            });
+            }));
         }
 
         this.decryptedCache.set(token, cloneConfig(decryptedConfig));
@@ -815,13 +904,13 @@ class SessionManager extends EventEmitter {
             this.cache.set(token, sessionData);
             this.dirty = true;
 
-            Promise.resolve().then(async () => {
+            this._trackPersistence(Promise.resolve().then(async () => {
                 const adapter = await getStorageAdapter();
                 const ttlSeconds = Number.isFinite(this.maxAge) ? Math.floor(this.maxAge / 1000) : null;
                 await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
             }).catch(err => {
                 log.error(() => ['[SessionManager] Failed to persist token fingerprint backfill during update:', err?.message || String(err)]);
-            });
+            }));
         } else if (tokenValidation.status !== 'ok') {
             log.warn(() => `[SessionManager] Token validation failed (${tokenValidation.status}) during update for ${redactToken(token)} - deleting session`);
             this.deleteSession(token);
@@ -885,14 +974,15 @@ class SessionManager extends EventEmitter {
             this.dirty = true;
             log.debug(() => `[SessionManager] Session deleted: ${redactToken(token)}`);
             // Remove from storage immediately
-            Promise.resolve().then(async () => {
+            // Track this async operation so shutdown can wait for it to complete
+            this._trackPersistence(Promise.resolve().then(async () => {
                 const adapter = await getStorageAdapter();
                 await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION);
                 // Notify other instances to invalidate their cache
                 await this._publishInvalidation(token, 'delete');
             }).catch(err => {
                 log.error(() => ['[SessionManager] Failed to delete session from storage:', err?.message || String(err)]);
-            });
+            }));
             this.emit('sessionDeleted', { token, source: 'local' });
         }
         return existed;
@@ -1100,7 +1190,19 @@ class SessionManager extends EventEmitter {
      * @returns {Promise<void>}
      */
     async saveToDisk() {
-        if (!this.dirty) {
+        const storageType = process.env.STORAGE_TYPE || 'redis';
+        const isRedisMode = storageType === 'redis';
+
+        // In Redis mode, ALWAYS save in-memory sessions during shutdown to ensure
+        // they persist across restarts. This is critical because:
+        // 1. Accessing sessions doesn't set dirty=true in Redis mode (to avoid redundant writes)
+        // 2. Fire-and-forget persistence on access may fail silently
+        // 3. Without this, sessions only in memory are lost on restart
+        const shouldSaveInRedisMode = isRedisMode && this.cache.size > 0;
+
+        if (!this.dirty && !shouldSaveInRedisMode) {
+            // Even if there were no in-memory changes, ensure we keep a fresh snapshot for recovery
+            await this.snapshotSessionsToDisk('periodic');
             return; // No changes to save
         }
 
@@ -1117,7 +1219,14 @@ class SessionManager extends EventEmitter {
 
             this.dirty = false;
             this.consecutiveSaveFailures = 0; // Reset on successful save
-            log.debug(() => `[SessionManager] Saved ${saved} sessions to storage (per-token)`);
+            if (shouldSaveInRedisMode) {
+                log.debug(() => `[SessionManager] Flushed ${saved} in-memory sessions to Redis on shutdown`);
+            } else {
+                log.debug(() => `[SessionManager] Saved ${saved} sessions to storage (per-token)`);
+            }
+
+            // Also persist a disk snapshot so sessions survive Redis resets/volume loss
+            await this.snapshotSessionsToDisk('shutdown');
         } catch (err) {
             log.error(() => ['[SessionManager] Failed to save sessions:', err.message || String(err)]);
             throw err;
@@ -1225,6 +1334,75 @@ class SessionManager extends EventEmitter {
             } else {
                 log.error(() => ['[SessionManager] Failed to load sessions:', err.message]);
             }
+        }
+    }
+
+    /**
+     * Restore sessions from on-disk snapshot when Redis storage is empty (e.g., fresh volume)
+     * @returns {Promise<void>}
+     */
+    async restoreFromSnapshotIfStorageEmpty() {
+        try {
+            const storageType = process.env.STORAGE_TYPE || 'redis';
+            if (storageType !== 'redis') {
+                return;
+            }
+
+            const adapter = await getStorageAdapter();
+            const keys = await adapter.list(StorageAdapter.CACHE_TYPES.SESSION, '*');
+            if (keys && keys.length > 0) {
+                return; // Storage already populated
+            }
+
+            // Nothing in Redis - try to rebuild from snapshot on disk
+            try {
+                await fs.access(this.snapshotPath);
+            } catch (_) {
+                log.warn(() => `[SessionManager] Redis session store is empty and no snapshot found at ${this.snapshotPath}`);
+                return;
+            }
+
+            let snapshot;
+            try {
+                const raw = await fs.readFile(this.snapshotPath, 'utf8');
+                snapshot = JSON.parse(raw);
+            } catch (err) {
+                log.error(() => ['[SessionManager] Failed to read session snapshot from disk:', err.message]);
+                return;
+            }
+
+            const sessions = snapshot?.sessions && typeof snapshot.sessions === 'object'
+                ? snapshot.sessions
+                : {};
+
+            let restored = 0;
+            for (const [token, sessionData] of Object.entries(sessions)) {
+                if (!/^[a-f0-9]{32}$/.test(token)) continue;
+
+                const tokenValidation = ensureTokenMetadata(sessionData, token);
+                if (tokenValidation.status === 'missing_fingerprint') {
+                    sessionData.tokenFingerprint = tokenValidation.expectedTokenFingerprint;
+                } else if (tokenValidation.status !== 'ok') {
+                    continue;
+                }
+
+                const payloadValidation = validateEncryptedSessionPayload(sessionData);
+                if (!payloadValidation.valid) continue;
+
+                try {
+                    const ttlSeconds = Number.isFinite(this.maxAge) ? Math.floor(this.maxAge / 1000) : null;
+                    await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
+                    restored++;
+                } catch (err) {
+                    log.error(() => ['[SessionManager] Failed to restore session from snapshot:', err.message]);
+                }
+            }
+
+            if (restored > 0) {
+                log.warn(() => `[SessionManager] Restored ${restored} session(s) from snapshot into Redis after detecting empty storage`);
+            }
+        } catch (err) {
+            log.error(() => ['[SessionManager] Snapshot restore failed:', err.message]);
         }
     }
 
@@ -1469,6 +1647,14 @@ class SessionManager extends EventEmitter {
             if (this.cleanupTimer) {
                 clearInterval(this.cleanupTimer);
                 log.warn(() => '[SessionManager] Cleared memory cleanup timer');
+            }
+
+            // CRITICAL: Wait for all pending async persistence operations to complete
+            // This prevents data loss from fire-and-forget promises during shutdown
+            try {
+                await this._flushPendingPersistence();
+            } catch (err) {
+                log.error(() => ['[SessionManager] Error flushing pending persistence during shutdown:', err?.message || String(err)]);
             }
 
             // Save with generous timeout to prevent data loss
