@@ -493,6 +493,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       --border: #dbe3ea;
       --shadow: 0 14px 40px rgba(12, 19, 56, 0.12);
       --glow: rgba(8, 164, 213, 0.25);
+      --theme-toggle-size: 48px;
     }
     [data-theme="dark"] {
       --surface: #141931;
@@ -534,6 +535,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
     .page {
       max-width: 1180px;
       margin: 0 auto;
+      padding-top: calc(var(--theme-toggle-size, 48px) + 20px);
     }
     .masthead {
       display: flex;
@@ -1068,11 +1070,10 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
     }
 
     @media (max-width: 768px) {
+      :root { --theme-toggle-size: 42px; }
       .theme-toggle {
         top: 1rem;
         right: 1rem;
-        width: 42px;
-        height: 42px;
       }
     }
   </style>

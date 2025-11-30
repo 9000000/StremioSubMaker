@@ -142,8 +142,8 @@ function themeToggleStyles() {
             position: fixed;
             top: 2rem;
             right: 2rem;
-            width: 48px;
-            height: 48px;
+            width: var(--theme-toggle-size, 48px);
+            height: var(--theme-toggle-size, 48px);
             background: rgba(255, 255, 255, 0.9);
             border: 2px solid var(--border);
             border-radius: 12px;
@@ -152,7 +152,7 @@ function themeToggleStyles() {
             justify-content: center;
             cursor: pointer;
             transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-            z-index: 9999;
+            z-index: 12050;
             box-shadow: 0 4px 12px var(--shadow);
             user-select: none;
             -webkit-user-select: none;
@@ -468,6 +468,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             --border: #dbe3ea;
             --shadow: rgba(0, 0, 0, 0.08);
             --glow: rgba(8, 164, 213, 0.25);
+            --theme-toggle-size: 48px;
         }
 
         [data-theme="dark"] {
@@ -955,6 +956,12 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             }
 
             .quick-nav-hero { width: 100%; }
+
+            :root { --theme-toggle-size: 42px; }
+            .theme-toggle {
+                top: 1rem;
+                right: 1rem;
+            }
         }
 
         @keyframes fadeInUp {
