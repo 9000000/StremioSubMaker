@@ -392,6 +392,10 @@
     }
 
     .subtitle-menu-status {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
       padding: 12px 16px;
       background: var(--sm-surface);
       border-top: 1px solid var(--sm-border);
@@ -402,8 +406,10 @@
       align-items: center;
       gap: 10px;
       animation: sm-slide-up 0.3s ease;
-      flex-shrink: 0;
       z-index: 20;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-radius: 0 0 20px 20px;
     }
 
     .subtitle-menu-status.show {
@@ -411,12 +417,13 @@
     }
 
     .subtitle-menu-status.error {
-      background: rgba(239, 68, 68, 0.05);
+      background: rgba(239, 68, 68, 0.1);
       color: #ef4444;
       border-top-color: rgba(239, 68, 68, 0.2);
     }
 
     .subtitle-menu-footer {
+      position: relative;
       padding: 12px 16px;
       background: rgba(255, 255, 255, 0.5);
       border-top: 1px solid var(--sm-border);
@@ -428,6 +435,8 @@
       font-size: 12px;
       color: var(--sm-text-muted);
       backdrop-filter: blur(8px);
+      z-index: 10;
+      min-height: 54px;
     }
 
     [data-theme="dark"] .subtitle-menu-footer,
@@ -888,7 +897,6 @@
 
       if (!message) {
         els.status.classList.remove('show');
-        if (els.footer) els.footer.style.display = 'flex';
         subtitleMenuState.statusTimer = setTimeout(() => {
           if (!els.status) return;
           els.status.style.display = 'none';
@@ -898,7 +906,7 @@
         return;
       }
 
-      if (els.footer) els.footer.style.display = 'none';
+      // Do not hide footer, status overlays it now
       els.status.textContent = message || '';
       els.status.className = 'subtitle-menu-status' + (variant === 'error' ? ' error' : '');
       els.status.style.display = 'flex';
@@ -907,7 +915,6 @@
       if (!persist) {
         subtitleMenuState.statusTimer = setTimeout(() => {
           els.status.classList.remove('show');
-          if (els.footer) els.footer.style.display = 'flex';
           subtitleMenuState.statusTimer = setTimeout(() => {
             if (!els.status) return;
             els.status.style.display = 'none';
