@@ -100,6 +100,28 @@ const inFlightTranslations = new LRUCache({
   updateAgeOnGet: false,
 });
 
+// Feature flag (default ON): allow permanent translation cache usage
+const ENABLE_PERMANENT_TRANSLATIONS = process.env.ENABLE_PERMANENT_TRANSLATIONS !== 'false';
+// Single shared prefix for the permanent translation cache (content-only)
+const TRANSLATION_STORAGE_PREFIX = 't2s__';   // Shared across configs/users (content-only)
+// Shared translation lock configuration (cross-instance in-flight awareness)
+const SHARED_TRANSLATION_LOCK_PREFIX = 'translation_lock:';
+const SHARED_TRANSLATION_LOCK_TTL_SECONDS = Math.max(
+  60,
+  parseInt(process.env.TRANSLATION_LOCK_TTL_SECONDS, 10) || (30 * 60)
+); // default 30 minutes
+
+function getTranslationStorageKey(cacheKey) {
+  if (!cacheKey || typeof cacheKey !== 'string') return '';
+  if (cacheKey.startsWith(TRANSLATION_STORAGE_PREFIX)) return cacheKey;
+  return `${TRANSLATION_STORAGE_PREFIX}${cacheKey}`;
+}
+
+function isValidTranslationKey(cacheKey) {
+  if (typeof cacheKey !== 'string' || cacheKey.length === 0) return false;
+  return cacheKey.startsWith(TRANSLATION_STORAGE_PREFIX);
+}
+
 // Directory for persistent translation cache (disk-only)
 const CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'translations');
 // Directory for bypass translation cache (disk-only, TTL-based) - for user bypass cache config
@@ -621,6 +643,41 @@ async function verifyBypassCacheIntegrity() {
   }
 }
 
+// One-time cleanup to remove legacy/unscoped permanent translation entries
+async function purgeLegacyTranslationCacheEntries() {
+  try {
+    const adapter = await getStorageAdapter();
+    const keys = await adapter.list(StorageAdapter.CACHE_TYPES.TRANSLATION);
+    if (!Array.isArray(keys) || keys.length === 0) {
+      return;
+    }
+
+    const allowedPrefixes = new Set([TRANSLATION_STORAGE_PREFIX]);
+    let removed = 0;
+    let retained = 0;
+
+    for (const rawKey of keys) {
+      const keyStr = String(rawKey || '');
+      const hasAllowedPrefix = Array.from(allowedPrefixes).some(p => keyStr.startsWith(p));
+      // Remove anything not in allowed namespaces
+      if (!hasAllowedPrefix) {
+        try {
+          await adapter.delete(keyStr, StorageAdapter.CACHE_TYPES.TRANSLATION);
+          removed++;
+        } catch (err) {
+          log.warn(() => ['[Cache] Failed to delete legacy translation key', keyStr, err.message]);
+        }
+      } else {
+        retained++;
+      }
+    }
+
+    log.debug(() => `[Cache] Legacy translation purge complete: removed=${removed}, retained=${retained}`);
+  } catch (error) {
+    log.error(() => ['[Cache] Failed legacy translation purge:', error.message]);
+  }
+}
+
 // Sanitize cache key to prevent path traversal attacks
 function sanitizeCacheKey(cacheKey) {
   // Remove any path traversal attempts
@@ -639,11 +696,62 @@ function sanitizeCacheKey(cacheKey) {
   return sanitized;
 }
 
+function getSharedTranslationLockKey(cacheKey) {
+  const safeKey = sanitizeCacheKey(cacheKey || '');
+  return `${SHARED_TRANSLATION_LOCK_PREFIX}${safeKey}`;
+}
+
+async function markSharedTranslationInFlight(cacheKey, userHash) {
+  if (!cacheKey) return;
+  try {
+    const adapter = await getStorageAdapter();
+    const key = getSharedTranslationLockKey(cacheKey);
+    const payload = {
+      inProgress: true,
+      startedAt: Date.now(),
+      userHash: userHash || 'anonymous'
+    };
+    await adapter.set(key, payload, StorageAdapter.CACHE_TYPES.SESSION, SHARED_TRANSLATION_LOCK_TTL_SECONDS);
+  } catch (error) {
+    log.warn(() => ['[TranslationLock] Failed to mark shared in-flight translation:', error.message]);
+  }
+}
+
+async function clearSharedTranslationInFlight(cacheKey) {
+  if (!cacheKey) return;
+  try {
+    const adapter = await getStorageAdapter();
+    const key = getSharedTranslationLockKey(cacheKey);
+    await adapter.delete(key, StorageAdapter.CACHE_TYPES.SESSION);
+  } catch (error) {
+    log.warn(() => ['[TranslationLock] Failed to clear shared in-flight translation:', error.message]);
+  }
+}
+
+async function isSharedTranslationInFlight(cacheKey) {
+  if (!cacheKey) return null;
+  try {
+    const adapter = await getStorageAdapter();
+    const key = getSharedTranslationLockKey(cacheKey);
+    const lock = await adapter.get(key, StorageAdapter.CACHE_TYPES.SESSION);
+    return lock || null;
+  } catch (error) {
+    log.warn(() => ['[TranslationLock] Failed to read shared in-flight translation state:', error.message]);
+    return null;
+  }
+}
+
 // Read translation from storage (async)
 async function readFromStorage(cacheKey) {
   try {
+    const namespacedKey = getTranslationStorageKey(cacheKey);
+    if (!isValidTranslationKey(namespacedKey)) {
+      log.warn(() => `[Cache] Skipping permanent cache read for invalid key=${shortKey(cacheKey)}`);
+      return null;
+    }
+
     const adapter = await getStorageAdapter();
-    const cached = await adapter.get(cacheKey, StorageAdapter.CACHE_TYPES.TRANSLATION);
+    const cached = await adapter.get(namespacedKey, StorageAdapter.CACHE_TYPES.TRANSLATION);
 
     if (!cached) {
       return null;
@@ -689,16 +797,16 @@ function getMobileWaitTimeoutMs(config) {
 }
 
 // Helper: fetch final translation/error from cache respecting bypass isolation
-async function getFinalCachedTranslation(cacheKey, { bypass, bypassEnabled, userHash, baseKey }) {
+async function getFinalCachedTranslation(storageKey, bypassKey, { bypass, bypassEnabled, userHash, allowPermanent }) {
   try {
     if (bypass && bypassEnabled) {
-      const bypassCached = await readFromBypassStorage(cacheKey);
+      const bypassCached = await readFromBypassStorage(bypassKey);
       if (bypassCached) {
         if (bypassCached.configHash && bypassCached.configHash !== userHash) {
-          log.warn(() => `[Translation] Bypass cache configHash mismatch while waiting for final result key=${cacheKey}`);
+          log.warn(() => `[Translation] Bypass cache configHash mismatch while waiting for final result key=${bypassKey}`);
           return null;
         } else if (!bypassCached.configHash) {
-          log.warn(() => `[Translation] Bypass cache entry missing configHash while waiting for final result key=${cacheKey}`);
+          log.warn(() => `[Translation] Bypass cache entry missing configHash while waiting for final result key=${bypassKey}`);
           return null;
         }
         if (bypassCached.isError === true) {
@@ -708,34 +816,26 @@ async function getFinalCachedTranslation(cacheKey, { bypass, bypassEnabled, user
       }
     }
 
-    const cached = await readFromStorage(cacheKey);
-    if (cached) {
-      if (cached.isError === true) {
-        return createTranslationErrorSubtitle(cached.errorType, cached.errorMessage);
-      }
-      return cached.content || cached;
-    }
-    // Legacy fallback: check pre-scoped permanent cache key if different
-    if (!bypass && baseKey && cacheKey !== baseKey) {
-      const legacy = await readFromStorage(baseKey);
-      if (legacy) {
-        if (legacy.isError === true) {
-          return createTranslationErrorSubtitle(legacy.errorType, legacy.errorMessage);
+    if (allowPermanent && ENABLE_PERMANENT_TRANSLATIONS) {
+      const cached = await readFromStorage(storageKey);
+      if (cached) {
+        if (cached.isError === true) {
+          return createTranslationErrorSubtitle(cached.errorType, cached.errorMessage);
         }
-        return legacy.content || legacy;
+        return cached.content || cached;
       }
     }
   } catch (error) {
-    log.warn(() => [`[Translation] Failed to fetch final cached result for ${cacheKey}:`, error.message]);
+    log.warn(() => [`[Translation] Failed to fetch final cached result for ${storageKey}:`, error.message]);
   }
   return null;
 }
 
 // Helper: wait for final translation to appear in cache (used for mobile mode)
-async function waitForFinalCachedTranslation(cacheKey, cacheOptions, timeoutMs) {
+async function waitForFinalCachedTranslation(storageKey, bypassKey, cacheOptions, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const result = await getFinalCachedTranslation(cacheKey, cacheOptions);
+    const result = await getFinalCachedTranslation(storageKey, bypassKey, cacheOptions);
     if (result) {
       return result;
     }
@@ -745,14 +845,24 @@ async function waitForFinalCachedTranslation(cacheKey, cacheOptions, timeoutMs) 
 }
 
 // Save translation to storage (async)
-async function saveToStorage(cacheKey, cachedData) {
+async function saveToStorage(cacheKey, cachedData, { allowPermanent = true } = {}) {
   try {
+    if (!allowPermanent) {
+      log.warn(() => `[Cache] Skipping permanent cache write (disabled) key=${shortKey(cacheKey)}`);
+      return;
+    }
+    const namespacedKey = getTranslationStorageKey(cacheKey);
+    if (!isValidTranslationKey(namespacedKey)) {
+      log.warn(() => `[Cache] Skipping permanent cache write for invalid key=${shortKey(cacheKey)}`);
+      return;
+    }
+
     const adapter = await getStorageAdapter();
     const ttl = StorageAdapter.DEFAULT_TTL[StorageAdapter.CACHE_TYPES.TRANSLATION];
-    await adapter.set(cacheKey, cachedData, StorageAdapter.CACHE_TYPES.TRANSLATION, ttl);
+    await adapter.set(namespacedKey, cachedData, StorageAdapter.CACHE_TYPES.TRANSLATION, ttl);
 
     cacheMetrics.diskWrites++;
-    log.debug(() => `[Cache] Saved translation to storage: ${cacheKey} (expires: ${cachedData.expiresAt ? new Date(cachedData.expiresAt).toISOString() : 'never'})`);
+    log.debug(() => `[Cache] Saved translation to storage: ${namespacedKey} (expires: ${cachedData.expiresAt ? new Date(cachedData.expiresAt).toISOString() : 'never'})`);
   } catch (error) {
     log.error(() => ['[Cache] Failed to save translation to storage:', error.message]);
   }
@@ -922,6 +1032,7 @@ function logCacheMetrics() {
 initializeCacheDirectory();
 (async () => { try { await verifyCacheIntegrity(); } catch (err) { log.error(() => ['[Cache] Async integrity check failed:', err.message]); } })();
 (async () => { try { await verifyBypassCacheIntegrity(); } catch (err) { log.error(() => ['[Bypass Cache] Async integrity check failed:', err.message]); } })();
+(async () => { try { await purgeLegacyTranslationCacheEntries(); } catch (err) { log.error(() => ['[Cache] Legacy translation purge failed:', err.message]); } })();
 (async () => {
   try {
     cacheMetrics.totalCacheSize = await calculateCacheSize();
@@ -1836,6 +1947,19 @@ function createSubtitleHandler(config) {
         };
       }
 
+      // Reject requests without a valid config hash before doing any provider work or cache access
+      if (!config || typeof config.__configHash !== 'string' || !config.__configHash.length) {
+        log.warn(() => '[Subtitles] Missing/invalid config hash - returning session token error entry');
+        return {
+          subtitles: [{
+            id: 'config_error_session_token',
+            // Prefix with "!" so Stremio lists this error entry first
+            lang: '!SubMaker Error',
+            url: `{{ADDON_URL}}/error-subtitle/session-token-not-found.srt`
+          }]
+        };
+      }
+
       // Extract stream filename for matching
       const streamFilename = extra?.filename || '';
       if (streamFilename) {
@@ -2316,6 +2440,10 @@ async function handleSubtitleDownload(fileId, language, config) {
     log.warn(() => '[Download] Blocked download because session token is missing/invalid');
     return createSessionTokenErrorSubtitle();
   }
+  if (!config || typeof config.__configHash !== 'string' || !config.__configHash.length) {
+    log.warn(() => '[Download] Blocked download because config hash is missing/invalid');
+    return createSessionTokenErrorSubtitle();
+  }
 
   // Normalize OpenSubtitles implementation/creds for downstream error handling and logs
   const openSubCfg = config.subtitleProviders?.opensubtitles || {};
@@ -2587,18 +2715,25 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
       log.warn(() => '[Translation] Blocked translation because session token is missing/invalid');
       return createSessionTokenErrorSubtitle();
     }
+    if (!config || typeof config.__configHash !== 'string' || !config.__configHash.length) {
+      log.warn(() => '[Translation] Blocked translation because config hash is missing/invalid');
+      return createSessionTokenErrorSubtitle();
+    }
 
     const waitForFullTranslation = options.waitForFullTranslation === true;
     const mobileWaitTimeoutMs = waitForFullTranslation ? getMobileWaitTimeoutMs(config) : null;
 
     // Generate cache keys using shared utility (single source of truth for cache key scoping)
-    const { baseKey, cacheKey, bypass, bypassEnabled, userHash } = generateCacheKeys(
+    const { baseKey, cacheKey, runtimeKey, bypass, bypassEnabled, userHash, allowPermanent } = generateCacheKeys(
       config,
       sourceFileId,
       targetLanguage
     );
+    // Shared in-flight key for permanent translations so other configs don't start duplicate work
+    const sharedInFlightKey = (!bypass && allowPermanent && ENABLE_PERMANENT_TRANSLATIONS) ? baseKey : null;
+    const sharedLockKey = sharedInFlightKey || runtimeKey;
 
-    log.debug(() => `[Translation] Cache key: ${cacheKey} (bypass: ${bypass && bypassEnabled})`);
+    log.debug(() => `[Translation] Cache key: ${cacheKey} (bypass: ${bypass && bypassEnabled}, runtimeKey=${runtimeKey})`);
 
 
     if (bypass) {
@@ -2641,48 +2776,34 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
           }
         }
       }
-  } else {
-    let cached = await readFromStorage(cacheKey);
-    // Legacy compatibility: fall back to pre-scoped key if not found
-    if (!cached && cacheKey !== baseKey) {
-      cached = await readFromStorage(baseKey);
+    } else if (allowPermanent && ENABLE_PERMANENT_TRANSLATIONS) {
+      const cached = await readFromStorage(baseKey);
       if (cached) {
-        log.debug(() => ['[Translation] Legacy cache hit (permanent) key=', baseKey, ' - promoting to scoped key']);
-        // Optionally promote legacy entry to new scoped key for future hits
-        try {
-          await saveToStorage(cacheKey, cached);
-        } catch (e) {
-          log.warn(() => ['[Translation] Failed to promote legacy cache to scoped key:', e.message]);
-        }
-      }
-    }
-    if (cached) {
-      // Check if this is a cached error
-      if (cached.isError === true) {
-        log.debug(() => ['[Translation] Cached error found (permanent) key=', cacheKey, ' - showing error and clearing cache']);
-        const errorSrt = createTranslationErrorSubtitle(cached.errorType, cached.errorMessage);
+        // Check if this is a cached error
+        if (cached.isError === true) {
+          log.debug(() => ['[Translation] Cached error found (permanent) key=', cacheKey, ' - showing error and clearing cache']);
+          const errorSrt = createTranslationErrorSubtitle(cached.errorType, cached.errorMessage);
 
-        // Delete the error cache so next click retries translation
-        const adapter = await getStorageAdapter();
-        try {
-          await adapter.delete(cacheKey, StorageAdapter.CACHE_TYPES.TRANSLATION);
-          if (cacheKey !== baseKey) {
-            await adapter.delete(baseKey, StorageAdapter.CACHE_TYPES.TRANSLATION);
+          // Delete the error cache so next click retries translation
+          const adapter = await getStorageAdapter();
+          try {
+            await adapter.delete(getTranslationStorageKey(baseKey), StorageAdapter.CACHE_TYPES.TRANSLATION);
+            log.debug(() => '[Translation] Cleared error cache for retry');
+          } catch (e) {
+            log.warn(() => ['[Translation] Failed to delete error cache:', e.message]);
           }
-          log.debug(() => '[Translation] Cleared error cache for retry');
-        } catch (e) {
-          log.warn(() => ['[Translation] Failed to delete error cache:', e.message]);
+
+          return errorSrt;
         }
 
-        return errorSrt;
+        log.debug(() => ['[Translation] Cache hit (permanent) key=', cacheKey, ' - serving cached translation']);
+        cacheMetrics.hits++;
+        cacheMetrics.estimatedCostSaved += 0.004; // Estimated $0.004 per translation
+        return cached.content || cached;
       }
-
-      log.debug(() => ['[Translation] Cache hit (permanent) key=', cacheKey, ' - serving cached translation']);
-      cacheMetrics.hits++;
-      cacheMetrics.estimatedCostSaved += 0.004; // Estimated $0.004 per translation
-      return cached.content || cached;
+    } else {
+      log.debug(() => `[Translation] Permanent cache disabled for this request (allowPermanent=${allowPermanent}, flag=${ENABLE_PERMANENT_TRANSLATIONS})`);
     }
-  }
 
     // Cache miss
     cacheMetrics.misses++;
@@ -2691,14 +2812,16 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
     // === RACE CONDITION PROTECTION ===
     // Check if there's already an in-flight request for this exact key
     // All simultaneous requests will share the same promise
-    const inFlightPromise = inFlightTranslations.get(cacheKey);
+    const inFlightPromise = inFlightTranslations.get(runtimeKey)
+      || (sharedInFlightKey ? inFlightTranslations.get(sharedInFlightKey) : null);
     if (inFlightPromise) {
-      log.debug(() => `[Translation] Detected in-flight translation for key=${cacheKey}; ${waitForFullTranslation ? 'waiting for completion (mobile mode)' : 'checking for partial results'}`);
+      log.debug(() => `[Translation] Detected in-flight translation for key=${sharedInFlightKey || runtimeKey}; ${waitForFullTranslation ? 'waiting for completion (mobile mode)' : 'checking for partial results'}`);
       try {
         if (waitForFullTranslation) {
           const waitedResult = await waitForFinalCachedTranslation(
+            baseKey,
             cacheKey,
-            { bypass, bypassEnabled, userHash, baseKey },
+            { bypass, bypassEnabled, userHash, allowPermanent: allowPermanent && ENABLE_PERMANENT_TRANSLATIONS },
             mobileWaitTimeoutMs
           );
 
@@ -2712,7 +2835,9 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
         } else {
           // DON'T WAIT for completion - immediately return available partials instead
           // Check storage first (in case it just completed)
-          const cachedResult = await readFromStorage(cacheKey);
+          const cachedResult = (allowPermanent && ENABLE_PERMANENT_TRANSLATIONS)
+            ? await readFromStorage(baseKey)
+            : null;
           if (cachedResult) {
             log.debug(() => '[Translation] Final result already cached; returning it');
             cacheMetrics.hits++;
@@ -2720,7 +2845,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
           }
 
           // Check partial cache (most common case - translation in progress)
-          const partialResult = await readFromPartialCache(cacheKey);
+          const partialResult = await readFromPartialCache(runtimeKey);
           if (partialResult && typeof partialResult.content === 'string' && partialResult.content.length > 0) {
             log.debug(() => `[Translation] Returning partial result (${partialResult.content.length} chars) without waiting for completion`);
             return partialResult.content;
@@ -2739,15 +2864,30 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
       }
     }
 
+    // Check if another instance has an in-flight translation lock
+    let sharedLock = null;
+    let sharedLockInProgress = false;
+    try {
+      sharedLock = await isSharedTranslationInFlight(sharedLockKey);
+      sharedLockInProgress = !!(sharedLock && sharedLock.inProgress !== false);
+    } catch (_) {}
+
     // Check if translation is in progress (for backward compatibility)
-    const status = translationStatus.get(cacheKey);
+    const status = translationStatus.get(runtimeKey)
+      || (sharedInFlightKey ? translationStatus.get(sharedInFlightKey) : null)
+      || (sharedLockInProgress ? {
+        inProgress: true,
+        startedAt: sharedLock?.startedAt || Date.now(),
+        userHash: sharedLock?.userHash || userHash
+      } : null);
     if (status && status.inProgress) {
       const elapsedTime = Math.floor((Date.now() - status.startedAt) / 1000);
-      log.debug(() => `[Translation] In-progress existing translation key=${cacheKey} (elapsed ${elapsedTime}s); ${waitForFullTranslation ? 'waiting for final result (mobile mode)' : 'attempting partial SRT'}`);
+      log.debug(() => `[Translation] In-progress existing translation key=${sharedInFlightKey || runtimeKey} (elapsed ${elapsedTime}s); ${waitForFullTranslation ? 'waiting for final result (mobile mode)' : 'attempting partial SRT'}`);
       if (waitForFullTranslation) {
         const waitedResult = await waitForFinalCachedTranslation(
+          baseKey,
           cacheKey,
-          { bypass, bypassEnabled, userHash, baseKey },
+          { bypass, bypassEnabled, userHash, allowPermanent: allowPermanent && ENABLE_PERMANENT_TRANSLATIONS },
           mobileWaitTimeoutMs
         );
 
@@ -2760,7 +2900,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
         return createTranslationErrorSubtitle('other', 'Translation did not finish in time. Please retry.');
       } else {
         try {
-          const partial = await readFromPartialCache(cacheKey);
+          const partial = await readFromPartialCache(runtimeKey);
           if (partial && typeof partial.content === 'string' && partial.content.length > 0) {
             log.debug(() => '[Translation] Serving partial SRT from partial cache');
             return partial.content;
@@ -2849,13 +2989,28 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
     // === START BACKGROUND TRANSLATION ===
     // Mark translation as in progress and start it in background
     log.debug(() => ['[Translation] Not cached and not in-progress; starting translation key=', cacheKey]);
-    translationStatus.set(cacheKey, { inProgress: true, startedAt: Date.now(), userHash: effectiveUserHash });
+    translationStatus.set(runtimeKey, { inProgress: true, startedAt: Date.now(), userHash: effectiveUserHash });
+    if (sharedInFlightKey) {
+      translationStatus.set(sharedInFlightKey, { inProgress: true, startedAt: Date.now(), userHash: effectiveUserHash });
+    }
+    await markSharedTranslationInFlight(sharedLockKey, effectiveUserHash);
     userTranslationCounts.set(effectiveUserHash, currentCount + 1);
 
     // Create a promise for this translation that all simultaneous requests will wait for
     // Pass the already-downloaded sourceContent to avoid re-downloading
-    const translationPromise = performTranslation(sourceFileId, targetLanguage, config, cacheKey, effectiveUserHash, sourceContent);
-    inFlightTranslations.set(cacheKey, translationPromise);
+    const translationPromise = performTranslation(
+      sourceFileId,
+      targetLanguage,
+      config,
+      { cacheKey, runtimeKey, baseKey, sharedInFlightKey },
+      effectiveUserHash,
+      allowPermanent,
+      sourceContent
+    );
+    inFlightTranslations.set(runtimeKey, translationPromise);
+    if (sharedInFlightKey) {
+      inFlightTranslations.set(sharedInFlightKey, translationPromise);
+    }
 
     // Start translation in background (don't await here)
     translationPromise.catch(error => {
@@ -2865,18 +3020,24 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
       }
       // Mark as failed so it can be retried
       try {
-        translationStatus.delete(cacheKey);
+        translationStatus.delete(runtimeKey);
+        if (sharedInFlightKey) translationStatus.delete(sharedInFlightKey);
       } catch (_) {}
-    }).finally(() => {
+    }).finally(async () => {
       // Clean up the in-flight promise when done
-      inFlightTranslations.delete(cacheKey);
+      inFlightTranslations.delete(runtimeKey);
+      if (sharedInFlightKey) inFlightTranslations.delete(sharedInFlightKey);
+      try {
+        await clearSharedTranslationInFlight(sharedLockKey);
+      } catch (_) {}
     });
 
     // In mobile mode, hold the response until the translation finishes to avoid stale Android caching
     if (waitForFullTranslation) {
       const waitedResult = await waitForFinalCachedTranslation(
+        baseKey,
         cacheKey,
-        { bypass, bypassEnabled, userHash, baseKey },
+        { bypass, bypassEnabled, userHash, allowPermanent: allowPermanent && ENABLE_PERMANENT_TRANSLATIONS },
         mobileWaitTimeoutMs
       );
 
@@ -2908,7 +3069,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
  * @param {string} userHash - User hash for concurrency tracking
  * @param {string} preDownloadedContent - Optional pre-downloaded source content (from pre-flight validation)
  */
-async function performTranslation(sourceFileId, targetLanguage, config, cacheKey, userHash, preDownloadedContent = null) {
+async function performTranslation(sourceFileId, targetLanguage, config, { cacheKey, runtimeKey, baseKey, sharedInFlightKey = null }, userHash, allowPermanent, preDownloadedContent = null) {
   try {
     log.debug(() => `[Translation] Background translation started for ${sourceFileId} to ${targetLanguage}`);
     cacheMetrics.apiCalls++;
@@ -2982,7 +3143,8 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
             expiresAt: Date.now() + 10 * 60 * 1000,
             configHash: userHash  // Include user hash for isolation
           });
-          translationStatus.delete(cacheKey);
+          translationStatus.delete(runtimeKey);
+          if (sharedInFlightKey) translationStatus.delete(sharedInFlightKey);
           log.debug(() => '[Translation] Aborted due to invalid/corrupted source subtitle (too small).');
           return;
         }
@@ -3099,7 +3261,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
           const persistPartial = async (partialText, logThisProgress) => {
             const partialSrt = buildPartialSrtWithTail(partialText);
             if (!partialSrt || partialSrt.length === 0) return false;
-            await saveToPartialCacheAsync(cacheKey, {
+            await saveToPartialCacheAsync(runtimeKey, {
               content: partialSrt,
               expiresAt: Date.now() + 60 * 60 * 1000
             });
@@ -3190,30 +3352,35 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
         await saveToBypassStorage(cacheKey, cachedData);
         log.debug(() => `[Translation] Saved to bypass cache: key=${cacheKey}, userHash=${userHash}, expiresAt=${new Date(expiresAt).toISOString()}`);
       }
-    } else if (cacheConfig.enabled && cacheConfig.persistent !== false) {
+    } else if (cacheConfig.enabled && cacheConfig.persistent !== false && allowPermanent && ENABLE_PERMANENT_TRANSLATIONS) {
       // Save to permanent storage (no expiry)
       const cacheDuration = cacheConfig.duration; // 0 = permanent
       const expiresAt = cacheDuration > 0 ? Date.now() + (cacheDuration * 60 * 60 * 1000) : null;
       const cachedData = {
-        key: cacheKey,
+        key: baseKey,
         content: translatedContent,
         createdAt: Date.now(),
         expiresAt,
         sourceFileId,
         targetLanguage
       };
-      await saveToStorage(cacheKey, cachedData);
+      await saveToStorage(baseKey, cachedData, { allowPermanent });
+    } else {
+      log.debug(() => `[Translation] Skipped permanent cache write (allow=${allowPermanent}, flag=${ENABLE_PERMANENT_TRANSLATIONS}, persistent=${cacheConfig.persistent !== false}, enabled=${cacheConfig.enabled})`);
     }
 
     // Mark translation as complete
-    translationStatus.set(cacheKey, { inProgress: false, completedAt: Date.now() });
+    translationStatus.set(runtimeKey, { inProgress: false, completedAt: Date.now() });
+    if (sharedInFlightKey) {
+      translationStatus.set(sharedInFlightKey, { inProgress: false, completedAt: Date.now() });
+    }
 
     // Clean up partial cache now that final translation is saved
     // Partial cache is no longer needed and should be deleted to free disk space
-    try {
-      const adapter = await getStorageAdapter();
-      await adapter.delete(cacheKey, StorageAdapter.CACHE_TYPES.PARTIAL);
-      log.debug(() => `[Translation] Cleaned up partial cache for ${cacheKey}`);
+      try {
+        const adapter = await getStorageAdapter();
+        await adapter.delete(runtimeKey, StorageAdapter.CACHE_TYPES.PARTIAL);
+        log.debug(() => `[Translation] Cleaned up partial cache for ${runtimeKey}`);
     } catch (e) {
       // Ignore - partial cache might not exist or already cleaned
       log.debug(() => `[Translation] Partial cache cleanup skipped (might not exist): ${e.message}`);
@@ -3296,22 +3463,23 @@ async function performTranslation(sourceFileId, targetLanguage, config, cacheKey
         await saveToBypassStorage(cacheKey, errorCache);
         log.debug(() => '[Translation] Error cached to bypass storage');
       } else {
-        // Save to permanent storage with TTL
-        await saveToStorage(cacheKey, errorCache);
-        log.debug(() => '[Translation] Error cached to permanent storage');
+        log.debug(() => `[Translation] Skipping permanent error cache (allow=${allowPermanent}, flag=${ENABLE_PERMANENT_TRANSLATIONS})`);
       }
     } catch (cacheError) {
       log.warn(() => ['[Translation] Failed to cache error:', cacheError.message]);
     }
 
     // Remove from status so it can be retried
-    try { translationStatus.delete(cacheKey); } catch (_) {}
+    try {
+      translationStatus.delete(runtimeKey);
+      if (sharedInFlightKey) translationStatus.delete(sharedInFlightKey);
+    } catch (_) {}
 
     // Clean up partial cache on error as well
     try {
       const adapter = await getStorageAdapter();
-      await adapter.delete(cacheKey, StorageAdapter.CACHE_TYPES.PARTIAL);
-      log.debug(() => `[Translation] Cleaned up partial cache after error for ${cacheKey}`);
+      await adapter.delete(runtimeKey, StorageAdapter.CACHE_TYPES.PARTIAL);
+      log.debug(() => `[Translation] Cleaned up partial cache after error for ${runtimeKey}`);
     } catch (e) {
       // Ignore - partial cache might not exist
     }
@@ -3501,19 +3669,15 @@ module.exports = {
    */
   hasCachedTranslation: async function (sourceFileId, targetLanguage, config) {
     try {
-      const { cacheKey, baseKey, bypass, bypassEnabled, userHash } = generateCacheKeys(config, sourceFileId, targetLanguage);
+      const { cacheKey, baseKey, bypass, bypassEnabled, userHash, allowPermanent } = generateCacheKeys(config, sourceFileId, targetLanguage);
 
       if (bypass && bypassEnabled && userHash) {
         // Check bypass cache with user-scoped key
         const cached = await readFromBypassStorage(cacheKey);
         return !!(cached && ((cached.content && typeof cached.content === 'string' && cached.content.length > 0) || (typeof cached === 'string' && cached.length > 0)));
-      } else {
+      } else if (allowPermanent && ENABLE_PERMANENT_TRANSLATIONS) {
         // Check permanent cache
-        let cached = await readFromStorage(cacheKey);
-        // Legacy fallback: check pre-scoped key if different
-        if (!cached && baseKey && cacheKey !== baseKey) {
-          cached = await readFromStorage(baseKey);
-        }
+        let cached = await readFromStorage(baseKey);
         return !!(cached && ((cached.content && typeof cached.content === 'string' && cached.content.length > 0) || (typeof cached === 'string' && cached.length > 0)));
       }
     } catch (_) {
@@ -3526,7 +3690,7 @@ module.exports = {
    */
   purgeTranslationCache: async function (sourceFileId, targetLanguage, config) {
     try {
-      const { cacheKey, baseKey, bypass, bypassEnabled, userHash } = generateCacheKeys(config, sourceFileId, targetLanguage);
+      const { cacheKey, baseKey, runtimeKey, bypass, bypassEnabled, userHash, allowPermanent } = generateCacheKeys(config, sourceFileId, targetLanguage);
       const adapter = await getStorageAdapter();
 
       // CACHE-TYPE AWARE DELETION: Only delete the cache type the user is using
@@ -3553,29 +3717,34 @@ module.exports = {
 
         // Clear user-scoped translation status
         try {
-          translationStatus.delete(cacheKey);
-          log.debug(() => `[Purge] Cleared user-scoped translation status for ${cacheKey}`);
+          translationStatus.delete(runtimeKey);
+          log.debug(() => `[Purge] Cleared user-scoped translation status for ${runtimeKey}`);
         } catch (_) {}
 
       } else {
         // User is using PERMANENT CACHE - only delete permanent cache
         log.debug(() => `[Purge] User is using permanent cache - deleting permanent entries only`);
 
-        try {
-          await adapter.delete(cacheKey, StorageAdapter.CACHE_TYPES.TRANSLATION);
-          log.debug(() => `[Purge] Removed permanent cache for ${cacheKey}`);
-          if (cacheKey !== baseKey) {
-            await adapter.delete(baseKey, StorageAdapter.CACHE_TYPES.TRANSLATION);
-            log.debug(() => `[Purge] Removed legacy permanent cache for ${baseKey}`);
+        if (allowPermanent && ENABLE_PERMANENT_TRANSLATIONS) {
+          try {
+            await adapter.delete(getTranslationStorageKey(baseKey), StorageAdapter.CACHE_TYPES.TRANSLATION);
+            log.debug(() => `[Purge] Removed permanent cache for ${baseKey}`);
+            // Best-effort cleanup of legacy un-namespaced keys
+            try {
+              await adapter.delete(getTranslationStorageKey(cacheKey), StorageAdapter.CACHE_TYPES.TRANSLATION);
+            } catch (_) {}
+          } catch (e) {
+            log.warn(() => [`[Purge] Failed removing permanent cache for ${baseKey}:`, e.message]);
           }
-        } catch (e) {
-          log.warn(() => [`[Purge] Failed removing permanent cache for ${cacheKey}:`, e.message]);
+        } else {
+          log.debug(() => `[Purge] Skipped permanent cache purge (allow=${allowPermanent}, flag=${ENABLE_PERMANENT_TRANSLATIONS})`);
         }
 
         // Clear unscoped translation status
         try {
-          translationStatus.delete(cacheKey);
-          log.debug(() => `[Purge] Cleared translation status for ${cacheKey}`);
+          translationStatus.delete(runtimeKey);
+          translationStatus.delete(baseKey);
+          log.debug(() => `[Purge] Cleared translation status for ${runtimeKey}`);
         } catch (_) {}
       }
 
@@ -3583,12 +3752,8 @@ module.exports = {
       // Partial cache stores incomplete translations that are still being generated
       // IMPORTANT: For bypass cache, partial cache is also user-scoped
       try {
-        await adapter.delete(cacheKey, StorageAdapter.CACHE_TYPES.PARTIAL);
-        log.debug(() => `[Purge] Removed partial cache for ${cacheKey}`);
-        if (cacheKey !== baseKey) {
-          await adapter.delete(baseKey, StorageAdapter.CACHE_TYPES.PARTIAL);
-          log.debug(() => `[Purge] Removed legacy partial cache for ${baseKey}`);
-        }
+        await adapter.delete(runtimeKey, StorageAdapter.CACHE_TYPES.PARTIAL);
+        log.debug(() => `[Purge] Removed partial cache for ${runtimeKey}`);
       } catch (e) {
         // Ignore - partial cache might not exist
       }
@@ -3608,5 +3773,9 @@ module.exports = {
    * In-flight translations tracker
    * Used by the 3-click reset safety check to prevent purging cache during active translations
    */
-  inFlightTranslations
+  inFlightTranslations,
+  /**
+   * Cross-instance in-flight translation detector (shared lock)
+   */
+  isSharedTranslationInFlight
 };

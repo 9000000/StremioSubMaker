@@ -27,6 +27,7 @@ All notable changes to this project will be documented in this file.
 - **Session counting:** Redis sessions now maintain a set-based index for O(1) counts; the index is verified on startup and every 3 hours with automatic rebuild on drift, and session purges fetch metadata with bounded concurrency to reduce spikes.
 - **Cache maintenance:** Subtitle cache/bypass integrity checks, size calculation, and evictions now run asynchronously to avoid blocking the event loop during periodic cleanups.
 - **Subtitle labels:** Subtitle menu normalizes generated labels (Make/Learn/xEmbed/xSync) and hides empty groups from screen readers for clearer navigation.
+- **Permanent translation cache reinstated (scoped & namespaced):** Permanent “Make (Language)” translations are re-enabled with strict config-scoped keys, a new namespaced storage prefix, automatic legacy purge, and hard bypass of permanent writes when a config hash is missing—eliminating cross-user leakage while retaining LRU size-based eviction.
 
 ## SubMaker v1.4.10
 
