@@ -80,10 +80,6 @@ services:
       --timeout 300
       --tcp-keepalive 60
       --requirepass "$$REDIS_PASSWORD"
-      --rename-command FLUSHDB ""
-      --rename-command FLUSHALL ""
-      --rename-command CONFIG ""
-      --rename-command SAVE ""
       '
     ports:
       - "127.0.0.1:6379:6379"
