@@ -192,6 +192,8 @@
       display: flex;
       flex-direction: column;
       gap: 24px;
+      flex: 1;
+      min-height: 0;
       scrollbar-width: thin;
       scrollbar-color: var(--sm-text-muted) transparent;
     }
@@ -390,38 +392,90 @@
     }
 
     .subtitle-menu-status {
-      position: absolute;
-      bottom: 24px;
-      left: 24px;
-      right: 24px;
       padding: 12px 16px;
       background: var(--sm-surface);
-      border: 1px solid var(--sm-border);
-      border-radius: 12px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+      border-top: 1px solid var(--sm-border);
       font-size: 13px;
       font-weight: 600;
       color: var(--sm-text);
-      display: flex;
+      display: none;
       align-items: center;
       gap: 10px;
-      transform: translateY(20px);
-      opacity: 0;
-      pointer-events: none;
-      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-      z-index: 10;
+      animation: sm-slide-up 0.3s ease;
+      flex-shrink: 0;
+      z-index: 20;
     }
 
     .subtitle-menu-status.show {
-      transform: translateY(0);
-      opacity: 1;
+      display: flex;
     }
 
     .subtitle-menu-status.error {
-      border-color: rgba(239, 68, 68, 0.3);
-      color: #ef4444;
       background: rgba(239, 68, 68, 0.05);
+      color: #ef4444;
+      border-top-color: rgba(239, 68, 68, 0.2);
     }
+
+    .subtitle-menu-footer {
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.5);
+      border-top: 1px solid var(--sm-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-shrink: 0;
+      font-size: 12px;
+      color: var(--sm-text-muted);
+      backdrop-filter: blur(8px);
+    }
+
+    [data-theme="dark"] .subtitle-menu-footer,
+    [data-theme="true-dark"] .subtitle-menu-footer {
+      background: rgba(15, 23, 42, 0.5);
+    }
+
+    .subtitle-menu-footer-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      overflow: hidden;
+    }
+
+    .subtitle-menu-footer-title {
+      font-weight: 600;
+      color: var(--sm-text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .subtitle-menu-footer-meta {
+      font-size: 11px;
+      opacity: 0.8;
+    }
+
+    .subtitle-menu-footer-stats {
+      display: flex;
+      gap: 8px;
+    }
+
+    .subtitle-menu-stat {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: rgba(125, 125, 125, 0.1);
+      border-radius: 6px;
+      font-weight: 600;
+      color: var(--sm-text);
+    }
+
+    .subtitle-menu-stat svg {
+      opacity: 0.7;
+    }
+
+    @keyframes sm-slide-up { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
     @keyframes sm-spin { to { transform: rotate(360deg); } }
     @keyframes sm-slide-down { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
@@ -508,20 +562,27 @@
         </div>
         <div class="subtitle-menu-group">
           <div class="subtitle-menu-group-title">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 8l6 6"></path><path d="M4 14h6"></path><path d="M2 5h12"></path><path d="M7 2h1"></path><path d="M22 22l-5-10-5 10"></path><path d="M14 18h6"></path></svg>
-            Translation
-          </div>
-          <div class="subtitle-menu-list" id="subtitleMenuTranslation"></div>
-        </div>
-        <div class="subtitle-menu-group">
-          <div class="subtitle-menu-group-title">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
             Target & cached
           </div>
           <div class="subtitle-menu-list" id="subtitleMenuTarget"></div>
         </div>
+        <div class="subtitle-menu-group">
+          <div class="subtitle-menu-group-title">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 8l6 6"></path><path d="M4 14h6"></path><path d="M2 5h12"></path><path d="M7 2h1"></path><path d="M22 22l-5-10-5 10"></path><path d="M14 18h6"></path></svg>
+            Translation
+          </div>
+          <div class="subtitle-menu-list" id="subtitleMenuTranslation"></div>
+        </div>
       </div>
       <div class="subtitle-menu-status" id="subtitleMenuStatus" role="status" aria-live="polite"></div>
+      <div class="subtitle-menu-footer" id="subtitleMenuFooter">
+        <div class="subtitle-menu-footer-info">
+          <div class="subtitle-menu-footer-title">SubMaker</div>
+          <div class="subtitle-menu-footer-meta">${config.version ? 'v' + config.version : ''}</div>
+        </div>
+        <div class="subtitle-menu-footer-stats" id="subtitleMenuFooterStats"></div>
+      </div>
     `;
 
     document.body.appendChild(toggle);
@@ -537,7 +598,11 @@
       targetList: panel.querySelector('#subtitleMenuTarget'),
       refresh: panel.querySelector('#subtitleMenuRefresh'),
       close: panel.querySelector('#subtitleMenuClose'),
-      substatus: panel.querySelector('#subtitleMenuSubstatus')
+      substatus: panel.querySelector('#subtitleMenuSubstatus'),
+      footer: panel.querySelector('#subtitleMenuFooter'),
+      footerTitle: panel.querySelector('.subtitle-menu-footer-title'),
+      footerMeta: panel.querySelector('.subtitle-menu-footer-meta'),
+      footerStats: panel.querySelector('#subtitleMenuFooterStats')
     };
   }
 
@@ -620,7 +685,8 @@
       targetOptions: options.targetOptions || [],
       onTargetsHydrated: typeof options.onTargetsHydrated === 'function' ? options.onTargetsHydrated : null,
       languageMaps: buildLanguageLookup(options.languageMaps || {}),
-      getVideoHash: typeof options.getVideoHash === 'function' ? options.getVideoHash : null
+      getVideoHash: typeof options.getVideoHash === 'function' ? options.getVideoHash : null,
+      version: options.version || ''
     };
 
     const subtitleMenuState = {
@@ -819,8 +885,10 @@
         clearTimeout(subtitleMenuState.statusTimer);
         subtitleMenuState.statusTimer = null;
       }
+
       if (!message) {
         els.status.classList.remove('show');
+        if (els.footer) els.footer.style.display = 'flex';
         subtitleMenuState.statusTimer = setTimeout(() => {
           if (!els.status) return;
           els.status.style.display = 'none';
@@ -829,13 +897,17 @@
         }, 300);
         return;
       }
+
+      if (els.footer) els.footer.style.display = 'none';
       els.status.textContent = message || '';
       els.status.className = 'subtitle-menu-status' + (variant === 'error' ? ' error' : '');
       els.status.style.display = 'flex';
       requestAnimationFrame(() => els.status?.classList.add('show'));
+
       if (!persist) {
         subtitleMenuState.statusTimer = setTimeout(() => {
           els.status.classList.remove('show');
+          if (els.footer) els.footer.style.display = 'flex';
           subtitleMenuState.statusTimer = setTimeout(() => {
             if (!els.status) return;
             els.status.style.display = 'none';
@@ -1004,12 +1076,36 @@
       };
 
       renderList(els.sourceList, grouped.source);
-      renderList(els.translationList, grouped.translation);
       renderList(els.targetList, grouped.target);
+      renderList(els.translationList, grouped.translation);
 
       if (els.body) {
         const hasAny = filtered.length > 0;
         els.body.style.display = hasAny ? 'flex' : 'none';
+      }
+
+      // Update footer stats
+      if (els.footerStats) {
+        const totalSubs = filtered.length;
+        const totalLangs = new Set(filtered.map(i => i.languageKey)).size;
+
+        els.footerStats.innerHTML = `
+          <div class="subtitle-menu-stat" title="Total subtitles">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            ${totalSubs}
+          </div>
+          <div class="subtitle-menu-stat" title="Languages available">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            ${totalLangs}
+          </div>
+        `;
+      }
+
+      if (els.footerTitle && config.filename) {
+        els.footerTitle.textContent = config.filename;
+        els.footerTitle.title = config.filename;
+      } else if (els.footerTitle && config.videoId) {
+        els.footerTitle.textContent = config.videoId;
       }
     }
 

@@ -1201,11 +1201,11 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
   </div>
   <script>
     const TOOLBOX = ${safeJsonSerialize({
-      configStr,
-      videoId,
-      filename: filename || '',
-      videoHash
-    })};
+    configStr,
+    videoId,
+    filename: filename || '',
+    videoHash
+  })};
 
     function initStreamRefreshButton(opts) {
       const btn = document.getElementById(opts.buttonId);
@@ -4461,12 +4461,12 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
   <script src="/js/combobox.js"></script>
   <script>
     const BOOTSTRAP = ${safeJsonSerialize({
-      configStr,
-      videoId,
-      filename: filename || '',
-      videoHash,
-      defaults
-    })};
+    configStr,
+    videoId,
+    filename: filename || '',
+    videoHash,
+    defaults
+  })};
     const PAGE = { configStr: BOOTSTRAP.configStr, videoId: BOOTSTRAP.videoId, filename: BOOTSTRAP.filename || '', videoHash: BOOTSTRAP.videoHash || '' };
     const SUBTITLE_MENU_TARGETS = ${JSON.stringify(subtitleMenuTargets)};
     const SUBTITLE_LANGUAGE_MAPS = ${safeJsonSerialize(languageMaps)};
@@ -4487,7 +4487,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
           videoHash: PAGE.videoHash,
           targetOptions: SUBTITLE_MENU_TARGETS,
           languageMaps: SUBTITLE_LANGUAGE_MAPS,
-          getVideoHash: () => PAGE.videoHash || ''
+          getVideoHash: () => PAGE.videoHash || '',
+          version: '${appVersion}'
         });
       } catch (err) {
         console.warn('Subtitle menu init failed', err);
