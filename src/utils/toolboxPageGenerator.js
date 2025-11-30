@@ -437,6 +437,11 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
   const videoHash = deriveVideoHash(filename, videoId);
   const devMode = (config || {}).devMode === true;
   const devDisabledClass = devMode ? '' : ' dev-disabled';
+  const languageMaps = buildLanguageLookupMaps();
+  const subtitleMenuTargets = (config?.targetLanguages || []).map(code => ({
+    code,
+    name: getLanguageName(code) || code
+  }));
 
   return `
 <!DOCTYPE html>
@@ -1194,6 +1199,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
     </div>
 
   </div>
+  <script src="/js/subtitle-menu.js"></script>
   <script>
     const TOOLBOX = ${safeJsonSerialize({
       configStr,
@@ -1201,6 +1207,66 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       filename: filename || '',
       videoHash
     })};
+    const subtitleMenuInstanceOpts = {
+      targetOptions: SUBTITLE_MENU_TARGETS,
+      languageMaps: SUBTITLE_LANGUAGE_MAPS
+    };
+
+    function mountSubtitleMenu() {
+      if (!window.SubtitleMenu || typeof window.SubtitleMenu.mount !== 'function') return null;
+      try {
+        return window.SubtitleMenu.mount({
+          configStr: TOOLBOX.configStr,
+          videoId: TOOLBOX.videoId,
+          filename: TOOLBOX.filename,
+          videoHash: TOOLBOX.videoHash,
+          targetOptions: subtitleMenuInstanceOpts.targetOptions,
+          languageMaps: subtitleMenuInstanceOpts.languageMaps,
+          getVideoHash: () => TOOLBOX.videoHash || ''
+        });
+      } catch (err) {
+        console.warn('Subtitle menu init failed', err);
+        return null;
+      }
+    }
+
+    function updateSubtitleMenuStream(payload = {}) {
+      const nextVideoId = (payload.videoId || '').trim();
+      const nextFilename = (payload.filename || '').trim();
+      const nextHash = (payload.videoHash || '').trim();
+      const changed = (nextVideoId && nextVideoId !== TOOLBOX.videoId) ||
+        (nextFilename && nextFilename !== TOOLBOX.filename) ||
+        (nextHash && nextHash !== TOOLBOX.videoHash);
+      if (!changed) return;
+
+      TOOLBOX.videoId = nextVideoId || TOOLBOX.videoId;
+      TOOLBOX.filename = nextFilename || TOOLBOX.filename;
+      TOOLBOX.videoHash = nextHash || TOOLBOX.videoHash;
+
+      if (subtitleMenuInstance && typeof subtitleMenuInstance.updateStream === 'function') {
+        subtitleMenuInstance.updateStream({
+          videoId: TOOLBOX.videoId,
+          filename: TOOLBOX.filename,
+          videoHash: TOOLBOX.videoHash
+        });
+        if (typeof subtitleMenuInstance.prefetch === 'function') {
+          subtitleMenuInstance.prefetch();
+        }
+      }
+    }
+
+    subtitleMenuInstance = mountSubtitleMenu();
+    if (subtitleMenuInstance && typeof subtitleMenuInstance.prefetch === 'function') {
+      subtitleMenuInstance.prefetch();
+    }
+
+    subtitleMenuInstance = mountSubtitleMenu();
+    if (subtitleMenuInstance && typeof subtitleMenuInstance.prefetch === 'function') {
+      subtitleMenuInstance.prefetch();
+    }
+    const SUBTITLE_MENU_TARGETS = ${JSON.stringify(subtitleMenuTargets)};
+    const SUBTITLE_LANGUAGE_MAPS = ${safeJsonSerialize(languageMaps)};
+    let subtitleMenuInstance = null;
 
     function initStreamRefreshButton(opts) {
       const btn = document.getElementById(opts.buttonId);
@@ -1439,6 +1505,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
           if (payloadSig === currentSig) return;
           latest = payload;
           showToast(payload);
+          updateSubtitleMenuStream(payload);
           return;
         }
 
@@ -1451,6 +1518,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
         lastSig = payloadSig;
         latest = payload;
         showToast(payload);
+        updateSubtitleMenuStream(payload);
       }
 
       updateBtn.addEventListener('click', () => {
@@ -1800,221 +1868,6 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       background: #2b2044;
       box-shadow: calc(100% - 12px) 0 0 #2b2044;
     }
-    .subtitle-menu-toggle {
-      position: fixed;
-      bottom: 1.1rem;
-      left: 1.1rem;
-      width: 56px;
-      height: 56px;
-      display: grid;
-      place-items: center;
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      box-shadow: 0 14px 32px var(--shadow);
-      cursor: pointer;
-      z-index: 12010;
-      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-    }
-    .subtitle-menu-toggle:hover {
-      transform: translateY(-2px);
-      border-color: var(--primary);
-      box-shadow: 0 16px 36px var(--shadow-color);
-    }
-    .subtitle-menu-toggle svg { width: 26px; height: 26px; fill: #0f172a; }
-    [data-theme="dark"] .subtitle-menu-toggle svg,
-    [data-theme="true-dark"] .subtitle-menu-toggle svg { fill: #E8EAED; }
-    .subtitle-menu-toggle.is-loading::after {
-      content: '';
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      width: 12px;
-      height: 12px;
-      border-radius: 999px;
-      border: 2px solid var(--border);
-      border-top-color: var(--primary);
-      animation: spin 0.8s linear infinite;
-    }
-    .subtitle-menu-panel {
-      position: fixed;
-      bottom: 80px;
-      left: 1.1rem;
-      width: min(360px, calc(100% - 32px));
-      max-height: 72vh;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      box-shadow: 0 18px 42px var(--shadow);
-      overflow: hidden;
-      z-index: 12005;
-      transform: translateY(8px);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.2s ease, transform 0.2s ease;
-    }
-    .subtitle-menu-panel.show {
-      opacity: 1;
-      transform: translateY(0);
-      pointer-events: auto;
-    }
-    .subtitle-menu-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 12px 14px;
-      background: linear-gradient(135deg, rgba(8, 164, 213, 0.08), rgba(51, 185, 225, 0.06));
-      border-bottom: 1px solid var(--border);
-    }
-    .subtitle-menu-titles { display: flex; flex-direction: column; gap: 2px; }
-    .subtitle-menu-eyebrow {
-      margin: 0;
-      font-size: 11px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--muted);
-      font-weight: 700;
-    }
-    .subtitle-menu-header strong { display: block; font-size: 16px; color: var(--text-primary); }
-    .subtitle-menu-substatus { margin: 0; font-size: 12px; color: var(--muted); font-weight: 700; }
-    .subtitle-menu-actions { display: flex; align-items: center; gap: 6px; }
-    .subtitle-menu-icon-btn {
-      width: 32px;
-      height: 32px;
-      display: grid;
-      place-items: center;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--surface-light);
-      cursor: pointer;
-      font-weight: 800;
-      color: var(--text-secondary);
-      font-size: 20px;
-      line-height: 1;
-      transition: all 0.15s ease;
-    }
-    .subtitle-menu-icon-btn:hover { background: var(--surface-hover); color: var(--text-primary); border-color: var(--primary); }
-    .subtitle-menu-body { padding: 12px 14px 34px; display: flex; flex-direction: column; gap: 10px; overflow: auto; max-height: calc(72vh - 70px); }
-    .subtitle-menu-group { display: flex; flex-direction: column; gap: 8px; }
-    .subtitle-menu-group-title { font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
-    .subtitle-menu-group-title::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
-    .subtitle-menu-list { display: flex; flex-direction: column; gap: 8px; }
-    .subtitle-menu-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 10px 12px;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: var(--surface-light);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    }
-    .subtitle-menu-item .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .subtitle-menu-item .label { font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .subtitle-menu-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 8px;
-      border-radius: 10px;
-      font-size: 12px;
-      font-weight: 700;
-      border: 1px solid var(--border);
-      color: var(--text-secondary);
-      background: var(--surface);
-      white-space: nowrap;
-    }
-    .subtitle-menu-chip.source { border-color: var(--primary); color: var(--primary); }
-    .subtitle-menu-chip.target { border-color: var(--secondary); color: var(--secondary); }
-    .subtitle-menu-chip.cached { border-color: var(--muted); color: var(--text-secondary); }
-    .subtitle-menu-chip.learn { border-color: #6366f1; color: #6366f1; }
-    .subtitle-menu-chip.synced { border-color: #10b981; color: #0f9f6e; }
-    .subtitle-menu-link {
-      padding: 8px 10px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-      color: #fff;
-      font-weight: 700;
-      text-decoration: none;
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
-      box-shadow: 0 8px 18px var(--glow);
-      flex-shrink: 0;
-    }
-    button.subtitle-menu-link {
-      border: none;
-    }
-    button.subtitle-menu-link:disabled {
-      opacity: 0.65;
-      cursor: not-allowed;
-      box-shadow: none;
-      transform: none;
-    }
-    .subtitle-menu-link:hover { transform: translateY(-1px); box-shadow: 0 10px 20px var(--glow); }
-    .subtitle-menu-status {
-      position: absolute;
-      left: 12px;
-      right: 12px;
-      bottom: 12px;
-      padding: 10px 12px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      color: var(--text-secondary);
-      font-weight: 700;
-      background: var(--surface);
-      box-shadow: 0 12px 28px var(--shadow-color);
-      opacity: 0;
-      pointer-events: none;
-      transform: translateY(6px);
-      z-index: 2;
-      transition: opacity 0.18s ease, transform 0.18s ease;
-      display: none;
-    }
-    .subtitle-menu-status.show { opacity: 1; transform: translateY(0); display: block; }
-    .subtitle-menu-status.error { color: var(--danger); border-color: rgba(239, 68, 68, 0.4); box-shadow: 0 12px 28px rgba(239, 68, 68, 0.28); }
-    .subtitle-lang-card {
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      background: var(--surface-light);
-      overflow: hidden;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    .subtitle-lang-card.open { border-color: var(--primary); box-shadow: 0 10px 24px var(--shadow-color); }
-    .subtitle-lang-header {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 10px 12px;
-      background: none;
-      border: none;
-      cursor: pointer;
-    }
-    .subtitle-lang-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-    .subtitle-lang-label { font-weight: 800; color: var(--text-primary); }
-    .subtitle-lang-pill { font-size: 12px; color: var(--muted); font-weight: 700; }
-    .subtitle-lang-count {
-      padding: 4px 8px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--text-secondary);
-      font-weight: 800;
-    }
-    .subtitle-lang-chevron { color: var(--muted); transition: transform 0.2s ease; }
-    .subtitle-lang-card.open .subtitle-lang-chevron { transform: rotate(90deg); }
-    .subtitle-lang-menu {
-      display: none;
-      flex-direction: column;
-      gap: 8px;
-      padding: 0 12px 12px;
-    }
-    .subtitle-lang-card.open .subtitle-lang-menu { display: flex; }
-    .subtitle-lang-menu .subtitle-menu-item { margin-top: 4px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
     .modal-overlay {
       position: fixed;
       inset: 0;
@@ -2652,39 +2505,6 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 <body>
   ${themeToggleMarkup()}
   <button class="help-button mario" id="embeddedHelp" title="Show instructions">?</button>
-  <button class="subtitle-menu-toggle" id="subtitleMenuToggle" title="Stream subtitles">
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M4 4h16a1 1 0 011 1v10a1 1 0 01-1 1H7l-4 4V5a1 1 0 011-1z"></path>
-    </svg>
-  </button>
-  <div class="subtitle-menu-panel" id="subtitleMenu">
-    <div class="subtitle-menu-header">
-      <div class="subtitle-menu-titles">
-        <p class="subtitle-menu-eyebrow">Stream subtitles</p>
-        <strong>Sources & Targets</strong>
-        <p class="subtitle-menu-substatus" id="subtitleMenuSubstatus">Waiting for first fetch</p>
-      </div>
-      <div class="subtitle-menu-actions">
-        <button type="button" class="subtitle-menu-icon-btn" id="subtitleMenuRefresh" title="Refresh subtitle list">&#8635;</button>
-        <button type="button" class="subtitle-menu-icon-btn" id="subtitleMenuClose" title="Close subtitle list">&times;</button>
-      </div>
-    </div>
-    <div class="subtitle-menu-body" id="subtitleMenuBody">
-      <div class="subtitle-menu-group">
-        <div class="subtitle-menu-group-title">Source languages</div>
-        <div class="subtitle-menu-list" id="subtitleMenuSource"></div>
-      </div>
-      <div class="subtitle-menu-group">
-        <div class="subtitle-menu-group-title">Translation</div>
-        <div class="subtitle-menu-list" id="subtitleMenuTranslation"></div>
-      </div>
-      <div class="subtitle-menu-group">
-        <div class="subtitle-menu-group-title">Target & cached</div>
-        <div class="subtitle-menu-list" id="subtitleMenuTarget"></div>
-      </div>
-    </div>
-    <div class="subtitle-menu-status" id="subtitleMenuStatus" role="status" aria-live="polite"></div>
-  </div>
   <div class="modal-overlay" id="embeddedInstructionsModal" role="dialog" aria-modal="true" aria-labelledby="embeddedInstructionsTitle">
     <div class="modal">
       <div class="modal-header">
@@ -2905,6 +2725,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     </section>
   </div>
 
+  <script src="/js/subtitle-menu.js"></script>
   <script src="/js/combobox.js"></script>
   <script>
     ${quickNavScript()}
@@ -2913,44 +2734,6 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     }
     const BOOTSTRAP = ${safeJsonSerialize(bootstrap)};
     const PAGE = { configStr: BOOTSTRAP.configStr, videoId: BOOTSTRAP.videoId, filename: BOOTSTRAP.filename || '', videoHash: BOOTSTRAP.videoHash || '' };
-    const LANGUAGE_NAME_BY_CODE = BOOTSTRAP.languageMaps?.byCode || {};
-    const LANGUAGE_NAME_BY_NAME_KEY = BOOTSTRAP.languageMaps?.byNameKey || {};
-    const normalizeLangKey = (val) => (val || '').toString().trim().toLowerCase().replace(/[^a-z]/g, '');
-    const normalizeNameKey = (val) => (val || '').toString().trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    function lookupLanguageNameByCode(code) {
-      if (!code) return null;
-      const raw = code.toString().trim().toLowerCase();
-      return LANGUAGE_NAME_BY_CODE[raw] || LANGUAGE_NAME_BY_CODE[normalizeLangKey(raw)] || null;
-    }
-    function lookupLanguageName(raw) {
-      if (!raw) return null;
-      const byCode = lookupLanguageNameByCode(raw);
-      if (byCode) return byCode;
-      const key = normalizeNameKey(raw);
-      return key ? (LANGUAGE_NAME_BY_NAME_KEY[key] || null) : null;
-    }
-    function extractLanguageCode(value) {
-      if (!value) return '';
-      const raw = value.toString();
-      const direct = raw.match(/^[a-z]{2,3}(?:-[a-z]{2})?$/i);
-      if (direct) return normalizeLangKey(direct[0]);
-      const translateMatch = raw.match(/_to_([a-z]{2,3}(?:-[a-z]{2})?)/i);
-      if (translateMatch) return normalizeLangKey(translateMatch[1]);
-      const urlMatch = raw.match(/\/([a-z]{2,3}(?:-[a-z]{2})?)\.srt/i);
-      if (urlMatch) return normalizeLangKey(urlMatch[1]);
-      const pathMatch = raw.match(/\/([a-z]{2,3}(?:-[a-z]{2})?)\/[^/]*$/i);
-      if (pathMatch) return normalizeLangKey(pathMatch[1]);
-      return '';
-    }
-    function resolveLanguageInfo(entry) {
-      const rawLabel = (entry?.language || entry?.lang || entry?.langName || '').toString().trim();
-      const code = extractLanguageCode(entry?.languageCode)
-        || extractLanguageCode(rawLabel)
-        || extractLanguageCode(entry?.url)
-        || extractLanguageCode(entry?.id);
-      const friendly = lookupLanguageNameByCode(code) || lookupLanguageName(rawLabel);
-      return { code, name: friendly, rawLabel };
-    }
     function normalizeTargetLangCode(lang) {
       return (lang || '').toString().trim().toLowerCase();
     }
@@ -3000,287 +2783,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     };
     const INSTRUCTIONS_KEY = 'submaker_embedded_instructions_visited';
     const EXTRACT_MODE_KEY = 'submaker_embedded_extract_mode';
-    const subtitleMenuEls = {
-      toggle: document.getElementById('subtitleMenuToggle'),
-      panel: document.getElementById('subtitleMenu'),
-      status: document.getElementById('subtitleMenuStatus'),
-      body: document.getElementById('subtitleMenuBody'),
-      sourceList: document.getElementById('subtitleMenuSource'),
-      translationList: document.getElementById('subtitleMenuTranslation'),
-      targetList: document.getElementById('subtitleMenuTarget'),
-      refresh: document.getElementById('subtitleMenuRefresh'),
-      close: document.getElementById('subtitleMenuClose'),
-      substatus: document.getElementById('subtitleMenuSubstatus')
-    };
-    const subtitleMenuState = {
-      open: false,
-      loading: false,
-      items: [],
-      lastFetched: null,
-      hasFetchedOnce: false,
-      hasShownInitialNotice: false,
-      statusTimer: null
-    };
-    const subtitleInventory = {
-      items: [],
-      lastFetched: null,
-      promise: null,
-      streamSig: null,
-      promiseStreamSig: null
-    };
-    const translationActions = new Map();
-    let translationRefreshTimer = null;
-
-    function resetTranslationActions() {
-      translationActions.forEach(action => {
-        if (action.timer) clearTimeout(action.timer);
-      });
-      translationActions.clear();
-      if (translationRefreshTimer) {
-        clearTimeout(translationRefreshTimer);
-        translationRefreshTimer = null;
-      }
-    }
-
-    function stopTranslationPoll(action) {
-      if (action && action.timer) {
-        clearTimeout(action.timer);
-        action.timer = null;
-      }
-    }
-
-    function deriveLangKeyForItem(item) {
-      const raw = item?.languageKey || parseTargetLangFromSubtitle(item);
-      return normalizeTargetLangCode(raw || '');
-    }
-
-    function ensureTranslationAction(item) {
-      if (!item || !item.id) return null;
-      if (!translationActions.has(item.id)) {
-        translationActions.set(item.id, {
-          status: 'idle',
-          timer: null,
-          pollAttempts: 0,
-          cachedContent: '',
-          filename: '',
-          downloadUrl: '',
-          langKey: deriveLangKeyForItem(item),
-          lastError: ''
-        });
-      }
-      const action = translationActions.get(item.id);
-      action.langKey = deriveLangKeyForItem(item) || action.langKey || '';
-      action.label = item?.languageLabel || item?.label || action.label || '';
-      action.url = item?.url || action.url || '';
-      return action;
-    }
-
-    function applyTranslationActionState(action) {
-      if (!action || !action.button) return;
-      const button = action.button;
-      const status = action.status || 'idle';
-      button.disabled = status === 'translating';
-      if (status === 'ready') {
-        button.textContent = 'Download';
-        button.title = 'Download translated subtitle';
-      } else if (status === 'translating') {
-        button.textContent = 'Translating...';
-        button.title = 'Translation in progress';
-      } else if (status === 'error') {
-        button.textContent = 'Retry';
-        button.title = action.lastError || 'Translation failed. Retry?';
-        button.disabled = false;
-      } else {
-        button.textContent = 'Translate';
-        button.title = 'Translate this subtitle';
-      }
-    }
-
-    function markTranslationLanguageReady(langKey, info = {}) {
-      const normalized = normalizeTargetLangCode(langKey || '');
-      if (!normalized) return;
-      translationActions.forEach(action => {
-        if (normalizeTargetLangCode(action.langKey) !== normalized) return;
-        stopTranslationPoll(action);
-        action.status = 'ready';
-        action.downloadUrl = info.downloadUrl || action.downloadUrl || action.url;
-        action.cachedContent = info.cachedContent || action.cachedContent || '';
-        action.filename = info.filename || action.filename || '';
-        applyTranslationActionState(action);
-      });
-    }
-
-    function syncTranslationActionsFromInventory(items) {
-      const present = new Set();
-      const readyLangs = new Map();
-      (items || []).forEach(it => {
-        if (it && it.type === 'cached') {
-          const langKey = normalizeTargetLangCode(it.languageKey || parseTargetLangFromSubtitle(it));
-          if (langKey) readyLangs.set(langKey, it.url || '');
-        }
-      });
-
-      (items || []).forEach(it => {
-        if (!it || !it.isTranslation) return;
-        present.add(it.id);
-        const action = ensureTranslationAction(it);
-        if (!action) return;
-        const langKey = normalizeTargetLangCode(action.langKey);
-        if (langKey && readyLangs.has(langKey)) {
-          action.status = 'ready';
-          action.downloadUrl = readyLangs.get(langKey) || action.downloadUrl || it.url;
-          stopTranslationPoll(action);
-          applyTranslationActionState(action);
-        }
-      });
-
-      translationActions.forEach((action, key) => {
-        if (!present.has(key)) {
-          stopTranslationPoll(action);
-          translationActions.delete(key);
-        }
-      });
-    }
-
-    function isTranslationLoadingMessage(text) {
-      const sample = (text || '').toLowerCase();
-      return sample.includes('translation in progress')
-        || sample.includes('translation is happening in the background')
-        || sample.includes('please wait while the selected subtitle is being translated')
-        || sample.includes('click this subtitle again to confirm translation')
-        || sample.includes('reload this subtitle');
-    }
-
-    function parseDownloadFilename(resp, langKey) {
-      try {
-        const header = typeof resp?.headers?.get === 'function' ? resp.headers.get('Content-Disposition') : null;
-        if (header) {
-          const match = /filename[^=]*=\s*\"?([^\";]+)/i.exec(header);
-          if (match && match[1]) return match[1].trim();
-        }
-      } catch (_) {}
-      const lang = normalizeTargetLangCode(langKey || '') || 'subtitle';
-      const hash = (typeof getVideoHash === 'function' ? getVideoHash() : 'video') || 'video';
-      return (hash || 'video') + '_' + lang + '_translated.srt';
-    }
-
-    function triggerSubtitleDownload(content, filename) {
-      if (!content) return;
-      const blob = new Blob([content], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename || 'translated.srt';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 500);
-    }
-
-    function queueSubtitleMenuRefresh() {
-      if (translationRefreshTimer) return;
-      translationRefreshTimer = setTimeout(() => {
-        translationRefreshTimer = null;
-        if (subtitleMenuState.loading) {
-          queueSubtitleMenuRefresh();
-          return;
-        }
-        fetchSubtitleMenuData({ silent: true, force: true });
-      }, 400);
-    }
-
-    function scheduleTranslationPoll(item, action, delay = 3500) {
-      stopTranslationPoll(action);
-      action.timer = setTimeout(() => requestTranslationStatus(item, { fromPoll: true }), delay);
-    }
-
-    async function requestTranslationStatus(item, options = {}) {
-      const action = ensureTranslationAction(item);
-      if (!action || !action.url) return;
-      if (action.status === 'translating' && options.fromPoll !== true) {
-        // Already polling - ignore manual double-clicks
-        return;
-      }
-      if (options.fromPoll !== true) {
-        action.pollAttempts = 0;
-      }
-      action.status = 'translating';
-      applyTranslationActionState(action);
-
-      try {
-        const resp = await fetch(action.url, { cache: 'no-store' });
-        const text = await resp.text();
-        const loading = resp.status === 202 || isTranslationLoadingMessage(text);
-        if (!resp.ok && resp.status !== 202) {
-          throw new Error('Request failed (' + resp.status + ')');
-        }
-
-        if (loading) {
-          action.pollAttempts = (action.pollAttempts || 0) + 1;
-          setSubtitleMenuStatus('Translation in progress for ' + (action.label || 'subtitle') + '.', 'muted');
-          if (action.pollAttempts >= 24) {
-            action.status = 'error';
-            action.lastError = 'Still processing. Please retry shortly.';
-            stopTranslationPoll(action);
-            applyTranslationActionState(action);
-            return;
-          }
-          scheduleTranslationPoll(item, action);
-          return;
-        }
-
-        action.status = 'ready';
-        action.cachedContent = text;
-        action.filename = parseDownloadFilename(resp, action.langKey);
-        action.pollAttempts = 0;
-        applyTranslationActionState(action);
-        markTranslationLanguageReady(action.langKey, {
-          downloadUrl: action.downloadUrl || action.url,
-          cachedContent: text,
-          filename: action.filename
-        });
-        queueSubtitleMenuRefresh();
-        setSubtitleMenuStatus('Translation ready for ' + (action.label || 'subtitle') + '.', 'muted');
-      } catch (error) {
-        action.status = 'error';
-        action.lastError = error.message || 'Translation failed';
-        stopTranslationPoll(action);
-        applyTranslationActionState(action);
-        setSubtitleMenuStatus('Translation failed: ' + action.lastError, 'error', { persist: true });
-      }
-    }
-
-    async function handleTranslationDownload(item) {
-      const action = ensureTranslationAction(item);
-      if (!action) return;
-      const filename = action.filename || parseDownloadFilename(null, action.langKey);
-      try {
-        if (action.cachedContent) {
-          triggerSubtitleDownload(action.cachedContent, filename);
-          return;
-        }
-        const url = action.downloadUrl || action.url || item.url;
-        if (!url) throw new Error('No download URL available');
-        const resp = await fetch(url, { cache: 'no-store' });
-        const text = await resp.text();
-        action.cachedContent = text;
-        action.filename = parseDownloadFilename(resp, action.langKey) || filename;
-        triggerSubtitleDownload(text, action.filename);
-      } catch (error) {
-        setSubtitleMenuStatus('Download failed: ' + error.message, 'error', { persist: true });
-      }
-    }
-
-    function handleTranslationButtonClick(item) {
-      const action = ensureTranslationAction(item);
-      if (!action) return;
-      if (action.status === 'translating') return;
-      if (action.status === 'ready') {
-        handleTranslationDownload(item);
-        return;
-      }
-      requestTranslationStatus(item, { fromPoll: false });
-    }
+    let subtitleMenuInstance = null;
 
     function requestExtensionReset(reason) {
       try {
@@ -3355,13 +2858,6 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       }
     }
 
-    function getSubtitleRouteType(videoId) {
-      const parts = (videoId || '').split(':');
-      if (parts[0] === 'tmdb' && parts.length >= 3) return 'series';
-      if (parts.length >= 3) return 'series';
-      return 'movie';
-    }
-
     function normalizeStreamValue(val) {
       return (val || '').toString().trim();
     }
@@ -3371,456 +2867,29 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       return normalized === 'stream and refresh';
     }
 
-    function hasValidStream() {
-      if (!PAGE.configStr) return false;
-      const videoIdNorm = normalizeStreamValue(PAGE.videoId);
-      if (!videoIdNorm) return false;
-      if (isPlaceholderStreamValue(videoIdNorm)) return false;
-      return true;
-    }
-
     function getStreamSignature(source = {}) {
       const videoId = normalizeStreamValue(source.videoId !== undefined ? source.videoId : PAGE.videoId);
       const filename = normalizeStreamValue(source.filename !== undefined ? source.filename : PAGE.filename);
       return [videoId, filename].join('::');
     }
 
-    function buildSubtitleFetchUrl() {
-      if (!hasValidStream()) return '';
-      const type = getSubtitleRouteType(PAGE.videoId || '');
-      const suffix = PAGE.filename ? ('?filename=' + encodeURIComponent(PAGE.filename)) : '';
-      return '/addon/' + encodeURIComponent(PAGE.configStr) + '/subtitles/' + type + '/' + encodeURIComponent(PAGE.videoId || '') + '.json' + suffix;
-    }
-
-    function subtitleChipForType(type, item) {
-      if (item?.isTranslation) return { label: 'Translate', cls: 'target' };
-      switch (type) {
-        case 'target': return { label: 'Target', cls: 'target' };
-        case 'cached': return { label: 'xEmbed', cls: 'cached' };
-        case 'learn': return { label: 'Learn', cls: 'learn' };
-        case 'synced': return { label: 'xSync', cls: 'synced' };
-        case 'action': return { label: 'Tool', cls: 'cached' };
-        default: return { label: 'Source', cls: 'source' };
-      }
-    }
-
-    function shouldDisplaySubtitle(item) {
-      if (!item) return false;
-      if (item.type === 'action' || item.type === 'learn') return false;
-      const label = (item.label || '').toString().toLowerCase();
-      if (label.includes('sub toolbox')) return false;
-      return true;
-    }
-
-    function normalizeSubtitleEntry(entry) {
-      const languageInfo = resolveLanguageInfo(entry);
-      const languageLabel = languageInfo.name || languageInfo.rawLabel || 'Unknown language';
-      const displayLabel = (entry?.title || entry?.name || entry?.label || languageInfo.rawLabel || '').toString().trim()
-        || languageLabel
-        || 'Untitled';
-      const lower = displayLabel.toLowerCase();
-      const isTranslation = lower.startsWith('make ');
-      const type = isTranslation ? 'target'
-        : lower.startsWith('learn ') ? 'learn'
-        : lower.startsWith('xembed') ? 'cached'
-        : lower.startsWith('xsync') ? 'synced'
-        : lower.includes('toolbox') ? 'action'
-        : 'source';
-      const group = isTranslation ? 'translation' : ((type === 'cached' || type === 'learn') ? 'target' : 'source');
-      return {
-        id: entry?.id || displayLabel,
-        label: displayLabel,
-        languageLabel,
-        languageKey: languageInfo.code || normalizeNameKey(languageLabel) || displayLabel.toLowerCase(),
-        url: entry?.url || '#',
-        type,
-        group,
-        isTranslation
-      };
-    }
-
-    function groupSubtitlesByLanguage(items) {
-      const buckets = { source: new Map(), target: new Map(), translation: new Map() };
-      items.forEach(item => {
-        const bucket = item.group === 'translation' ? 'translation' : (item.group === 'target' ? 'target' : 'source');
-        const map = buckets[bucket];
-        const key = item.languageKey || item.languageLabel?.toLowerCase() || item.label.toLowerCase();
-        const label = item.languageLabel || item.label;
-        if (!map.has(key)) map.set(key, { key, label, items: [] });
-        map.get(key).items.push(item);
-      });
-      return buckets;
-    }
-
-    function buildSubtitleMenuItem(item) {
-      const row = document.createElement('div');
-      row.className = 'subtitle-menu-item';
-
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-      const labelEl = document.createElement('div');
-      labelEl.className = 'label';
-      labelEl.textContent = item.label;
-      const chipData = subtitleChipForType(item.type, item);
-      const chip = document.createElement('span');
-      chip.className = 'subtitle-menu-chip ' + chipData.cls;
-      chip.textContent = chipData.label;
-      meta.appendChild(labelEl);
-      meta.appendChild(chip);
-
-      let actionEl;
-      if (item.isTranslation) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'subtitle-menu-link subtitle-menu-translate';
-        const action = ensureTranslationAction(item);
-        if (action) {
-          action.button = button;
-          applyTranslationActionState(action);
-        } else {
-          button.textContent = 'Translate';
-        }
-        button.addEventListener('click', () => handleTranslationButtonClick(item));
-        actionEl = button;
-      } else {
-        const link = document.createElement('a');
-        link.className = 'subtitle-menu-link';
-        link.href = item.url;
-        link.target = '_blank';
-        link.rel = 'noopener';
-        link.textContent = 'Download';
-        actionEl = link;
-      }
-
-      row.appendChild(meta);
-      row.appendChild(actionEl);
-      return row;
-    }
-
-    function buildLanguageCard(langEntry, openByDefault, container) {
-      const card = document.createElement('div');
-      card.className = 'subtitle-lang-card' + (openByDefault ? ' open' : '');
-      const header = document.createElement('button');
-      header.type = 'button';
-      header.className = 'subtitle-lang-header';
-
-      const meta = document.createElement('div');
-      meta.className = 'subtitle-lang-meta';
-      const title = document.createElement('div');
-      title.className = 'subtitle-lang-label';
-      title.textContent = langEntry.label;
-      const pill = document.createElement('div');
-      pill.className = 'subtitle-lang-pill';
-      const counts = langEntry.items.reduce((acc, itm) => {
-        acc[itm.type] = (acc[itm.type] || 0) + 1;
-        return acc;
-      }, {});
-      const summaryParts = [];
-      if (counts.cached) summaryParts.push(counts.cached + ' xEmbed');
-      if (counts.synced) summaryParts.push(counts.synced + ' xSync');
-      if (counts.target) summaryParts.push(counts.target + ' target');
-      if (counts.source) summaryParts.push(counts.source + ' source');
-      pill.textContent = summaryParts.join(' • ') || 'Subtitles';
-      meta.appendChild(title);
-      meta.appendChild(pill);
-
-      const right = document.createElement('div');
-      right.style.display = 'flex';
-      right.style.alignItems = 'center';
-      right.style.gap = '8px';
-      const count = document.createElement('span');
-      count.className = 'subtitle-lang-count';
-      count.textContent = langEntry.items.length + ' option' + (langEntry.items.length === 1 ? '' : 's');
-      const chevron = document.createElement('span');
-      chevron.className = 'subtitle-lang-chevron';
-      chevron.textContent = '›';
-      right.appendChild(count);
-      right.appendChild(chevron);
-
-      header.appendChild(meta);
-      header.appendChild(right);
-
-      const menu = document.createElement('div');
-      menu.className = 'subtitle-lang-menu';
-      const sortedItems = [...langEntry.items].sort((a, b) => a.label.localeCompare(b.label));
-      sortedItems.forEach(item => menu.appendChild(buildSubtitleMenuItem(item)));
-
-      const toggle = () => {
-        const next = !card.classList.contains('open');
-        if (next && container) {
-          const openSiblings = container.querySelectorAll('.subtitle-lang-card.open');
-          openSiblings.forEach(el => { if (el !== card) el.classList.remove('open'); });
-        }
-        card.classList.toggle('open', next);
-      };
-      header.addEventListener('click', toggle);
-
-      card.appendChild(header);
-      card.appendChild(menu);
-      return card;
-    }
-
-    function renderSubtitleMenu(items) {
-      if (!subtitleMenuEls.sourceList || !subtitleMenuEls.targetList || !subtitleMenuEls.translationList) return;
-      const filtered = (items || []).filter(shouldDisplaySubtitle);
-      const grouped = groupSubtitlesByLanguage(filtered);
-
-      const renderList = (container, map) => {
-        container.innerHTML = '';
-        const languages = Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
-        languages.forEach(lang => container.appendChild(buildLanguageCard(lang, false, container)));
-      };
-
-      renderList(subtitleMenuEls.sourceList, grouped.source);
-      renderList(subtitleMenuEls.translationList, grouped.translation);
-      renderList(subtitleMenuEls.targetList, grouped.target);
-
-      if (subtitleMenuEls.body) {
-        const hasAny = filtered.length > 0;
-        subtitleMenuEls.body.style.display = hasAny ? 'flex' : 'none';
-      }
-    }
-
-    function updateSubtitleMenuMeta() {
-      if (!subtitleMenuEls.substatus) return;
-      if (subtitleMenuState.loading) {
-        subtitleMenuEls.substatus.textContent = 'Refreshing...';
-        return;
-      }
-      if (subtitleMenuState.lastFetched) {
-        const elapsed = Math.max(0, Math.floor((Date.now() - subtitleMenuState.lastFetched) / 1000));
-        const recency = elapsed < 5 ? 'just now' : (elapsed + 's ago');
-        subtitleMenuEls.substatus.textContent = 'Updated ' + recency;
-      } else {
-        subtitleMenuEls.substatus.textContent = 'Waiting for first fetch';
-      }
-    }
-
-    function hideSubtitleMenuStatus() {
-      if (!subtitleMenuEls.status) return;
-      if (subtitleMenuState.statusTimer) {
-        clearTimeout(subtitleMenuState.statusTimer);
-        subtitleMenuState.statusTimer = null;
-      }
-      subtitleMenuEls.status.classList.remove('show');
-      subtitleMenuState.statusTimer = setTimeout(() => {
-        if (!subtitleMenuEls.status) return;
-        subtitleMenuEls.status.style.display = 'none';
-        subtitleMenuEls.status.textContent = '';
-        subtitleMenuState.statusTimer = null;
-      }, 180);
-    }
-
-    function setSubtitleMenuStatus(message, variant = 'muted', options = {}) {
-      if (!subtitleMenuEls.status) return;
-      const persist = options.persist === true;
-      if (subtitleMenuState.statusTimer) {
-        clearTimeout(subtitleMenuState.statusTimer);
-        subtitleMenuState.statusTimer = null;
-      }
-      if (!message) {
-        hideSubtitleMenuStatus();
-        return;
-      }
-      subtitleMenuEls.status.textContent = message || '';
-      subtitleMenuEls.status.className = 'subtitle-menu-status' + (variant === 'error' ? ' error' : '');
-      subtitleMenuEls.status.style.display = 'block';
-      requestAnimationFrame(() => subtitleMenuEls.status?.classList.add('show'));
-      if (!persist) {
-        subtitleMenuState.statusTimer = setTimeout(() => hideSubtitleMenuStatus(), 3200);
-      }
-    }
-
-    function resetSubtitleInventoryState() {
-      subtitleInventory.items = [];
-      subtitleInventory.lastFetched = null;
-      subtitleInventory.promise = null;
-      subtitleInventory.streamSig = null;
-      subtitleInventory.promiseStreamSig = null;
-      resetTranslationActions();
-    }
-
-    async function loadSubtitleInventory(options = {}) {
-      const opts = typeof options === 'object' && options !== null ? options : {};
-      const force = opts.force === true;
-      const currentSig = getStreamSignature();
-
-      if (!hasValidStream()) {
-        throw new Error('Waiting for a valid stream before loading subtitles.');
-      }
-
-      if (subtitleInventory.streamSig && subtitleInventory.streamSig !== currentSig) {
-        resetSubtitleInventoryState();
-      }
-
-      if (subtitleInventory.promise && subtitleInventory.promiseStreamSig === currentSig) {
-        return subtitleInventory.promise;
-      }
-      if (!force && subtitleInventory.items.length && subtitleInventory.lastFetched && subtitleInventory.streamSig === currentSig) {
-        return Promise.resolve({
-          items: subtitleInventory.items,
-          fetchedAt: subtitleInventory.lastFetched,
-          fromCache: true
+    function initSubtitleMenuBridge() {
+      if (!window.SubtitleMenu || typeof window.SubtitleMenu.mount !== 'function') return null;
+      try {
+        return window.SubtitleMenu.mount({
+          configStr: PAGE.configStr,
+          videoId: PAGE.videoId,
+          filename: PAGE.filename,
+          videoHash: PAGE.videoHash,
+          targetOptions: state.targetOptions,
+          languageMaps: BOOTSTRAP.languageMaps,
+          getVideoHash,
+          onTargetsHydrated: (merged) => setTargetOptions(mergeTargetOptions(merged || [], []), true)
         });
-      }
-      const fetchUrl = buildSubtitleFetchUrl();
-      if (!fetchUrl) {
-        throw new Error('No subtitle endpoint available for the current stream.');
-      }
-
-      subtitleInventory.promise = (async () => {
-        subtitleInventory.promiseStreamSig = currentSig;
-        const resp = await fetch(fetchUrl, { headers: { 'Accept': 'application/json' } });
-        if (!resp.ok) throw new Error('Request failed (' + resp.status + ')');
-        const data = await resp.json();
-        const normalized = Array.isArray(data?.subtitles) ? data.subtitles.map(normalizeSubtitleEntry) : [];
-        subtitleInventory.items = normalized;
-        subtitleInventory.lastFetched = Date.now();
-        subtitleInventory.streamSig = currentSig;
-        return { items: normalized, fetchedAt: subtitleInventory.lastFetched, fromCache: false };
-      })();
-      try {
-        return await subtitleInventory.promise;
-      } finally {
-        subtitleInventory.promise = null;
-        subtitleInventory.promiseStreamSig = null;
-      }
-    }
-
-    function parseTargetLangFromSubtitle(item) {
-      if (!item) return '';
-      if (item.id && typeof item.id === 'string') {
-        const match = item.id.match(/_to_([a-z0-9-]+)/i);
-        if (match && match[1]) return match[1];
-      }
-      const label = (item.languageLabel || item.label || '').toString();
-      if (label.toLowerCase().startsWith('make ')) {
-        return label.slice(5).trim();
-      }
-      return label.trim();
-    }
-
-    function deriveTargetOptionsFromSubtitles(items = []) {
-      const derived = [];
-      const seen = new Set();
-      items.forEach(item => {
-        if (!item || item.type !== 'target') return;
-        const code = normalizeTargetLangCode(parseTargetLangFromSubtitle(item));
-        if (!code || seen.has(code)) return;
-        seen.add(code);
-        const prettyName = (item.languageLabel || item.label || '').replace(/^make\s+/i, '').trim() || code;
-        derived.push({ code, name: prettyName, source: 'subtitles' });
-      });
-      return derived;
-    }
-
-    function hydrateTargetsFromSubtitleInventory(items) {
-      if (!Array.isArray(items) || !items.length) return;
-      const derived = deriveTargetOptionsFromSubtitles(items);
-      if (!derived.length) return;
-      const merged = mergeTargetOptions(state.targetOptions, derived);
-      setTargetOptions(merged, true);
-    }
-
-    async function fetchSubtitleMenuData(silentOrOptions = false) {
-      const opts = typeof silentOrOptions === 'object' && silentOrOptions !== null
-        ? silentOrOptions
-        : { silent: !!silentOrOptions };
-      const silent = opts.silent === true;
-      const force = opts.force === true;
-      if (!hasValidStream()) {
-        setSubtitleMenuStatus('Waiting for a linked stream before loading subtitles.', 'muted', { persist: true });
-        return;
-      }
-      subtitleMenuState.loading = true;
-      subtitleMenuEls.toggle?.classList.add('is-loading');
-      updateSubtitleMenuMeta();
-      if (!silent) setSubtitleMenuStatus('Loading subtitles...', 'muted');
-      const panelOpen = subtitleMenuState.open && subtitleMenuEls.panel?.classList.contains('show');
-      const shouldShowInitialNotice = panelOpen && !subtitleMenuState.hasShownInitialNotice;
-      const shouldShowActiveNotice = panelOpen && !silent;
-      try {
-        const { items: normalized, fetchedAt, fromCache } = await loadSubtitleInventory({ force });
-        const visibleCount = normalized.filter(shouldDisplaySubtitle).length;
-        subtitleMenuState.items = normalized;
-        subtitleMenuState.lastFetched = fetchedAt || Date.now();
-        syncTranslationActionsFromInventory(normalized);
-        hydrateTargetsFromSubtitleInventory(normalized);
-        const canShow = shouldShowInitialNotice || shouldShowActiveNotice || !subtitleMenuState.hasFetchedOnce;
-        if (visibleCount) {
-          if (canShow && (!fromCache || !subtitleMenuState.hasFetchedOnce || force)) {
-            setSubtitleMenuStatus('Loaded ' + visibleCount + ' subtitle entr' + (visibleCount === 1 ? 'y' : 'ies') + '.');
-            if (shouldShowInitialNotice) subtitleMenuState.hasShownInitialNotice = true;
-          } else {
-            hideSubtitleMenuStatus();
-          }
-        } else if (canShow && (!fromCache || !subtitleMenuState.hasFetchedOnce || force)) {
-          setSubtitleMenuStatus('No subtitles available for this stream yet.');
-          if (shouldShowInitialNotice) subtitleMenuState.hasShownInitialNotice = true;
-        } else {
-          hideSubtitleMenuStatus();
-        }
-        renderSubtitleMenu(normalized);
-        subtitleMenuState.hasFetchedOnce = true;
       } catch (err) {
-        setSubtitleMenuStatus('Could not load subtitles: ' + err.message, 'error', { persist: true });
-        subtitleMenuState.items = [];
-        resetTranslationActions();
-        renderSubtitleMenu([]);
-        subtitleMenuState.hasFetchedOnce = true;
-      } finally {
-        subtitleMenuState.loading = false;
-        subtitleMenuEls.toggle?.classList.remove('is-loading');
-        updateSubtitleMenuMeta();
+        console.warn('Subtitle menu init failed', err);
+        return null;
       }
-    }
-
-    function toggleSubtitleMenu(forceOpen) {
-      const nextOpen = typeof forceOpen === 'boolean' ? !!forceOpen : !subtitleMenuState.open;
-      subtitleMenuState.open = nextOpen;
-      if (subtitleMenuEls.panel) {
-        subtitleMenuEls.panel.classList.toggle('show', subtitleMenuState.open);
-        subtitleMenuEls.panel.setAttribute('aria-hidden', subtitleMenuState.open ? 'false' : 'true');
-      }
-      if (subtitleMenuState.open) {
-        if (!subtitleMenuState.loading) {
-          fetchSubtitleMenuData({ silent: true });
-        }
-        if (!subtitleMenuState.hasShownInitialNotice && subtitleMenuState.items.length) {
-          const visibleCount = subtitleMenuState.items.filter(shouldDisplaySubtitle).length;
-          if (visibleCount) {
-            setSubtitleMenuStatus('Loaded ' + visibleCount + ' subtitle entr' + (visibleCount === 1 ? 'y' : 'ies') + '.');
-            subtitleMenuState.hasShownInitialNotice = true;
-          } else if (subtitleMenuState.hasFetchedOnce) {
-            setSubtitleMenuStatus('No subtitles available for this stream yet.');
-            subtitleMenuState.hasShownInitialNotice = true;
-          }
-        }
-      } else {
-        hideSubtitleMenuStatus();
-      }
-    }
-
-    function initSubtitleMenu() {
-      if (subtitleMenuEls.toggle) {
-        subtitleMenuEls.toggle.addEventListener('click', () => toggleSubtitleMenu());
-      }
-      if (subtitleMenuEls.close) {
-        subtitleMenuEls.close.addEventListener('click', () => toggleSubtitleMenu(false));
-      }
-      if (subtitleMenuEls.refresh) {
-        subtitleMenuEls.refresh.addEventListener('click', () => fetchSubtitleMenuData({ silent: false, force: true }));
-      }
-      updateSubtitleMenuMeta();
-    }
-
-    function prefetchSubtitleInventory() {
-      if (!hasValidStream()) return;
-      loadSubtitleInventory({ force: false })
-        .then(result => {
-          hydrateTargetsFromSubtitleInventory((result && result.items) || []);
-        })
-        .catch(() => {});
     }
 
     function handleStreamUpdateFromNotification(payload) {
@@ -3832,23 +2901,22 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       PAGE.filename = normalizeStreamValue(payload.filename) || PAGE.filename;
       PAGE.videoHash = normalizeStreamValue(payload.videoHash) || PAGE.videoHash;
 
-      resetSubtitleInventoryState();
-      subtitleMenuState.items = [];
-      subtitleMenuState.lastFetched = null;
-      subtitleMenuState.hasFetchedOnce = false;
-      subtitleMenuState.hasShownInitialNotice = false;
-      renderSubtitleMenu([]);
-      updateSubtitleMenuMeta();
       setTargetOptions(baseTargetOptions, true);
       updateVideoMeta(PAGE);
-      prefetchSubtitleInventory();
-      if (subtitleMenuState.open) {
-        fetchSubtitleMenuData({ silent: true });
+      if (subtitleMenuInstance && typeof subtitleMenuInstance.updateStream === 'function') {
+        subtitleMenuInstance.updateStream({
+          videoId: PAGE.videoId,
+          filename: PAGE.filename,
+          videoHash: PAGE.videoHash
+        });
+        if (typeof subtitleMenuInstance.prefetch === 'function') {
+          subtitleMenuInstance.prefetch();
+        }
       }
     }
 
     initInstructions();
-    initSubtitleMenu();
+    subtitleMenuInstance = initSubtitleMenuBridge();
     window.addEventListener('beforeunload', () => {
       requestExtensionReset('page-unload');
     });
@@ -4744,7 +3812,9 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     }
 
     // Prefetch subtitles once so menu + target list share the same request
-    prefetchSubtitleInventory();
+    if (subtitleMenuInstance && typeof subtitleMenuInstance.prefetch === 'function') {
+      subtitleMenuInstance.prefetch();
+    }
 
     // Auto ping on load (delay to allow extension content script to initialize)
     setTimeout(sendPing, 500);
@@ -4774,6 +3844,11 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     ? targetLanguages.map(code => `<option value="${escapeHtml(code)}">${escapeHtml(getLanguageName(code) || code)}</option>`).join('')
     : `<option value="">Add target languages in Configure</option>`;
   const videoHash = deriveVideoHash(filename, videoId);
+  const languageMaps = buildLanguageLookupMaps();
+  const subtitleMenuTargets = targetLanguages.map(code => ({
+    code,
+    name: getLanguageName(code) || code
+  }));
 
   const defaults = {
     whisperModel: 'medium',
@@ -5445,6 +4520,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     </div>
   </div>
 
+  <script src="/js/subtitle-menu.js"></script>
   <script src="/js/combobox.js"></script>
   <script>
     const BOOTSTRAP = ${safeJsonSerialize({
@@ -5455,10 +4531,61 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
       defaults
     })};
     const PAGE = { configStr: BOOTSTRAP.configStr, videoId: BOOTSTRAP.videoId, filename: BOOTSTRAP.filename || '', videoHash: BOOTSTRAP.videoHash || '' };
+    const SUBTITLE_MENU_TARGETS = ${JSON.stringify(subtitleMenuTargets)};
+    const SUBTITLE_LANGUAGE_MAPS = ${safeJsonSerialize(languageMaps)};
+    let subtitleMenuInstance = null;
 
     ${quickNavScript()}
     if (window.ComboBox && typeof window.ComboBox.enhanceAll === 'function') {
       window.ComboBox.enhanceAll(document);
+    }
+
+    function mountSubtitleMenu() {
+      if (!window.SubtitleMenu || typeof window.SubtitleMenu.mount !== 'function') return null;
+      try {
+        return window.SubtitleMenu.mount({
+          configStr: PAGE.configStr,
+          videoId: PAGE.videoId,
+          filename: PAGE.filename,
+          videoHash: PAGE.videoHash,
+          targetOptions: SUBTITLE_MENU_TARGETS,
+          languageMaps: SUBTITLE_LANGUAGE_MAPS,
+          getVideoHash: () => PAGE.videoHash || ''
+        });
+      } catch (err) {
+        console.warn('Subtitle menu init failed', err);
+        return null;
+      }
+    }
+
+    function handleStreamUpdate(payload = {}) {
+      const nextVideoId = (payload.videoId || '').trim();
+      const nextFilename = (payload.filename || '').trim();
+      const nextHash = (payload.videoHash || '').trim();
+      const changed = (nextVideoId && nextVideoId !== PAGE.videoId) ||
+        (nextFilename && nextFilename !== PAGE.filename) ||
+        (nextHash && nextHash !== PAGE.videoHash);
+      if (!changed) return;
+
+      PAGE.videoId = nextVideoId || PAGE.videoId;
+      PAGE.filename = nextFilename || PAGE.filename;
+      PAGE.videoHash = nextHash || PAGE.videoHash;
+
+      if (subtitleMenuInstance && typeof subtitleMenuInstance.updateStream === 'function') {
+        subtitleMenuInstance.updateStream({
+          videoId: PAGE.videoId,
+          filename: PAGE.filename,
+          videoHash: PAGE.videoHash
+        });
+        if (typeof subtitleMenuInstance.prefetch === 'function') {
+          subtitleMenuInstance.prefetch();
+        }
+      }
+    }
+
+    subtitleMenuInstance = mountSubtitleMenu();
+    if (subtitleMenuInstance && typeof subtitleMenuInstance.prefetch === 'function') {
+      subtitleMenuInstance.prefetch();
     }
     initStreamRefreshButton({
       buttonId: 'quickNavRefresh',
@@ -5624,16 +4751,17 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
       });
 
       // Episode change watcher (toast + manual update)
-      initStreamWatcher({
-        configStr: PAGE.configStr,
-        current: { videoId: PAGE.videoId, filename: PAGE.filename, videoHash: PAGE.videoHash },
-        buildUrl: (payload) => {
-          return '/auto-subtitles?config=' + encodeURIComponent(PAGE.configStr) +
-            '&videoId=' + encodeURIComponent(payload.videoId || '') +
-            '&filename=' + encodeURIComponent(payload.filename || '');
-        }
-      });
-    })();
+    initStreamWatcher({
+      configStr: PAGE.configStr,
+      current: { videoId: PAGE.videoId, filename: PAGE.filename, videoHash: PAGE.videoHash },
+      buildUrl: (payload) => {
+        return '/auto-subtitles?config=' + encodeURIComponent(PAGE.configStr) +
+          '&videoId=' + encodeURIComponent(payload.videoId || '') +
+          '&filename=' + encodeURIComponent(payload.filename || '');
+      },
+      onEpisode: handleStreamUpdate
+    });
+  })();
   </script>
 </body>
 </html>

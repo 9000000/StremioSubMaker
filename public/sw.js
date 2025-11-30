@@ -29,7 +29,7 @@ getAppVersion().then(v => {
 
 const CACHE_PREFIX = 'submaker';
 const getVersionedCacheName = (version) => `${CACHE_PREFIX}-static-v${version}`;
-const API_CACHE_NAME = `${CACHE_PREFIX}-api-v1`;
+const API_CACHE_NAME = `${CACHE_PREFIX}-api-v2`;
 const NON_CACHEABLE_ASSETS = new Set([
     '/css/configure.css',
     '/css/combobox.css',
@@ -80,9 +80,16 @@ async function safeCachePut(cache, request, response) {
     }
 
     try {
+        // Double check Vary header just before putting
+        const vary = response.headers.get('Vary');
+        if (vary && (vary.includes('*') || vary.trim() === '*')) {
+            return;
+        }
+
         await cache.put(request, response);
     } catch (error) {
         // Some CDNs/proxies add Vary: * dynamically; skip caching instead of throwing
+        console.warn('Cache put failed:', error);
     }
 }
 

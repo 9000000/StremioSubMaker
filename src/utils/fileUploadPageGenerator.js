@@ -2433,6 +2433,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         </div>
     </div>
 
+        <script src="/js/subtitle-menu.js"></script>
         <script src="/js/combobox.js"></script>
         <script>
         const clientConfig = ${JSON.stringify(clientConfig)};
@@ -2440,6 +2441,8 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         const configToken = ${JSON.stringify(configStr)};
         const providerDefaults = ${JSON.stringify(getDefaultProviderParameters())};
         const PAGE = { configStr: configToken, videoId: ${JSON.stringify(videoId)}, filename: ${JSON.stringify(filename || '')}, videoHash: ${JSON.stringify(config?.videoHash || '')} };
+        const subtitleMenuTargets = ${JSON.stringify(targetLangs)};
+        let subtitleMenuInstance = null;
         const uploadQueueLimits = ${JSON.stringify(uploadQueueDefaults)};
         const translationDefaults = ${JSON.stringify(translationWorkflowDefaults)};
         const MAX_OUTPUT_TOKEN_LIMIT = ${MAX_OUTPUT_TOKEN_LIMIT};
@@ -2448,6 +2451,52 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
 
         if (window.ComboBox && typeof window.ComboBox.enhanceAll === 'function') {
             window.ComboBox.enhanceAll(document);
+        }
+
+        function mountSubtitleMenu() {
+            if (!window.SubtitleMenu || typeof window.SubtitleMenu.mount !== 'function') return null;
+            try {
+                return window.SubtitleMenu.mount({
+                    configStr: PAGE.configStr,
+                    videoId: PAGE.videoId,
+                    filename: PAGE.filename,
+                    videoHash: PAGE.videoHash,
+                    targetOptions: subtitleMenuTargets,
+                    languageMaps: clientConfig.languageMaps,
+                    getVideoHash: () => PAGE.videoHash || ''
+                });
+            } catch (err) {
+                console.warn('Subtitle menu init failed', err);
+                return null;
+            }
+        }
+
+        function handleStreamUpdate(payload = {}) {
+            const nextVideoId = (payload.videoId || '').trim();
+            const nextFilename = (payload.filename || '').trim();
+            const nextHash = (payload.videoHash || '').trim();
+            const changed = (nextVideoId && nextVideoId !== PAGE.videoId) ||
+                (nextFilename && nextFilename !== PAGE.filename) ||
+                (nextHash && nextHash !== PAGE.videoHash);
+            if (!changed) return;
+            PAGE.videoId = nextVideoId || PAGE.videoId;
+            PAGE.filename = nextFilename || PAGE.filename;
+            PAGE.videoHash = nextHash || PAGE.videoHash;
+            if (subtitleMenuInstance && typeof subtitleMenuInstance.updateStream === 'function') {
+                subtitleMenuInstance.updateStream({
+                    videoId: PAGE.videoId,
+                    filename: PAGE.filename,
+                    videoHash: PAGE.videoHash
+                });
+                if (typeof subtitleMenuInstance.prefetch === 'function') {
+                    subtitleMenuInstance.prefetch();
+                }
+            }
+        }
+
+        subtitleMenuInstance = mountSubtitleMenu();
+        if (subtitleMenuInstance && typeof subtitleMenuInstance.prefetch === 'function') {
+            subtitleMenuInstance.prefetch();
         }
 
         initStreamRefreshButton({
@@ -2469,7 +2518,8 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 return '/file-upload?config=' + encodeURIComponent(PAGE.configStr) +
                     '&videoId=' + encodeURIComponent(payload.videoId || '') +
                     '&filename=' + encodeURIComponent(payload.filename || '');
-            }
+            },
+            onEpisode: handleStreamUpdate
         });
 
         const form = document.getElementById('translationForm');

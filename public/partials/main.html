@@ -1,1234 +1,1448 @@
 <div class="container">
-        <div class="header">
-            <div class="logo">
-                <img src="logo.png" alt="SubMaker Logo" style="width: 80px; height: 80px; border-radius: 20px;">
+    <div class="header">
+        <div class="logo">
+            <img src="logo.png" alt="SubMaker Logo" style="width: 80px; height: 80px; border-radius: 20px;">
+        </div>
+        <h1>SubMaker</h1>
+        <div class="version-badge-wrapper">
+            <p class="subtitle">AI-Powered Subtitle Translation</p>
+            <span id="version-badge" class="version-badge" style="display:none;"></span>
+        </div>
+    </div>
+
+
+    <div id="alertContainer"></div>
+
+    <!-- Floating Help Button (Config page) -->
+    <button class="help-button toolbox-button" id="subToolboxLauncher" title="Open Sub Toolbox"
+        aria-label="Open Sub Toolbox" style="display:none;">
+        <span class="toolbox-icon" aria-hidden="true">
+            <svg viewBox="0 0 64 64" role="img" focusable="false">
+                <defs>
+                    <linearGradient id="tbBody" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stop-color="#ffb347" />
+                        <stop offset="45%" stop-color="#ff7a59" />
+                        <stop offset="100%" stop-color="#ff3d7f" />
+                    </linearGradient>
+                    <linearGradient id="tbLid" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#ffe9a3" />
+                        <stop offset="100%" stop-color="#ffc34a" />
+                    </linearGradient>
+                </defs>
+                <rect x="10" y="22" width="44" height="28" rx="6" fill="url(#tbBody)" stroke="#2b0f08"
+                    stroke-width="2.2" />
+                <path d="M14 30h36" stroke="#2b0f08" stroke-width="2.2" stroke-linecap="round" />
+                <rect x="16" y="18" width="32" height="10" rx="3" fill="url(#tbLid)" stroke="#2b0f08"
+                    stroke-width="2.2" />
+                <rect x="28" y="34" width="8" height="8" rx="2" fill="#ffe9a3" stroke="#2b0f08" stroke-width="1.6" />
+                <path d="M26 18v-2a6 6 0 0 1 12 0v2" stroke="#2b0f08" stroke-width="2.2" stroke-linecap="round"
+                    fill="none" />
+                <circle cx="32" cy="38" r="1.4" fill="#2b0f08" />
+                <circle cx="20" cy="26" r="1.8" fill="#2b0f08" opacity="0.35" />
+                <circle cx="44" cy="26" r="1.8" fill="#2b0f08" opacity="0.35" />
+            </svg>
+        </span>
+    </button>
+    <button class="help-button mario" id="configHelp" title="Help">?</button>
+
+    <!-- Disable native HTML validation: we run all validation in config.js and hidden inputs (provider advanced sliders) can trip browser validity when collapsed -->
+    <form id="configForm" autocomplete="off" spellcheck="false" novalidate>
+        <!-- No Translation Mode Toggle -->
+        <div
+            style="margin: 2rem 0; padding: 1.5rem; background: var(--surface-light); border: 2px solid var(--border); border-radius: 12px; display: flex; align-items: center; gap: 1rem;">
+            <span style="font-size: 1.75rem;">⏸️</span>
+            <div style="flex: 1;">
+                <span style="display: block; font-weight: 600; color: var(--text-primary);">Just Fetch Subtitles (No
+                    Translation)</span>
+                <span
+                    style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.25rem;">Skip
+                    AI translation and just fetch subtitles in your chosen languages</span>
             </div>
-            <h1>SubMaker</h1>
-            <div class="version-badge-wrapper">
-                <p class="subtitle">AI-Powered Subtitle Translation</p>
-                <span id="version-badge" class="version-badge" style="display:none;"></span>
-            </div>
+            <label class="toggle-switch">
+                <input type="checkbox" id="noTranslationMode">
+                <span class="toggle-slider"></span>
+            </label>
         </div>
 
-
-        <div id="alertContainer"></div>
-
-        <!-- Floating Help Button (Config page) -->
-        <button class="help-button toolbox-button" id="subToolboxLauncher" title="Open Sub Toolbox" aria-label="Open Sub Toolbox" style="display:none;">
-            <span class="toolbox-icon" aria-hidden="true">
-                <svg viewBox="0 0 64 64" role="img" focusable="false">
-                    <defs>
-                        <linearGradient id="tbBody" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" stop-color="#ffb347"/>
-                            <stop offset="45%" stop-color="#ff7a59"/>
-                            <stop offset="100%" stop-color="#ff3d7f"/>
-                        </linearGradient>
-                        <linearGradient id="tbLid" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stop-color="#ffe9a3"/>
-                            <stop offset="100%" stop-color="#ffc34a"/>
-                        </linearGradient>
-                    </defs>
-                    <rect x="10" y="22" width="44" height="28" rx="6" fill="url(#tbBody)" stroke="#2b0f08" stroke-width="2.2"/>
-                    <path d="M14 30h36" stroke="#2b0f08" stroke-width="2.2" stroke-linecap="round"/>
-                    <rect x="16" y="18" width="32" height="10" rx="3" fill="url(#tbLid)" stroke="#2b0f08" stroke-width="2.2"/>
-                    <rect x="28" y="34" width="8" height="8" rx="2" fill="#ffe9a3" stroke="#2b0f08" stroke-width="1.6"/>
-                    <path d="M26 18v-2a6 6 0 0 1 12 0v2" stroke="#2b0f08" stroke-width="2.2" stroke-linecap="round" fill="none"/>
-                    <circle cx="32" cy="38" r="1.4" fill="#2b0f08"/>
-                    <circle cx="20" cy="26" r="1.8" fill="#2b0f08" opacity="0.35"/>
-                    <circle cx="44" cy="26" r="1.8" fill="#2b0f08" opacity="0.35"/>
-                </svg>
-            </span>
-        </button>
-        <button class="help-button mario" id="configHelp" title="Help">?</button>
-
-        <!-- Disable native HTML validation: we run all validation in config.js and hidden inputs (provider advanced sliders) can trip browser validity when collapsed -->
-        <form id="configForm" autocomplete="off" spellcheck="false" novalidate>
-            <!-- No Translation Mode Toggle -->
-            <div style="margin: 2rem 0; padding: 1.5rem; background: var(--surface-light); border: 2px solid var(--border); border-radius: 12px; display: flex; align-items: center; gap: 1rem;">
-                <span style="font-size: 1.75rem;">⏸️</span>
-                <div style="flex: 1;">
-                    <span style="display: block; font-weight: 600; color: var(--text-primary);">Just Fetch Subtitles (No Translation)</span>
-                    <span style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.25rem;">Skip AI translation and just fetch subtitles in your chosen languages</span>
-                </div>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="noTranslationMode">
-                    <span class="toggle-slider"></span>
-                </label>
-            </div>
-
-            <!-- Subtitle API Providers -->
-            <div class="card collapsed" data-card="subtitle-api">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="9" y="14" width="14" height="12" rx="2.5" ry="2.5" />
-                                    <path d="M12 14v-2a4 4 0 0 1 8 0v2" />
-                                    <circle cx="16" cy="20" r="2" />
-                                    <path d="M16 22v2" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Subtitles API Keys</h2>
+        <!-- Subtitle API Providers -->
+        <div class="card collapsed" data-card="subtitle-api">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <rect x="9" y="14" width="14" height="12" rx="2.5" ry="2.5" />
+                                <path d="M12 14v-2a4 4 0 0 1 8 0v2" />
+                                <circle cx="16" cy="20" r="2" />
+                                <path d="M16 22v2" />
+                            </g>
+                        </svg>
                     </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="subtitle-api"></button>
+                    <h2 class="card-title">Subtitles API Keys</h2>
                 </div>
-<div class="card-content">
-                                        <!-- OpenSubtitles -->
-                    <div class="form-group" style="padding-bottom: 1.5rem; border-bottom: 1px solid var(--border);">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
-                            <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-                                <span style="font-size: 1.5rem;">📄</span>
-                                <div>
-                                    <strong style="display: block;">OpenSubtitles</strong>
-                                    <span class="label-description" style="margin: 0;">Choose your preferred OpenSubtitles implementation below.</span>
-                                </div>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="enableOpenSubtitles" checked>
-                                <span class="toggle-slider"></span>
-                            </label>
-                        </div>
-                        <div id="opensubtitlesConfig">
-                            <!-- Implementation Type Selection -->
-                            <div style="margin-bottom: 1rem; padding: 1rem; background: var(--surface-light); border-radius: 8px;">
-                                <label style="display: block; margin-bottom: 0.75rem; font-weight: 600;">Implementation Type</label>
-                                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-                                    <label style="display: flex; align-items: start; gap: 0.5rem; cursor: pointer; padding: 0.75rem; background: white; border: 2px solid var(--border); border-radius: 8px; transition: all 0.2s;">
-                                        <input type="radio" name="opensubtitlesImplementation" id="opensubtitlesImplV3" value="v3" checked style="margin-top: 0.25rem;">
-                                        <div style="flex: 1;">
-                                            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                                <strong style="margin-bottom: 0.25rem;">V3 (Default)</strong>
-                                                <div class="v3-warning-tooltip">
-                                                    <span class="warning-icon" tabindex="0" aria-label="OpenSubtitles V3 limitations">&#9888;&#65039;</span>
-                                                    <div class="tooltip-bubble" role="tooltip" aria-hidden="true">
-                                                        V3 doesn't show all OpenSubtitles results and rate-limiting may apply.
-                                                    </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="subtitle-api"></button>
+            </div>
+            <div class="card-content">
+                <!-- OpenSubtitles -->
+                <div class="form-group" style="padding-bottom: 1.5rem; border-bottom: 1px solid var(--border);">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                        <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">📄</span>
+                            <div>
+                                <strong style="display: block;">OpenSubtitles</strong>
+                                <span class="label-description" style="margin: 0;">Choose your preferred OpenSubtitles
+                                    implementation below.</span>
+                            </div>
+                        </label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="enableOpenSubtitles" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div id="opensubtitlesConfig">
+                        <!-- Implementation Type Selection -->
+                        <div
+                            style="margin-bottom: 1rem; padding: 1rem; background: var(--surface-light); border-radius: 8px;">
+                            <label style="display: block; margin-bottom: 0.75rem; font-weight: 600;">Implementation
+                                Type</label>
+                            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                                <label
+                                    style="display: flex; align-items: start; gap: 0.5rem; cursor: pointer; padding: 0.75rem; background: white; border: 2px solid var(--border); border-radius: 8px; transition: all 0.2s;">
+                                    <input type="radio" name="opensubtitlesImplementation" id="opensubtitlesImplV3"
+                                        value="v3" checked style="margin-top: 0.25rem;">
+                                    <div style="flex: 1;">
+                                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                            <strong style="margin-bottom: 0.25rem;">V3 (Default)</strong>
+                                            <div class="v3-warning-tooltip">
+                                                <span class="warning-icon" tabindex="0"
+                                                    aria-label="OpenSubtitles V3 limitations">&#9888;&#65039;</span>
+                                                <div class="tooltip-bubble" role="tooltip" aria-hidden="true">
+                                                    V3 doesn't show all OpenSubtitles results and rate-limiting may
+                                                    apply.
                                                 </div>
                                             </div>
-                                            <span class="label-description" style="margin: 0; font-size: 0.875rem;">Uses the official Stremio OpenSubtitles V3 addon. No authentication required, simple setup.</span>
                                         </div>
-                                    </label>
-                                    <label style="display: flex; align-items: start; gap: 0.5rem; cursor: pointer; padding: 0.75rem; background: white; border: 2px solid var(--border); border-radius: 8px; transition: all 0.2s;">
-                                        <input type="radio" name="opensubtitlesImplementation" id="opensubtitlesImplAuth" value="auth" style="margin-top: 0.25rem;">
-                                        <div>
-                                            <strong style="display: block; margin-bottom: 0.25rem;">Auth (Recommended)</strong>
-                                            <span class="label-description" style="margin: 0; font-size: 0.875rem;">Uses your OpenSubtitles account with API key authentication. Requires username/password.</span>
-                                        </div>
-                                    </label>
-                                </div>
+                                        <span class="label-description" style="margin: 0; font-size: 0.875rem;">Uses the
+                                            official Stremio OpenSubtitles V3 addon. No authentication required, simple
+                                            setup.</span>
+                                    </div>
+                                </label>
+                                <label
+                                    style="display: flex; align-items: start; gap: 0.5rem; cursor: pointer; padding: 0.75rem; background: white; border: 2px solid var(--border); border-radius: 8px; transition: all 0.2s;">
+                                    <input type="radio" name="opensubtitlesImplementation" id="opensubtitlesImplAuth"
+                                        value="auth" style="margin-top: 0.25rem;">
+                                    <div>
+                                        <strong style="display: block; margin-bottom: 0.25rem;">Auth
+                                            (Recommended)</strong>
+                                        <span class="label-description" style="margin: 0; font-size: 0.875rem;">Uses
+                                            your OpenSubtitles account with API key authentication. Requires
+                                            username/password.</span>
+                                    </div>
+                                </label>
                             </div>
+                        </div>
 
-                            <!-- Auth Configuration (shown when Auth is selected) -->
-                            <div id="opensubtitlesAuthConfig" style="display: none;">
-                                <div class="opensubs-auth-layout">
-                                    <div class="opensubs-auth-fields">
-                                        <label style="display: block;">Username</label>
-                                        <input type="text" id="opensubtitlesUsername" placeholder="Enter OpenSubtitles Username" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+                        <!-- Auth Configuration (shown when Auth is selected) -->
+                        <div id="opensubtitlesAuthConfig" style="display: none;">
+                            <div class="opensubs-auth-layout">
+                                <div class="opensubs-auth-fields">
+                                    <label style="display: block;">Username</label>
+                                    <input type="text" id="opensubtitlesUsername" name="opensubtitlesUsername"
+                                        placeholder="Enter OpenSubtitles Username" autocomplete="username"
+                                        autocapitalize="none" autocorrect="off" spellcheck="false">
 
-                                        <label style="display: block;">Password</label>
-                                        <div class="password-field-wrapper">
-                                            <input type="text" class="sensitive-input masked" id="opensubtitlesPassword" placeholder="Enter OpenSubtitles Password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text">
-                                            <span class="password-toggle-icon" id="toggleOpenSubsPassword" title="Show/hide password">&#128274;&#128065;</span>
-                                        </div>
-
-                                        <span class="label-description">20 subtitles a day. <a href="https://www.opensubtitles.com/en/newuser" target="_blank" style="color: var(--primary-light);">Create a free account</a> if you don't have one.</span>
+                                    <label style="display: block;">Password</label>
+                                    <div class="password-field-wrapper">
+                                        <input type="text" class="sensitive-input masked" id="opensubtitlesPassword"
+                                            name="opensubtitlesPassword" placeholder="Enter OpenSubtitles Password"
+                                            autocomplete="current-password" autocapitalize="none" autocorrect="off"
+                                            spellcheck="false" inputmode="text">
+                                        <span class="password-toggle-icon" id="toggleOpenSubsPassword"
+                                            title="Show/hide password">&#128274;&#128065;</span>
                                     </div>
 
-                                    <div class="validate-tile">
-                                        <div class="tile-eyebrow" style="text-align:center;">Run a quick ping before saving to validate your credentials.</div>
-                                        <button type="button" class="validate-api-btn" id="validateOpenSubtitles" title="Validate OpenSubtitles credentials">
-                                            <span class="validate-icon">&#10003;</span>
-                                            <span class="validate-text">Run Test</span>
-                                        </button>
-                                    </div>
+                                    <span class="label-description">20 subtitles a day. <a
+                                            href="https://www.opensubtitles.com/en/newuser" target="_blank"
+                                            style="color: var(--primary-light);">Create a free account</a> if you don't
+                                        have one.</span>
                                 </div>
-                                <div class="validation-feedback" id="opensubtitlesValidationFeedback"></div>
-                            </div>
-                        </div>
-                    </div>
 
-                    <!-- SubSource -->
-                    <div class="form-group" style="padding: 1.5rem 0; border-bottom: 1px solid var(--border);">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
-                            <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-                                <span style="font-size: 1.5rem;">🎬</span>
-                                <div>
-                                    <strong style="display: block;">SubSource</strong>
-                                    <span class="label-description" style="margin: 0;">Get your free API key from <a href="https://subsource.net/" target="_blank" style="color: var(--primary-light);">SubSource.net</a></span>
+                                <div class="validate-tile">
+                                    <div class="tile-eyebrow" style="text-align:center;">Run a quick ping before saving
+                                        to validate your credentials.</div>
+                                    <button type="button" class="validate-api-btn" id="validateOpenSubtitles"
+                                        title="Validate OpenSubtitles credentials">
+                                        <span class="validate-icon">&#10003;</span>
+                                        <span class="validate-text">Run Test</span>
+                                    </button>
                                 </div>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="enableSubSource" checked>
-                                <span class="toggle-slider"></span>
-                            </label>
-                        </div>
-                        <div id="subsourceConfig">
-                            <div style="display: flex; gap: 0.5rem; align-items: start;">
-                                <input type="text" id="subsourceApiKey" placeholder="Enter SubSource API key" style="flex: 1;">
-                                <button type="button" class="validate-api-btn" id="validateSubSource" title="Validate API key">
-                                    <span class="validate-icon">✓</span>
-                                    <span class="validate-text">Test</span>
-                                </button>
                             </div>
-                            <div class="validation-feedback" id="subsourceValidationFeedback"></div>
+                            <div class="validation-feedback" id="opensubtitlesValidationFeedback"></div>
                         </div>
                     </div>
+                </div>
 
-                    <!-- SubDL -->
-                    <div class="form-group" style="padding: 1.5rem 0; border-bottom: 1px solid var(--border);">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
-                            <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-                                <span style="font-size: 1.5rem;">📋</span>
-                                <div>
-                                    <strong style="display: block;">SubDL</strong>
-                                    <span class="label-description" style="margin: 0;">Get your free API key from <a href="https://subdl.com" target="_blank" style="color: var(--primary-light);">SubDL.com</a></span>
-                                </div>
-                            </label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="enableSubDL" checked>
-                                <span class="toggle-slider"></span>
-                            </label>
-                        </div>
-                        <div id="subdlConfig">
-                            <div style="display: flex; gap: 0.5rem; align-items: start;">
-                                <input type="text" id="subdlApiKey" placeholder="Enter SubDL API key" style="flex: 1;">
-                                <button type="button" class="validate-api-btn" id="validateSubDL" title="Validate API key">
-                                    <span class="validate-icon">✓</span>
-                                    <span class="validate-text">Test</span>
-                                </button>
+                <!-- SubSource -->
+                <div class="form-group" style="padding: 1.5rem 0; border-bottom: 1px solid var(--border);">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                        <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">🎬</span>
+                            <div>
+                                <strong style="display: block;">SubSource</strong>
+                                <span class="label-description" style="margin: 0;">Get your free API key from <a
+                                        href="https://subsource.net/" target="_blank"
+                                        style="color: var(--primary-light);">SubSource.net</a></span>
                             </div>
-                            <div class="validation-feedback" id="subdlValidationFeedback"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- No-Translation Languages -->
-            <div class="card collapsed" id="noTranslationCard" style="display: none;" data-card="notranslation">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                    <circle cx="16" cy="16" r="10" />
-                                    <path d="M16 6v20M6 16h20" />
-                                    <path d="M10 10c2 4 4 6 6 6s4-2 6-6M10 22c2-4 4-6 6-6s4 2 6 6" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Languages</h2>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="notranslation"></button>
-                </div>
-<div class="card-content">
-                        <div class="form-group">
-                            <label>
-                                Subtitle Languages
-                                <span class="label-description" id="noTranslationLanguagesDescription">Select which languages you want to fetch subtitles in.</span>
-                            </label>
-
-                            <div class="language-search">
-                                <span class="language-search-icon">🔍</span>
-                                <input type="text" id="noTranslationSearch" placeholder="Search languages...">
-                            </div>
-
-                            <div id="selectedNoTranslationLanguages" class="selected-languages empty"></div>
-                            <div class="field-error" id="noTranslationLanguagesError"></div>
-
-                            <div class="quick-actions">
-                                <button type="button" class="quick-btn" data-action="select-popular-notranslation">⭐ Popular</button>
-                            <button type="button" class="quick-btn" data-action="select-all-notranslation">✓ All</button>
-                            <button type="button" class="quick-btn" data-action="clear-notranslation">✗ Clear</button>
-                        </div>
-
-                        <div id="noTranslationLanguages" class="language-grid"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Gemini API -->
-            <div class="card collapsed" id="geminiCard" data-card="gemini">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-                                    <circle cx="16" cy="16" r="10.5" stroke-width="2.2" />
-                                    <circle cx="16" cy="16" r="5" stroke-width="1.8" />
-                                    <path d="M16 6v-2M22.5 8.2l1.4-1.4M26 15h2M22.5 23.8l1.4 1.4M16 26v2M9.5 23.8l-1.4 1.4M6 15H4M9.5 8.2 8.1 6.8" stroke-width="1.15" />
-                                    <path d="M16 11v4.2l2.8 1.6" stroke-width="1.8" />
-                                    <path d="M12.8 21.4c0.7 1 1.9 1.6 3.2 1.6s2.5-0.6 3.2-1.6" stroke-width="1.2" opacity="0.8" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">AI Translation API Keys</h2>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="gemini"></button>
-                </div>
-<div class="card-content">
-                    <div class="form-group">
-                        <label for="geminiApiKey">
-                            Gemini API Key
-                            <span class="label-description">Get your free API key from <a href="https://makersuite.google.com/app/apikey" target="_blank" style="color: var(--primary-light);">Google AI Studio</a></span>
                         </label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="enableSubSource" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div id="subsourceConfig">
                         <div style="display: flex; gap: 0.5rem; align-items: start;">
-                            <input type="text" class="sensitive-input masked" id="geminiApiKey" placeholder="Enter your Gemini API key" style="flex: 1;" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text">
-                            <button type="button" class="validate-api-btn" id="validateGemini" title="Validate API key">
+                            <input type="text" id="subsourceApiKey" placeholder="Enter SubSource API key"
+                                style="flex: 1;">
+                            <button type="button" class="validate-api-btn" id="validateSubSource"
+                                title="Validate API key">
                                 <span class="validate-icon">✓</span>
                                 <span class="validate-text">Test</span>
                             </button>
                         </div>
-                        <div class="validation-feedback" id="geminiValidationFeedback"></div>
-                        <div class="field-error" id="geminiApiKeyError">API key is required</div>
+                        <div class="validation-feedback" id="subsourceValidationFeedback"></div>
                     </div>
+                </div>
 
-                    <div class="form-group">
-                        <label for="geminiModel">
-                            Translation Model
-                            <span class="label-description">AI model for translations</span>
-                        </label>
-                        <select id="geminiModel" required>
-                            <option value="gemini-flash-lite-latest">Gemini 2.5 Flash-Lite</option>
-                            <option value="gemini-flash-latest" selected>Gemini 2.5 Flash</option>
-                            <option value="gemini-2.5-pro">Gemini 2.5 Pro (Slow)</option>
-                        </select>
-                        <div class="field-error" id="geminiModelError">Please select a model</div>
-                        <div style="margin-top: 0.5rem; font-size: 0.9rem; color: var(--text-secondary);">
-                            <strong style="margin-left: 2px;">Bad/broken or out-of-sync translation?</strong> Quickly triple-click the subtitle to force a re-translation.
-                        </div>
-                        <div style="margin-top: 0.6rem; padding: 0.75rem; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; font-size: 0.875rem; color: var(--text-secondary);">
-                            <strong style="color: var(--warning);">⚡ 2.5 Pro usage is still in Beta.</strong> If you have translation problems, use Flash-Lite.
-                        </div>
-                        <div id="proRateLimitWarning" style="display: none; margin-top: 0.75rem; padding: 0.75rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; font-size: 0.875rem; color: var(--text-secondary);">
-                            <strong style="color: #ef4444;">⚠️ Free Tier Limitation:</strong> If using a free API key, Gemini 2.5 Pro may trigger rate limits (HTTP 429). You'll likely only be able to translate one subtitle at a time.
-                        </div>
-                    </div>
-
-                    <div class="form-group" style="display: none;">
-                        <label for="promptStyle">
-                            Prompt Style
-                            <span class="label-description">Choose between strict structure preservation or natural flow adaptation</span>
-                        </label>
-                        <select id="promptStyle">
-                            <option value="natural" disabled title="Temporarily unavailable">Natural - Adapts structure for natural target language flow</option>
-                            <option value="strict">Strict - Preserves exact timing and structure</option>
-                        </select>
-                    </div>
-
-                    <!-- Advanced Settings removed by request -->
-                    <div class="form-group" id="multiProvidersGroup" style="display: none; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border);">
-                        <label style="display:flex; align-items:center; gap:0.5rem;">
-                            <input type="checkbox" id="enableMultiProviders">
-                            Multiple providers (beta)
-                        </label>
-                        <span class="label-description">Enables multiple providers and advanced parameters settings.</span>
-                    </div>
-
-                    <div id="multiProvidersContainer" style="display: none; background: var(--surface-light); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; margin-top: 0.5rem; flex-direction: column; gap: 1rem;">
-                        <div style="display: grid; gap: 1rem;">
-                            <div class="provider-block" data-provider="openai">
-                                <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
-                                    <label style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
-                                        <input type="checkbox" id="provider-openai-enabled"> OpenAI
-                                    </label>
-                                    <button type="button" class="validate-api-btn" data-provider="openai" title="Fetch models">
-                                        <span class="validate-icon">&#8635;</span>
-                                        <span class="validate-text">Load Models</span>
-                                    </button>
-                                </div>
-                                <div id="provider-openai-fields" class="provider-fields" style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
-                                    <input type="text" id="provider-openai-key" placeholder="OpenAI API key" class="sensitive-input masked">
-                                    <select id="provider-openai-model">
-                                        <option value="">Select model</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="provider-block" data-provider="anthropic">
-                                <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
-                                    <label style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
-                                        <input type="checkbox" id="provider-anthropic-enabled"> Anthropic
-                                    </label>
-                                    <button type="button" class="validate-api-btn" data-provider="anthropic" title="Fetch models">
-                                        <span class="validate-icon">&#8635;</span>
-                                        <span class="validate-text">Load Models</span>
-                                    </button>
-                                </div>
-                                <div id="provider-anthropic-fields" class="provider-fields" style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
-                                    <input type="text" id="provider-anthropic-key" placeholder="Anthropic API key" class="sensitive-input masked">
-                                    <select id="provider-anthropic-model">
-                                        <option value="">Select model</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="provider-block" data-provider="xai">
-                                <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
-                                    <label style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
-                                        <input type="checkbox" id="provider-xai-enabled"> XAI (Grok)
-                                    </label>
-                                    <button type="button" class="validate-api-btn" data-provider="xai" title="Fetch models">
-                                        <span class="validate-icon">&#8635;</span>
-                                        <span class="validate-text">Load Models</span>
-                                    </button>
-                                </div>
-                                <div id="provider-xai-fields" class="provider-fields" style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
-                                    <input type="text" id="provider-xai-key" placeholder="XAI API key" class="sensitive-input masked">
-                                    <select id="provider-xai-model">
-                                        <option value="">Select model</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="provider-block" data-provider="deepseek">
-                                <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
-                                    <label style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
-                                        <input type="checkbox" id="provider-deepseek-enabled"> DeepSeek
-                                    </label>
-                                    <button type="button" class="validate-api-btn" data-provider="deepseek" title="Fetch models">
-                                        <span class="validate-icon">&#8635;</span>
-                                        <span class="validate-text">Load Models</span>
-                                    </button>
-                                </div>
-                                <div id="provider-deepseek-fields" class="provider-fields" style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
-                                    <input type="text" id="provider-deepseek-key" placeholder="DeepSeek API key" class="sensitive-input masked">
-                                    <select id="provider-deepseek-model">
-                                        <option value="">Select model</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="provider-block" data-provider="deepl">
-                                <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
-                                    <label style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
-                                        <input type="checkbox" id="provider-deepl-enabled"> DeepL
-                                    </label>
-                                    <button type="button" class="validate-api-btn" data-provider="deepl" title="Fetch models">
-                                        <span class="validate-icon">&#8635;</span>
-                                        <span class="validate-text">Load Models</span>
-                                    </button>
-                                </div>
-                                <div id="provider-deepl-fields" class="provider-fields" style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
-                                    <input type="text" id="provider-deepl-key" placeholder="DeepL Auth Key" class="sensitive-input masked">
-                                    <select id="provider-deepl-model">
-                                        <option value="">Select model</option>
-                                    </select>
-                                    <span class="label-description">Free keys auto-use api-free.deepl.com. Language codes are auto-mapped from your selections.</span>
-                                </div>
-                            </div>
-
-                            <div class="provider-block" data-provider="mistral">
-                                <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
-                                    <label style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
-                                        <input type="checkbox" id="provider-mistral-enabled"> Mistral
-                                    </label>
-                                    <button type="button" class="validate-api-btn" data-provider="mistral" title="Fetch models">
-                                        <span class="validate-icon">&#8635;</span>
-                                        <span class="validate-text">Load Models</span>
-                                    </button>
-                                </div>
-                                <div id="provider-mistral-fields" class="provider-fields" style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
-                                    <input type="text" id="provider-mistral-key" placeholder="Mistral API key" class="sensitive-input masked">
-                                    <select id="provider-mistral-model">
-                                        <option value="">Select model</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="provider-block" data-provider="cfworkers">
-                                <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
-                                    <label style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
-                                        <input type="checkbox" id="provider-cfworkers-enabled"> Cloudflare Workers AI
-                                    </label>
-                                    <button type="button" class="validate-api-btn" data-provider="cfworkers" title="Fetch models">
-                                        <span class="validate-icon">&#8635;</span>
-                                        <span class="validate-text">Load Models</span>
-                                    </button>
-                                </div>
-                                <div id="provider-cfworkers-fields" class="provider-fields" style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
-                                    <input type="text" id="provider-cfworkers-key" placeholder="ACCOUNT_ID|TOKEN" class="sensitive-input">
-                                    <select id="provider-cfworkers-model">
-                                        <option value="">Select model</option>
-                                    </select>
-                                    <span class="label-description">Use ACCOUNT|TOKEN to set account ID explicitly.</span>
-                                </div>
-                            </div>
-
-                            <div class="provider-block" data-provider="openrouter">
-                                <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
-                                    <label style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
-                                        <input type="checkbox" id="provider-openrouter-enabled"> OpenRouter
-                                    </label>
-                                    <button type="button" class="validate-api-btn" data-provider="openrouter" title="Fetch models">
-                                        <span class="validate-icon">&#8635;</span>
-                                        <span class="validate-text">Load Models</span>
-                                    </button>
-                                </div>
-                                <div id="provider-openrouter-fields" class="provider-fields" style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
-                                    <input type="text" id="provider-openrouter-key" placeholder="OpenRouter API key" class="sensitive-input masked">
-                                    <select id="provider-openrouter-model">
-                                        <option value="">Select model</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="provider-block" data-provider="googletranslate">
-                                <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
-                                    <label style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
-                                        <input type="checkbox" id="provider-googletranslate-enabled"> Google Translate (unofficial)
-                                    </label>
-                                    <div style="font-size:0.85rem; color: var(--text-secondary);">No API key needed</div>
-                                </div>
-                                <div id="provider-googletranslate-fields" class="provider-fields" style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
-                                    <input type="hidden" id="provider-googletranslate-key" value="">
-                                    <select id="provider-googletranslate-model" disabled>
-                                        <option value="web" selected>web (fixed)</option>
-                                    </select>
-                                    <div style="font-size:0.9rem; color: var(--text-secondary);">Uses the public Google Translate web endpoint (may be unstable).</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="form-group" id="mainProviderGroup" style="display: none; margin-top: 1rem;">
-                        <label for="mainProviderSelect">
-                            Main Provider
-                            <span class="label-description">Choose which enabled AI provider to use when multiple are configured.</span>
-                        </label>
-                        <select id="mainProviderSelect">
-                            <option value="gemini">Gemini</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group" id="secondaryProviderGroup" style="display: none;">
-                        <label style="display: flex; align-items: flex-start; gap: 0.5rem;">
-                            <input type="checkbox" id="enableSecondaryProvider" style="margin-top: 0.3rem;">
+                <!-- SubDL -->
+                <div class="form-group" style="padding: 1.5rem 0; border-bottom: 1px solid var(--border);">
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+                        <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">📋</span>
                             <div>
-                                Secondary Provider
-                                <span class="label-description">If the main provider errors (429/503/prohibited/other), retry the failed batch with this provider, then continue with the main provider.</span>
+                                <strong style="display: block;">SubDL</strong>
+                                <span class="label-description" style="margin: 0;">Get your free API key from <a
+                                        href="https://subdl.com" target="_blank"
+                                        style="color: var(--primary-light);">SubDL.com</a></span>
                             </div>
                         </label>
-                        <div id="secondaryProviderSelectRow" style="margin-top: 0.5rem; display: none;">
-                            <label for="secondaryProviderSelect">
-                                Fallback Provider
-                                <span class="label-description">Used only when the main provider returns an error. Falls back seamlessly.</span>
-                            </label>
-                            <select id="secondaryProviderSelect" disabled>
-                                <option value="">Select provider</option>
-                            </select>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="enableSubDL" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div id="subdlConfig">
+                        <div style="display: flex; gap: 0.5rem; align-items: start;">
+                            <input type="text" id="subdlApiKey" placeholder="Enter SubDL API key" style="flex: 1;">
+                            <button type="button" class="validate-api-btn" id="validateSubDL" title="Validate API key">
+                                <span class="validate-icon">✓</span>
+                                <span class="validate-text">Test</span>
+                            </button>
                         </div>
+                        <div class="validation-feedback" id="subdlValidationFeedback"></div>
                     </div>
                 </div>
             </div>
-
-            <!-- Source Languages -->
-            <div class="card collapsed" id="sourceCard" data-card="source">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                    <circle cx="16" cy="11" r="4" />
-                                    <path d="M10 18c0-2.5 2.7-4 6-4s6 1.5 6 4" />
-                                    <path d="M8 23c-.5-1-1.5-2-3-2M24 23c.5-1 1.5-2 3-2" />
-                                    <path d="M6 26h20" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Source Languages</h2>
-                        <span class="card-badge" id="sourceBadge">0</span>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="source"></button>
-                </div>
-<div class="card-content">
-                    <div class="form-group">
-                        <label>
-                            * Source languages for translations
-                            <span class="label-description" id="sourceLanguagesDescription">You can select up to 3 source languages, but only 1 is recommended (so you have the same list order when translating). All subtitles from this language will be available for translation in the translation selector AND will be fetched (original subtitles will show up).</span>
-                        </label>
-
-                        <div class="language-search">
-                            <span class="language-search-icon">🔍</span>
-                            <input type="text" id="sourceSearch" placeholder="Search languages..." accesskey="s">
-                        </div>
-
-                        <div id="selectedSourceLanguages" class="selected-languages empty"></div>
-                        <div class="field-error" id="sourceLanguagesError">Please select at least one source language</div>
-
-                        <div id="sourceLanguages" class="language-grid"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Target Languages -->
-            <div class="card collapsed" id="targetCard" data-card="target">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                    <circle cx="16" cy="16" r="10" />
-                                    <circle cx="16" cy="16" r="6" />
-                                    <circle cx="16" cy="16" r="2" fill="currentColor" />
-                                    <path d="M16 6v4M16 22v4M6 16h4M22 16h4" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Target Languages</h2>
-                        <span class="card-badge" id="targetBadge">0</span>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="target"></button>
-                </div>
-<div class="card-content">
-                    <div class="form-group">
-                        <label>
-                            * Target languages for subtitles and translations
-                            <span class="label-description" id="targetLanguagesDescription">Subtitles in target languages will be fetched AND translation buttons will appear for translating FROM the source language TO these languages. You can select up to 6 total target languages (including Learn Mode).</span>
-                        </label>
-
-                        <div class="language-search">
-                            <span class="language-search-icon">🔍</span>
-                            <input type="text" id="targetSearch" placeholder="Search languages..." accesskey="t">
-                        </div>
-
-                        <div id="selectedTargetLanguages" class="selected-languages empty"></div>
-                        <div class="field-error" id="targetLanguagesError">Please select at least one target language</div>
-
-                        <div class="quick-actions">
-                            <button type="button" class="quick-btn" data-action="select-popular-target">⭐ Popular</button>
-                            <button type="button" class="quick-btn" data-action="select-all-target">✓ All</button>
-                            <button type="button" class="quick-btn" data-action="clear-target">✗ Clear</button>
-                        </div>
-
-                        <div id="targetLanguages" class="language-grid"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Learn Target Languages -->
-            <div class="card collapsed" id="learnTargetsCard" style="display: none;" data-card="learn">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <defs>
-                                    <linearGradient id="learnAurora" x1="10%" y1="15%" x2="90%" y2="85%">
-                                        <stop offset="0%" stop-color="currentColor" stop-opacity="0.15" />
-                                        <stop offset="45%" stop-color="currentColor" stop-opacity="0.05" />
-                                        <stop offset="100%" stop-color="currentColor" stop-opacity="0.18" />
-                                    </linearGradient>
-                                </defs>
-                                <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M6 12.6c1.5-2 4.8-3 8.2-1.8L16 12.8l1.8-2c3.4-1.2 6.7-0.2 8.2 1.8v11.7c-1.5-2-4.8-3-8.2-1.8L16 24.9l-1.8-2.4c-3.4-1.2-6.7-0.2-8.2 1.8V12.6z" stroke-width="2.2" fill="url(#learnAurora)" />
-                                    <path d="M16 13v11.9" stroke-width="2.2" />
-                                    <path d="M13 21.6l-3 2m9-2l3 2" stroke-width="1.1" opacity="0.5" />
-                                    <path d="M16 5.9l1.1 1.5L16 7.8l-1.1-0.4z" fill="currentColor" />
-                                    <path d="M16 6.9l0.5 1.3 1.3 0.3-1.1 0.8 0.1 1.3L16 9.8l-0.8 0.8 0.1-1.3-1.1-0.8 1.3-0.3z" fill="currentColor" opacity="0.9" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Learn Target Languages</h2>
-                        <span class="card-badge" id="learnBadge">0</span>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="learn"></button>
-                </div>
-<div class="card-content">
-                    <div class="form-group">
-                        <label>
-                            Select Learn Mode Languages
-                            <span class="label-description">Creates "Learn (Language)" entries that pair source + translated lines in WebVTT. Select target "Learn" languages above after enabling.</span>
-                        </label>
-
-                        <div class="language-search">
-                            <span class="language-search-icon">🔍</span>
-                            <input type="text" id="learnSearch" placeholder="Search languages...">
-                        </div>
-
-                        <div id="selectedLearnLanguages" class="selected-languages empty"></div>
-                        <div class="field-error" id="learnLanguagesError">Please select at least one learn language</div>
-
-                        <div class="quick-actions">
-                            <button type="button" class="quick-btn" data-action="select-popular-learn">⭐ Popular</button>
-                            <button type="button" class="quick-btn" data-action="select-all-learn">✓ All</button>
-                            <button type="button" class="quick-btn" data-action="clear-learn">✗ Clear</button>
-                        </div>
-
-                        <div id="learnLanguages" class="language-grid"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Translation Settings -->
-            <div class="card collapsed" data-card="translation" id="translationSettingsCard">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <defs>
-                                    <linearGradient id="translationBubbles" x1="0%" y1="0%" x2="0%" y2="100%">
-                                        <stop offset="0%" stop-color="currentColor" stop-opacity="0.12" />
-                                        <stop offset="100%" stop-color="currentColor" stop-opacity="0.04" />
-                                    </linearGradient>
-                                </defs>
-                                <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.95">
-                                    <!-- Left speech bubble -->
-                                    <path d="M6.8 7.2h9.4a1.8 1.8 0 0 1 1.8 1.8v5.5a1.8 1.8 0 0 1-1.8 1.8h-4.4L9 19v-2.7H6.8a1.8 1.8 0 0 1-1.8-1.8V9a1.8 1.8 0 0 1 1.8-1.8Z" stroke-width="1.9" fill="url(#translationBubbles)" />
-                                    <path d="M9.6 10.6h4.2M9.6 12.8h3.4M9.6 15h2.4" stroke-width="1.2" />
-
-                                    <!-- Right speech bubble -->
-                                    <path d="M15.2 15.2h9.2a1.8 1.8 0 0 1 1.8 1.8v5.5a1.8 1.8 0 0 1-1.8 1.8H20l-3 2.7v-2.7h-1.8a1.8 1.8 0 0 1-1.8-1.8V17a1.8 1.8 0 0 1 1.8-1.8Z" stroke-width="1.9" fill="url(#translationBubbles)" />
-                                    <path d="M17.8 18.3h4.4M17.8 20.5h3.6" stroke-width="1.2" />
-
-                                    <!-- Swap arrows -->
-                                    <path d="M13.2 8c2.3-1.7 6.3-1.3 8.5.6" stroke-width="1.35" />
-                                    <path d="M21 7.6l2.6 1.9-3 .6" stroke-width="1.35" />
-                                    <path d="M18.8 23.3c-2.3 1.7-6.3 1.3-8.5-.6" stroke-width="1.35" />
-                                    <path d="M11 23.7l-2.6-1.9 3-.6" stroke-width="1.35" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Translation Settings</h2>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="translation"></button>
-                </div>
-                <div class="card-content">
-                    <div class="form-group">
-                        <label for="sendTimestampsToAI" class="form-label">
-                            <span class="label-title">Translation Workflow</span>
-                            <span class="label-description">Switching between modes is recommended if you have translation sync problems. Our main translation workflow removes timestamps and sends the subtitles numbered to the AI, then reconstructs the SRT with the original timestamps. "Send Timestamps to AI" sends the subtitles WITH timecodes and trusts the AI to return correct timestamps. Added for future-proofing the addon.</span>
-                        </label>
-                        <select id="sendTimestampsToAI" class="styled-select">
-                            <option value="original">Original Timestamps (Default)</option>
-                            <option value="ai">Send Timestamps to AI</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="databaseMode" class="form-label">
-                            <span class="label-title">SubMaker Database</span>
-                            <span class="label-description">Choose how to handle the SubMaker translation database. The main database caches translations permanently to reduce API usage. Bypass mode forces fresh translations and stores them temporarily (12 hours).</span>
-                        </label>
-                        <select id="databaseMode" class="styled-select">
-                            <option value="use">Use SubMaker Database</option>
-                            <option value="bypass">Bypass Cache (Force Retranslation)</option>
-                        </select>
-                        <div id="databaseModeNote" style="display: none; margin-top: 0.5rem; padding: 0.75rem; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; font-size: 0.875rem; color: var(--text-secondary);">
-                            <strong style="color: var(--warning);">⚠️ Bypass Mode Required:</strong> <span id="databaseModeReason"></span>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="singleBatchMode" class="form-label">
-                            <span class="label-title">Chunking Strategy</span>
-                            <span class="label-description">Multiple Batches sends subtitles in separate requests (chunks). Single-Batch translates the whole subtitle file in one go (still auto-splits into 2 or 3 chunks at 50k and 100k+ tokens). Single-Batch still streams partial outputs while processing (through token streaming) and delivers better contextual translations. Might cause MAX_OUTPUT errors. Long titles may have more sync problems.</span>
-                        </label>
-                        <select id="singleBatchMode" class="styled-select">
-                            <option value="multiple">Multiple Batches (Default)</option>
-                            <option value="single">Single-Batch</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Other Settings -->
-            <div class="card collapsed" data-card="cache">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M6 9h8M18 9h8" />
-                                    <circle cx="15" cy="9" r="2" fill="currentColor" />
-                                    <path d="M6 16h8M18 16h8" />
-                                    <circle cx="15" cy="16" r="2" fill="currentColor" />
-                                    <path d="M6 23h4M14 23h12" />
-                                    <circle cx="11" cy="23" r="2" fill="currentColor" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Other Settings</h2>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="cache"></button>
-                </div>
-<div class="card-content">
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="subToolboxEnabled">
-                            Enable "Sub Toolbox" (Alpha)
-                            <span class="label-description">Shows the Sub Toolbox entry in Stremio subtitles for brower access to all tools. (Read instructions after enabling)</span>
-                        </label>
-                    </div>
-
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="learnModeEnabled">
-                            Learn Mode
-                            <span class="label-description">Adds "Learn (Language)" entries that output dual-language WebVTT with source and translated lines for language learning.</span>
-                        </label>
-                    </div>
-
-                    <div class="form-group" id="learnOrderGroup" style="display: none;">
-                        <label>
-                            Learn Mode Subtitle Order
-                            <span class="label-description">Choose which language appears at the top and bottom of the screen.</span>
-                        </label>
-                        <div class="option-group" style="display: flex; gap: 0.75rem; margin-top: 0.35rem;">
-                            <label style="background: white; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;">
-                                <input type="radio" name="learnOrder" value="source-top" checked>
-                                Source Top - Target Bottom
-                            </label>
-                            <label style="background: white; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;">
-                                <input type="radio" name="learnOrder" value="target-top">
-                                Target Top - Source Bottom
-                            </label>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="mobileMode">
-                            Mobile Mode (fix/workaround)
-                            <span class="label-description">Stremio makes only 1 request for subtitles and caches it, so subtitles in Android can't be partially delivered. Mobile Mode holds translation requests and sends the final subtitle only when ready. Use this if you're watching on Android/iOS. No partial translations, no loading messages. Might freeze the stream until translation is ready. Flash-lite recommended. Wait 1-3 min, if it doesn't load automatically switch subtitles back and forth to load the translation.</span>
-                        </label>
-                    </div>
-
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="betaMode">
-                            Beta Mode
-                            <span class="label-description">Unlocks experimental features like Multiple Providers and Advanced Settings.</span>
-                        </label>
-                    </div>
-
-                    <div class="form-group" id="devModeGroup" style="display: none;">
-                        <label>
-                            <input type="checkbox" id="devMode">
-                            Dev Mode
-                        </label>
-                    </div>
-
-                </div>
-            </div>
-
-            <!-- Advanced Settings -->
-            <div class="card collapsed" data-card="advanced" id="advancedSettingsCard" style="display: none;">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <defs>
-                                    <linearGradient id="advCore" x1="30%" y1="0%" x2="70%" y2="100%">
-                                        <stop offset="0%" stop-color="currentColor" stop-opacity="0.18" />
-                                        <stop offset="100%" stop-color="currentColor" stop-opacity="0.05" />
-                                    </linearGradient>
-                                </defs>
-                                <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-                                    <circle cx="16" cy="16" r="10.5" stroke-width="2.2" />
-                                    <path d="M16 4.5v2.5M16 25v2.5M7 9.5l2.2 1.3M22.8 21.2l2.2 1.3M7 22.5l2.2-1.3M22.8 10.8l2.2-1.3M4.5 16h2.6M24.9 16h2.6" stroke-width="1.4" />
-                                    <path d="M16 7.2c2.3 1.7 3.8 4.6 3.1 7.8L16 27l-3.1-12c-0.7-3.2 0.8-6.1 3.1-7.8z" stroke-width="1.7" fill="url(#advCore)" />
-                                    <path d="M13.3 15.6c-1.6 0.5-3 1.6-3 3.2 0 1 0.4 1.9 1.2 2.5" stroke-width="1.2" />
-                                    <path d="M18.7 15.6c1.6 0.5 3 1.6 3 3.2 0 1-0.4 1.9-1.2 2.5" stroke-width="1.2" />
-                                    <circle cx="16" cy="13.5" r="1.8" stroke-width="1.5" fill="currentColor" />
-                                    <path d="M16 21.2l-2 2.5 2 1.4 2-1.4z" stroke-width="1.3" />
-                                    <path d="M12 10.2c1-1.2 2.5-2.1 4-2.2" stroke-width="1.2" opacity="0.6" />
-                                    <path d="M20 10.2c-1-1.2-2.5-2.1-4-2.2" stroke-width="1.2" opacity="0.6" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Advanced Settings (Gemini)</h2>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="advanced"></button>
-                </div>
-<div class="card-content">
-                    <div class="info-box" style="margin-bottom: 0.75rem;">
-                        <p style="font-size: 0.95rem; margin: 0;">
-                            <strong>Fine-tune Gemini behavior:</strong> Override default Gemini model and sampling parameters.
-                        </p>
-                    </div>
-                    <div class="highlight-box" style="margin-bottom: 1.25rem;">
-                        <p style="font-size: 0.9rem; margin: 0;">
-                            When any Gemini setting is changed from defaults, <strong style="color: var(--warning);">Bypass Cache is automatically enabled</strong> to ensure your experimental translations don't pollute the shared database.
-                        </p>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="advancedModel">
-                            Translation Model Override
-                            <span class="label-description">Override the default model. Leave empty to use system default (gemini-flash-latest).</span>
-                        </label>
-                        <select id="advancedModel">
-                            <option value="">Use Default Model</option>
-                        </select>
-                        <div class="model-status" id="modelStatus"></div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="advancedThinkingBudget">
-                            Thinking Budget (Extended Reasoning)
-                            <span class="label-description">0 = disabled, -1 = dynamic (auto-adjust), or fixed token count (1-32768). Higher values = deeper reasoning but slower.</span>
-                        </label>
-                        <input type="number" id="advancedThinkingBudget" min="-1" max="32768" step="1" value="0" placeholder="0">
-                    </div>
-
-                    <div class="form-group">
-                        <label for="advancedTemperature">
-                            Temperature (Creativity)
-                            <span class="label-description">Controls randomness (0.0-2.0). Lower = more deterministic, Higher = more creative. Default: 0.8</span>
-                        </label>
-                        <input type="number" id="advancedTemperature" min="0" max="2" step="0.1" value="0.8" placeholder="0.8">
-                    </div>
-
-                    <div class="form-group">
-                        <label for="advancedTopP">
-                            Top-P (Nucleus Sampling)
-                            <span class="label-description">Probability threshold (0.0-1.0). Lower = more focused, Higher = more diverse. Default: 0.95</span>
-                        </label>
-                        <input type="number" id="advancedTopP" min="0" max="1" step="0.05" value="0.95" placeholder="0.95">
-                    </div>
-
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="enableBatchContext">
-                            Enable Batch Context (Experimental)
-                            <span class="label-description">Include original surrounding context and previous translations when processing batches. Improves translation coherence but may break outputs and increases token usage. Disabled by default.</span>
-                        </label>
-                    </div>
-
-                    <div class="form-group" id="contextSizeGroup" style="display: none;">
-                        <label for="contextSize">
-                            Context Size
-                            <span class="label-description">Number of surrounding entries to include as context (1-10). Default: 3</span>
-                        </label>
-                        <input type="number" id="contextSize" min="1" max="10" step="1" value="3" placeholder="3">
-                    </div>
-
-                </div>
-            </div>
-
-            <!-- Advanced Parameters -->
-            <div class="card collapsed" id="providerAdvancedCard" data-card="provider-advanced" style="display: none;">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <g fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
-                                    <circle cx="16" cy="16" r="10.5" />
-                                    <path d="M16 5v4M16 23v4M5 16h4M23 16h4" />
-                                    <path d="M11 21l10-10M21 21 11 11" opacity="0.75" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Advanced Parameters</h2>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="provider-advanced"></button>
-                </div>
-                <div class="card-content">
-                    <div class="info-box" style="margin-bottom: 0.5rem;">
-                        <p style="margin: 0;">Fine-tune generation settings for every enabled provider. These apply in multi-provider mode only.</p>
-                    </div>
-
-                    <div id="providerAdvancedEmpty" class="highlight-box" style="display: none; margin-bottom: 0.75rem;">
-                        <p style="margin: 0;">Enable a provider above to unlock its parameters.</p>
-                    </div>
-
-                    <div id="providerAdvancedContainer" style="display: flex; flex-direction: column; gap: 1rem;">
-                        <div class="provider-advanced-block" data-provider="openai" style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
-                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
-                                <strong>OpenAI Parameters</strong>
-                                <span class="label-description">Applies to OpenAI and compatible endpoints</span>
-                            </div>
-                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openai-temperature">Temperature</label>
-                                    <input type="number" id="provider-openai-temperature" min="0" max="2" step="0.05" value="0.4">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openai-reasoning">Reasoning effort</label>
-                                    <select id="provider-openai-reasoning">
-                                        <option value="">None (default - for non-reasoning models)</option>
-                                        <option value="low">Low (faster)</option>
-                                        <option value="medium" selected>Medium (balanced)</option>
-                                        <option value="high">High (deeper reasoning)</option>
-                                    </select>
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openai-topP">Top-P</label>
-                                    <input type="number" id="provider-openai-topP" min="0" max="1" step="0.01" value="0.95">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openai-maxTokens">Max output tokens</label>
-                                    <input type="number" id="provider-openai-maxTokens" min="1" max="200000" step="1" value="32768">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openai-timeout">Request timeout (s)</label>
-                                    <input type="number" id="provider-openai-timeout" min="5" max="600" step="5" value="60">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openai-retries">Max retries</label>
-                                    <input type="number" id="provider-openai-retries" min="0" max="5" step="1" value="2">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="provider-advanced-block" data-provider="anthropic" style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
-                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
-                                <strong>Anthropic Parameters</strong>
-                                <span class="label-description">Claude / Anthropic API tuning</span>
-                            </div>
-                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-anthropic-temperature">Temperature</label>
-                                    <input type="number" id="provider-anthropic-temperature" min="0" max="2" step="0.05" value="0.4">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-anthropic-topP">Top-P</label>
-                                    <input type="number" id="provider-anthropic-topP" min="0" max="1" step="0.01" value="0.95">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-anthropic-maxTokens">Max output tokens</label>
-                                    <input type="number" id="provider-anthropic-maxTokens" min="1" max="200000" step="1" value="32768">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-anthropic-timeout">Request timeout (s)</label>
-                                    <input type="number" id="provider-anthropic-timeout" min="5" max="600" step="5" value="60">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-anthropic-retries">Max retries</label>
-                                    <input type="number" id="provider-anthropic-retries" min="0" max="5" step="1" value="2">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-anthropic-thinking">Thinking budget (tokens)</label>
-                                    <input type="number" id="provider-anthropic-thinking" min="0" max="200000" step="256" value="0">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="provider-advanced-block" data-provider="xai" style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
-                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
-                                <strong>XAI (Grok) Parameters</strong>
-                                <span class="label-description">Grok API tuning</span>
-                            </div>
-                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-xai-temperature">Temperature</label>
-                                    <input type="number" id="provider-xai-temperature" min="0" max="2" step="0.05" value="0.4">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-xai-topP">Top-P</label>
-                                    <input type="number" id="provider-xai-topP" min="0" max="1" step="0.01" value="0.95">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-xai-maxTokens">Max output tokens</label>
-                                    <input type="number" id="provider-xai-maxTokens" min="1" max="200000" step="1" value="32768">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-xai-timeout">Request timeout (s)</label>
-                                    <input type="number" id="provider-xai-timeout" min="5" max="600" step="5" value="60">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-xai-retries">Max retries</label>
-                                    <input type="number" id="provider-xai-retries" min="0" max="5" step="1" value="2">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="provider-advanced-block" data-provider="deepseek" style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
-                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
-                                <strong>DeepSeek Parameters</strong>
-                                <span class="label-description">DeepSeek chat endpoints</span>
-                            </div>
-                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-deepseek-temperature">Temperature</label>
-                                    <input type="number" id="provider-deepseek-temperature" min="0" max="2" step="0.05" value="0.4">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-deepseek-topP">Top-P</label>
-                                    <input type="number" id="provider-deepseek-topP" min="0" max="1" step="0.01" value="0.95">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-deepseek-maxTokens">Max output tokens</label>
-                                    <input type="number" id="provider-deepseek-maxTokens" min="1" max="200000" step="1" value="32768">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-deepseek-timeout">Request timeout (s)</label>
-                                    <input type="number" id="provider-deepseek-timeout" min="5" max="600" step="5" value="60">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-deepseek-retries">Max retries</label>
-                                    <input type="number" id="provider-deepseek-retries" min="0" max="5" step="1" value="2">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="provider-advanced-block" data-provider="deepl" style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
-                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
-                                <strong>DeepL Parameters</strong>
-                                <span class="label-description">Formality & formatting controls</span>
-                            </div>
-                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-deepl-formality">Formality</label>
-                                    <select id="provider-deepl-formality">
-                                        <option value="default">Default</option>
-                                        <option value="more">More formal</option>
-                                        <option value="less">Less formal</option>
-                                    </select>
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-deepl-timeout">Request timeout (s)</label>
-                                    <input type="number" id="provider-deepl-timeout" min="5" max="600" step="5" value="60">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-deepl-retries">Max retries</label>
-                                    <input type="number" id="provider-deepl-retries" min="0" max="5" step="1" value="2">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-deepl-preserveFormatting">Preserve formatting</label>
-                                    <label style="display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0;">
-                                        <input type="checkbox" id="provider-deepl-preserveFormatting" checked>
-                                        <span class="label-description" style="margin:0;">Keep line breaks, casing, and tags intact</span>
-                                    </label>
-                                </div>
-                            </div>
-                            <div class="label-description" style="margin-top:0.35rem;">Beta languages auto-enable quality_optimized and disable latency_optimized.</div>
-                        </div>
-
-                        <div class="provider-advanced-block" data-provider="mistral" style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
-                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
-                                <strong>Mistral Parameters</strong>
-                                <span class="label-description">Mistral API tuning</span>
-                            </div>
-                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-mistral-temperature">Temperature</label>
-                                    <input type="number" id="provider-mistral-temperature" min="0" max="2" step="0.05" value="0.4">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-mistral-topP">Top-P</label>
-                                    <input type="number" id="provider-mistral-topP" min="0" max="1" step="0.01" value="0.95">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-mistral-maxTokens">Max output tokens</label>
-                                    <input type="number" id="provider-mistral-maxTokens" min="1" max="200000" step="1" value="32768">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-mistral-timeout">Request timeout (s)</label>
-                                    <input type="number" id="provider-mistral-timeout" min="5" max="600" step="5" value="60">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-mistral-retries">Max retries</label>
-                                    <input type="number" id="provider-mistral-retries" min="0" max="5" step="1" value="2">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="provider-advanced-block" data-provider="cfworkers" style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
-                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
-                                <strong>Cloudflare Workers AI Parameters</strong>
-                                <span class="label-description">Use ACCOUNT_ID|TOKEN format</span>
-                            </div>
-                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-cfworkers-temperature">Temperature</label>
-                                    <input type="number" id="provider-cfworkers-temperature" min="0" max="2" step="0.05" value="0.4">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-cfworkers-topP">Top-P</label>
-                                    <input type="number" id="provider-cfworkers-topP" min="0" max="1" step="0.01" value="0.9">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-cfworkers-maxTokens">Max output tokens</label>
-                                    <input type="number" id="provider-cfworkers-maxTokens" min="1" max="200000" step="1" value="32768">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-cfworkers-timeout">Request timeout (s)</label>
-                                    <input type="number" id="provider-cfworkers-timeout" min="5" max="600" step="5" value="60">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-cfworkers-retries">Max retries</label>
-                                    <input type="number" id="provider-cfworkers-retries" min="0" max="5" step="1" value="2">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="provider-advanced-block" data-provider="openrouter" style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
-                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
-                                <strong>OpenRouter Parameters</strong>
-                                <span class="label-description">OpenRouter routing</span>
-                            </div>
-                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openrouter-temperature">Temperature</label>
-                                    <input type="number" id="provider-openrouter-temperature" min="0" max="2" step="0.05" value="0.4">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openrouter-topP">Top-P</label>
-                                    <input type="number" id="provider-openrouter-topP" min="0" max="1" step="0.01" value="0.95">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openrouter-maxTokens">Max output tokens</label>
-                                    <input type="number" id="provider-openrouter-maxTokens" min="1" max="200000" step="1" value="32768">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openrouter-timeout">Request timeout (s)</label>
-                                    <input type="number" id="provider-openrouter-timeout" min="5" max="600" step="5" value="60">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label for="provider-openrouter-retries">Max retries</label>
-                                    <input type="number" id="provider-openrouter-retries" min="0" max="5" step="1" value="2">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Dev Settings (hidden until Ctrl+Alt+D) -->
-            <div class="card collapsed" data-card="dev" id="devSettingsCard" style="display: none;">
-                <div class="card-header">
-                    <div class="card-title-group">
-                        <div class="card-icon" aria-hidden="true">
-                            <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-                                <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M12 6l-8 10 8 10M20 6l8 10-8 10" />
-                                    <path d="M19 4l-6 24" />
-                                </g>
-                            </svg>
-                        </div>
-                        <h2 class="card-title">Dev</h2>
-                    </div>
-                    <button type="button" class="collapse-btn collapsed" data-collapse="dev"></button>
-                </div>
-<div class="card-content">
-                </div>
-            </div>
-
-            <!-- Actions -->
-            <div class="btn-group">
-                <button type="submit" class="btn btn-primary" accesskey="enter">
-                    💾 Save Configuration
-                </button>
-                <button type="button" class="btn btn-secondary" id="installBtn" disabled>
-                    🚀 Install in Stremio
-                </button>
-                <button type="button" class="btn btn-secondary" id="copyBtn" disabled>
-                    📋 Copy Install URL
-                </button>
-            </div>
-
-            <!-- Install URL Display -->
-            <div class="install-url-box" id="installUrlBox">
-                <label for="installUrlDisplay">Install URL</label>
-                <input type="text" id="installUrlDisplay" readonly>
-            </div>
-        </form>
-
-        <!-- Full Reset CTA (positioned vertically by JS) -->
-        <div id="resetBarWrapper" class="reset-bar">
-            <div class="reset-text">Any problems- Reset settings to default -></div>
-            <button type="button" id="resetSettingsBtn" class="reset-btn">Reset</button>
         </div>
+
+        <!-- No-Translation Languages -->
+        <div class="card collapsed" id="noTranslationCard" style="display: none;" data-card="notranslation">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <circle cx="16" cy="16" r="10" />
+                                <path d="M16 6v20M6 16h20" />
+                                <path d="M10 10c2 4 4 6 6 6s4-2 6-6M10 22c2-4 4-6 6-6s4 2 6 6" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">Languages</h2>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="notranslation"></button>
+            </div>
+            <div class="card-content">
+                <div class="form-group">
+                    <label>
+                        Subtitle Languages
+                        <span class="label-description" id="noTranslationLanguagesDescription">Select which languages
+                            you want to fetch subtitles in.</span>
+                    </label>
+
+                    <div class="language-search">
+                        <span class="language-search-icon">🔍</span>
+                        <input type="text" id="noTranslationSearch" placeholder="Search languages...">
+                    </div>
+
+                    <div id="selectedNoTranslationLanguages" class="selected-languages empty"></div>
+                    <div class="field-error" id="noTranslationLanguagesError"></div>
+
+                    <div class="quick-actions">
+                        <button type="button" class="quick-btn" data-action="select-popular-notranslation">⭐
+                            Popular</button>
+                        <button type="button" class="quick-btn" data-action="select-all-notranslation">✓ All</button>
+                        <button type="button" class="quick-btn" data-action="clear-notranslation">✗ Clear</button>
+                    </div>
+
+                    <div id="noTranslationLanguages" class="language-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gemini API -->
+        <div class="card collapsed" id="geminiCard" data-card="gemini">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="16" cy="16" r="10.5" stroke-width="2.2" />
+                                <circle cx="16" cy="16" r="5" stroke-width="1.8" />
+                                <path
+                                    d="M16 6v-2M22.5 8.2l1.4-1.4M26 15h2M22.5 23.8l1.4 1.4M16 26v2M9.5 23.8l-1.4 1.4M6 15H4M9.5 8.2 8.1 6.8"
+                                    stroke-width="1.15" />
+                                <path d="M16 11v4.2l2.8 1.6" stroke-width="1.8" />
+                                <path d="M12.8 21.4c0.7 1 1.9 1.6 3.2 1.6s2.5-0.6 3.2-1.6" stroke-width="1.2"
+                                    opacity="0.8" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">AI Translation API Keys</h2>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="gemini"></button>
+            </div>
+            <div class="card-content">
+                <div class="form-group">
+                    <label for="geminiApiKey">
+                        Gemini API Key
+                        <span class="label-description">Get your free API key from <a
+                                href="https://makersuite.google.com/app/apikey" target="_blank"
+                                style="color: var(--primary-light);">Google AI Studio</a></span>
+                    </label>
+                    <div style="display: flex; gap: 0.5rem; align-items: start;">
+                        <input type="text" class="sensitive-input masked" id="geminiApiKey"
+                            placeholder="Enter your Gemini API key" style="flex: 1;" autocomplete="off"
+                            autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text">
+                        <button type="button" class="validate-api-btn" id="validateGemini" title="Validate API key">
+                            <span class="validate-icon">✓</span>
+                            <span class="validate-text">Test</span>
+                        </button>
+                    </div>
+                    <div class="validation-feedback" id="geminiValidationFeedback"></div>
+                    <div class="field-error" id="geminiApiKeyError">API key is required</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="geminiModel">
+                        Translation Model
+                        <span class="label-description">AI model for translations</span>
+                    </label>
+                    <select id="geminiModel" required>
+                        <option value="gemini-flash-lite-latest">Gemini 2.5 Flash-Lite</option>
+                        <option value="gemini-flash-latest" selected>Gemini 2.5 Flash</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro (Slow)</option>
+                    </select>
+                    <div class="field-error" id="geminiModelError">Please select a model</div>
+                    <div style="margin-top: 0.5rem; font-size: 0.9rem; color: var(--text-secondary);">
+                        <strong style="margin-left: 2px;">Bad/broken or out-of-sync translation?</strong> Quickly
+                        triple-click the subtitle to force a re-translation.
+                    </div>
+                    <div
+                        style="margin-top: 0.6rem; padding: 0.75rem; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; font-size: 0.875rem; color: var(--text-secondary);">
+                        <strong style="color: var(--warning);">⚡ 2.5 Pro usage is still in Beta.</strong> If you have
+                        translation problems, use Flash-Lite.
+                    </div>
+                    <div id="proRateLimitWarning"
+                        style="display: none; margin-top: 0.75rem; padding: 0.75rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; font-size: 0.875rem; color: var(--text-secondary);">
+                        <strong style="color: #ef4444;">⚠️ Free Tier Limitation:</strong> If using a free API key,
+                        Gemini 2.5 Pro may trigger rate limits (HTTP 429). You'll likely only be able to translate one
+                        subtitle at a time.
+                    </div>
+                </div>
+
+                <div class="form-group" style="display: none;">
+                    <label for="promptStyle">
+                        Prompt Style
+                        <span class="label-description">Choose between strict structure preservation or natural flow
+                            adaptation</span>
+                    </label>
+                    <select id="promptStyle">
+                        <option value="natural" disabled title="Temporarily unavailable">Natural - Adapts structure for
+                            natural target language flow</option>
+                        <option value="strict">Strict - Preserves exact timing and structure</option>
+                    </select>
+                </div>
+
+                <!-- Advanced Settings removed by request -->
+                <div class="form-group" id="multiProvidersGroup"
+                    style="display: none; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                    <label style="display:flex; align-items:center; gap:0.5rem;">
+                        <input type="checkbox" id="enableMultiProviders">
+                        Multiple providers (beta)
+                    </label>
+                    <span class="label-description">Enables multiple providers and advanced parameters settings.</span>
+                </div>
+
+                <div id="multiProvidersContainer"
+                    style="display: none; background: var(--surface-light); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; margin-top: 0.5rem; flex-direction: column; gap: 1rem;">
+                    <div style="display: grid; gap: 1rem;">
+                        <div class="provider-block" data-provider="openai">
+                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
+                                <label
+                                    style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
+                                    <input type="checkbox" id="provider-openai-enabled"> OpenAI
+                                </label>
+                                <button type="button" class="validate-api-btn" data-provider="openai"
+                                    title="Fetch models">
+                                    <span class="validate-icon">&#8635;</span>
+                                    <span class="validate-text">Load Models</span>
+                                </button>
+                            </div>
+                            <div id="provider-openai-fields" class="provider-fields"
+                                style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
+                                <input type="text" id="provider-openai-key" placeholder="OpenAI API key"
+                                    class="sensitive-input masked">
+                                <select id="provider-openai-model">
+                                    <option value="">Select model</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="provider-block" data-provider="anthropic">
+                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
+                                <label
+                                    style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
+                                    <input type="checkbox" id="provider-anthropic-enabled"> Anthropic
+                                </label>
+                                <button type="button" class="validate-api-btn" data-provider="anthropic"
+                                    title="Fetch models">
+                                    <span class="validate-icon">&#8635;</span>
+                                    <span class="validate-text">Load Models</span>
+                                </button>
+                            </div>
+                            <div id="provider-anthropic-fields" class="provider-fields"
+                                style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
+                                <input type="text" id="provider-anthropic-key" placeholder="Anthropic API key"
+                                    class="sensitive-input masked">
+                                <select id="provider-anthropic-model">
+                                    <option value="">Select model</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="provider-block" data-provider="xai">
+                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
+                                <label
+                                    style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
+                                    <input type="checkbox" id="provider-xai-enabled"> XAI (Grok)
+                                </label>
+                                <button type="button" class="validate-api-btn" data-provider="xai" title="Fetch models">
+                                    <span class="validate-icon">&#8635;</span>
+                                    <span class="validate-text">Load Models</span>
+                                </button>
+                            </div>
+                            <div id="provider-xai-fields" class="provider-fields"
+                                style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
+                                <input type="text" id="provider-xai-key" placeholder="XAI API key"
+                                    class="sensitive-input masked">
+                                <select id="provider-xai-model">
+                                    <option value="">Select model</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="provider-block" data-provider="deepseek">
+                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
+                                <label
+                                    style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
+                                    <input type="checkbox" id="provider-deepseek-enabled"> DeepSeek
+                                </label>
+                                <button type="button" class="validate-api-btn" data-provider="deepseek"
+                                    title="Fetch models">
+                                    <span class="validate-icon">&#8635;</span>
+                                    <span class="validate-text">Load Models</span>
+                                </button>
+                            </div>
+                            <div id="provider-deepseek-fields" class="provider-fields"
+                                style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
+                                <input type="text" id="provider-deepseek-key" placeholder="DeepSeek API key"
+                                    class="sensitive-input masked">
+                                <select id="provider-deepseek-model">
+                                    <option value="">Select model</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="provider-block" data-provider="deepl">
+                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
+                                <label
+                                    style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
+                                    <input type="checkbox" id="provider-deepl-enabled"> DeepL
+                                </label>
+                                <button type="button" class="validate-api-btn" data-provider="deepl"
+                                    title="Fetch models">
+                                    <span class="validate-icon">&#8635;</span>
+                                    <span class="validate-text">Load Models</span>
+                                </button>
+                            </div>
+                            <div id="provider-deepl-fields" class="provider-fields"
+                                style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
+                                <input type="text" id="provider-deepl-key" placeholder="DeepL Auth Key"
+                                    class="sensitive-input masked">
+                                <select id="provider-deepl-model">
+                                    <option value="">Select model</option>
+                                </select>
+                                <span class="label-description">Free keys auto-use api-free.deepl.com. Language codes
+                                    are auto-mapped from your selections.</span>
+                            </div>
+                        </div>
+
+                        <div class="provider-block" data-provider="mistral">
+                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
+                                <label
+                                    style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
+                                    <input type="checkbox" id="provider-mistral-enabled"> Mistral
+                                </label>
+                                <button type="button" class="validate-api-btn" data-provider="mistral"
+                                    title="Fetch models">
+                                    <span class="validate-icon">&#8635;</span>
+                                    <span class="validate-text">Load Models</span>
+                                </button>
+                            </div>
+                            <div id="provider-mistral-fields" class="provider-fields"
+                                style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
+                                <input type="text" id="provider-mistral-key" placeholder="Mistral API key"
+                                    class="sensitive-input masked">
+                                <select id="provider-mistral-model">
+                                    <option value="">Select model</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="provider-block" data-provider="cfworkers">
+                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
+                                <label
+                                    style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
+                                    <input type="checkbox" id="provider-cfworkers-enabled"> Cloudflare Workers AI
+                                </label>
+                                <button type="button" class="validate-api-btn" data-provider="cfworkers"
+                                    title="Fetch models">
+                                    <span class="validate-icon">&#8635;</span>
+                                    <span class="validate-text">Load Models</span>
+                                </button>
+                            </div>
+                            <div id="provider-cfworkers-fields" class="provider-fields"
+                                style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
+                                <input type="text" id="provider-cfworkers-key" placeholder="ACCOUNT_ID|TOKEN"
+                                    class="sensitive-input">
+                                <select id="provider-cfworkers-model">
+                                    <option value="">Select model</option>
+                                </select>
+                                <span class="label-description">Use ACCOUNT|TOKEN to set account ID explicitly.</span>
+                            </div>
+                        </div>
+
+                        <div class="provider-block" data-provider="openrouter">
+                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
+                                <label
+                                    style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
+                                    <input type="checkbox" id="provider-openrouter-enabled"> OpenRouter
+                                </label>
+                                <button type="button" class="validate-api-btn" data-provider="openrouter"
+                                    title="Fetch models">
+                                    <span class="validate-icon">&#8635;</span>
+                                    <span class="validate-text">Load Models</span>
+                                </button>
+                            </div>
+                            <div id="provider-openrouter-fields" class="provider-fields"
+                                style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
+                                <input type="text" id="provider-openrouter-key" placeholder="OpenRouter API key"
+                                    class="sensitive-input masked">
+                                <select id="provider-openrouter-model">
+                                    <option value="">Select model</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="provider-block" data-provider="googletranslate">
+                            <div style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem;">
+                                <label
+                                    style="font-weight:600; margin:0; display:flex; align-items:center; gap:0.35rem;">
+                                    <input type="checkbox" id="provider-googletranslate-enabled"> Google Translate
+                                    (unofficial)
+                                </label>
+                                <div style="font-size:0.85rem; color: var(--text-secondary);">No API key needed</div>
+                            </div>
+                            <div id="provider-googletranslate-fields" class="provider-fields"
+                                style="display:none; margin-top:0.5rem; display: grid; gap: 0.5rem;">
+                                <input type="hidden" id="provider-googletranslate-key" value="">
+                                <select id="provider-googletranslate-model" disabled>
+                                    <option value="web" selected>web (fixed)</option>
+                                </select>
+                                <div style="font-size:0.9rem; color: var(--text-secondary);">Uses the public Google
+                                    Translate web endpoint (may be unstable).</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group" id="mainProviderGroup" style="display: none; margin-top: 1rem;">
+                    <label for="mainProviderSelect">
+                        Main Provider
+                        <span class="label-description">Choose which enabled AI provider to use when multiple are
+                            configured.</span>
+                    </label>
+                    <select id="mainProviderSelect">
+                        <option value="gemini">Gemini</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="secondaryProviderGroup" style="display: none;">
+                    <label style="display: flex; align-items: flex-start; gap: 0.5rem;">
+                        <input type="checkbox" id="enableSecondaryProvider" style="margin-top: 0.3rem;">
+                        <div>
+                            Secondary Provider
+                            <span class="label-description">If the main provider errors (429/503/prohibited/other),
+                                retry the failed batch with this provider, then continue with the main provider.</span>
+                        </div>
+                    </label>
+                    <div id="secondaryProviderSelectRow" style="margin-top: 0.5rem; display: none;">
+                        <label for="secondaryProviderSelect">
+                            Fallback Provider
+                            <span class="label-description">Used only when the main provider returns an error. Falls
+                                back seamlessly.</span>
+                        </label>
+                        <select id="secondaryProviderSelect" disabled>
+                            <option value="">Select provider</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Source Languages -->
+        <div class="card collapsed" id="sourceCard" data-card="source">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <circle cx="16" cy="11" r="4" />
+                                <path d="M10 18c0-2.5 2.7-4 6-4s6 1.5 6 4" />
+                                <path d="M8 23c-.5-1-1.5-2-3-2M24 23c.5-1 1.5-2 3-2" />
+                                <path d="M6 26h20" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">Source Languages</h2>
+                    <span class="card-badge" id="sourceBadge">0</span>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="source"></button>
+            </div>
+            <div class="card-content">
+                <div class="form-group">
+                    <label>
+                        * Source languages for translations
+                        <span class="label-description" id="sourceLanguagesDescription">You can select up to 3 source
+                            languages, but only 1 is recommended (so you have the same list order when translating). All
+                            subtitles from this language will be available for translation in the translation selector
+                            AND will be fetched (original subtitles will show up).</span>
+                    </label>
+
+                    <div class="language-search">
+                        <span class="language-search-icon">🔍</span>
+                        <input type="text" id="sourceSearch" placeholder="Search languages..." accesskey="s">
+                    </div>
+
+                    <div id="selectedSourceLanguages" class="selected-languages empty"></div>
+                    <div class="field-error" id="sourceLanguagesError">Please select at least one source language</div>
+
+                    <div id="sourceLanguages" class="language-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Target Languages -->
+        <div class="card collapsed" id="targetCard" data-card="target">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <circle cx="16" cy="16" r="10" />
+                                <circle cx="16" cy="16" r="6" />
+                                <circle cx="16" cy="16" r="2" fill="currentColor" />
+                                <path d="M16 6v4M16 22v4M6 16h4M22 16h4" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">Target Languages</h2>
+                    <span class="card-badge" id="targetBadge">0</span>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="target"></button>
+            </div>
+            <div class="card-content">
+                <div class="form-group">
+                    <label>
+                        * Target languages for subtitles and translations
+                        <span class="label-description" id="targetLanguagesDescription">Subtitles in target languages
+                            will be fetched AND translation buttons will appear for translating FROM the source language
+                            TO these languages. You can select up to 6 total target languages (including Learn
+                            Mode).</span>
+                    </label>
+
+                    <div class="language-search">
+                        <span class="language-search-icon">🔍</span>
+                        <input type="text" id="targetSearch" placeholder="Search languages..." accesskey="t">
+                    </div>
+
+                    <div id="selectedTargetLanguages" class="selected-languages empty"></div>
+                    <div class="field-error" id="targetLanguagesError">Please select at least one target language</div>
+
+                    <div class="quick-actions">
+                        <button type="button" class="quick-btn" data-action="select-popular-target">⭐ Popular</button>
+                        <button type="button" class="quick-btn" data-action="select-all-target">✓ All</button>
+                        <button type="button" class="quick-btn" data-action="clear-target">✗ Clear</button>
+                    </div>
+
+                    <div id="targetLanguages" class="language-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Learn Target Languages -->
+        <div class="card collapsed" id="learnTargetsCard" style="display: none;" data-card="learn">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <defs>
+                                <linearGradient id="learnAurora" x1="10%" y1="15%" x2="90%" y2="85%">
+                                    <stop offset="0%" stop-color="currentColor" stop-opacity="0.15" />
+                                    <stop offset="45%" stop-color="currentColor" stop-opacity="0.05" />
+                                    <stop offset="100%" stop-color="currentColor" stop-opacity="0.18" />
+                                </linearGradient>
+                            </defs>
+                            <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                                <path
+                                    d="M6 12.6c1.5-2 4.8-3 8.2-1.8L16 12.8l1.8-2c3.4-1.2 6.7-0.2 8.2 1.8v11.7c-1.5-2-4.8-3-8.2-1.8L16 24.9l-1.8-2.4c-3.4-1.2-6.7-0.2-8.2 1.8V12.6z"
+                                    stroke-width="2.2" fill="url(#learnAurora)" />
+                                <path d="M16 13v11.9" stroke-width="2.2" />
+                                <path d="M13 21.6l-3 2m9-2l3 2" stroke-width="1.1" opacity="0.5" />
+                                <path d="M16 5.9l1.1 1.5L16 7.8l-1.1-0.4z" fill="currentColor" />
+                                <path
+                                    d="M16 6.9l0.5 1.3 1.3 0.3-1.1 0.8 0.1 1.3L16 9.8l-0.8 0.8 0.1-1.3-1.1-0.8 1.3-0.3z"
+                                    fill="currentColor" opacity="0.9" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">Learn Target Languages</h2>
+                    <span class="card-badge" id="learnBadge">0</span>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="learn"></button>
+            </div>
+            <div class="card-content">
+                <div class="form-group">
+                    <label>
+                        Select Learn Mode Languages
+                        <span class="label-description">Creates "Learn (Language)" entries that pair source + translated
+                            lines in WebVTT. Select target "Learn" languages above after enabling.</span>
+                    </label>
+
+                    <div class="language-search">
+                        <span class="language-search-icon">🔍</span>
+                        <input type="text" id="learnSearch" placeholder="Search languages...">
+                    </div>
+
+                    <div id="selectedLearnLanguages" class="selected-languages empty"></div>
+                    <div class="field-error" id="learnLanguagesError">Please select at least one learn language</div>
+
+                    <div class="quick-actions">
+                        <button type="button" class="quick-btn" data-action="select-popular-learn">⭐ Popular</button>
+                        <button type="button" class="quick-btn" data-action="select-all-learn">✓ All</button>
+                        <button type="button" class="quick-btn" data-action="clear-learn">✗ Clear</button>
+                    </div>
+
+                    <div id="learnLanguages" class="language-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Translation Settings -->
+        <div class="card collapsed" data-card="translation" id="translationSettingsCard">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <defs>
+                                <linearGradient id="translationBubbles" x1="0%" y1="0%" x2="0%" y2="100%">
+                                    <stop offset="0%" stop-color="currentColor" stop-opacity="0.12" />
+                                    <stop offset="100%" stop-color="currentColor" stop-opacity="0.04" />
+                                </linearGradient>
+                            </defs>
+                            <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"
+                                stroke-opacity="0.95">
+                                <!-- Left speech bubble -->
+                                <path
+                                    d="M6.8 7.2h9.4a1.8 1.8 0 0 1 1.8 1.8v5.5a1.8 1.8 0 0 1-1.8 1.8h-4.4L9 19v-2.7H6.8a1.8 1.8 0 0 1-1.8-1.8V9a1.8 1.8 0 0 1 1.8-1.8Z"
+                                    stroke-width="1.9" fill="url(#translationBubbles)" />
+                                <path d="M9.6 10.6h4.2M9.6 12.8h3.4M9.6 15h2.4" stroke-width="1.2" />
+
+                                <!-- Right speech bubble -->
+                                <path
+                                    d="M15.2 15.2h9.2a1.8 1.8 0 0 1 1.8 1.8v5.5a1.8 1.8 0 0 1-1.8 1.8H20l-3 2.7v-2.7h-1.8a1.8 1.8 0 0 1-1.8-1.8V17a1.8 1.8 0 0 1 1.8-1.8Z"
+                                    stroke-width="1.9" fill="url(#translationBubbles)" />
+                                <path d="M17.8 18.3h4.4M17.8 20.5h3.6" stroke-width="1.2" />
+
+                                <!-- Swap arrows -->
+                                <path d="M13.2 8c2.3-1.7 6.3-1.3 8.5.6" stroke-width="1.35" />
+                                <path d="M21 7.6l2.6 1.9-3 .6" stroke-width="1.35" />
+                                <path d="M18.8 23.3c-2.3 1.7-6.3 1.3-8.5-.6" stroke-width="1.35" />
+                                <path d="M11 23.7l-2.6-1.9 3-.6" stroke-width="1.35" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">Translation Settings</h2>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="translation"></button>
+            </div>
+            <div class="card-content">
+                <div class="form-group">
+                    <label for="sendTimestampsToAI" class="form-label">
+                        <span class="label-title">Translation Workflow</span>
+                        <span class="label-description">Switching between modes is recommended if you have translation
+                            sync problems. Our main translation workflow removes timestamps and sends the subtitles
+                            numbered to the AI, then reconstructs the SRT with the original timestamps. "Send Timestamps
+                            to AI" sends the subtitles WITH timecodes and trusts the AI to return correct timestamps.
+                            Added for future-proofing the addon.</span>
+                    </label>
+                    <select id="sendTimestampsToAI" class="styled-select">
+                        <option value="original">Original Timestamps (Default)</option>
+                        <option value="ai">Send Timestamps to AI</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="databaseMode" class="form-label">
+                        <span class="label-title">SubMaker Database</span>
+                        <span class="label-description">Choose how to handle the SubMaker translation database. The main
+                            database caches translations permanently to reduce API usage. Bypass mode forces fresh
+                            translations and stores them temporarily (12 hours).</span>
+                    </label>
+                    <select id="databaseMode" class="styled-select">
+                        <option value="use">Use SubMaker Database</option>
+                        <option value="bypass">Bypass Cache (Force Retranslation)</option>
+                    </select>
+                    <div id="databaseModeNote"
+                        style="display: none; margin-top: 0.5rem; padding: 0.75rem; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; font-size: 0.875rem; color: var(--text-secondary);">
+                        <strong style="color: var(--warning);">⚠️ Bypass Mode Required:</strong> <span
+                            id="databaseModeReason"></span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="singleBatchMode" class="form-label">
+                        <span class="label-title">Chunking Strategy</span>
+                        <span class="label-description">Multiple Batches sends subtitles in separate requests (chunks).
+                            Single-Batch translates the whole subtitle file in one go (still auto-splits into 2 or 3
+                            chunks at 50k and 100k+ tokens). Single-Batch still streams partial outputs while processing
+                            (through token streaming) and delivers better contextual translations. Might cause
+                            MAX_OUTPUT errors. Long titles may have more sync problems.</span>
+                    </label>
+                    <select id="singleBatchMode" class="styled-select">
+                        <option value="multiple">Multiple Batches (Default)</option>
+                        <option value="single">Single-Batch</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Other Settings -->
+        <div class="card collapsed" data-card="cache">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <path d="M6 9h8M18 9h8" />
+                                <circle cx="15" cy="9" r="2" fill="currentColor" />
+                                <path d="M6 16h8M18 16h8" />
+                                <circle cx="15" cy="16" r="2" fill="currentColor" />
+                                <path d="M6 23h4M14 23h12" />
+                                <circle cx="11" cy="23" r="2" fill="currentColor" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">Other Settings</h2>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="cache"></button>
+            </div>
+            <div class="card-content">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="subToolboxEnabled">
+                        Enable "Sub Toolbox" (Alpha)
+                        <span class="label-description">Shows the Sub Toolbox entry in Stremio subtitles for brower
+                            access to all tools. (Read instructions after enabling)</span>
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="learnModeEnabled">
+                        Learn Mode
+                        <span class="label-description">Adds "Learn (Language)" entries that output dual-language WebVTT
+                            with source and translated lines for language learning.</span>
+                    </label>
+                </div>
+
+                <div class="form-group" id="learnOrderGroup" style="display: none;">
+                    <label>
+                        Learn Mode Subtitle Order
+                        <span class="label-description">Choose which language appears at the top and bottom of the
+                            screen.</span>
+                    </label>
+                    <div class="option-group" style="display: flex; gap: 0.75rem; margin-top: 0.35rem;">
+                        <label
+                            style="background: white; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;">
+                            <input type="radio" name="learnOrder" value="source-top" checked>
+                            Source Top - Target Bottom
+                        </label>
+                        <label
+                            style="background: white; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;">
+                            <input type="radio" name="learnOrder" value="target-top">
+                            Target Top - Source Bottom
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="mobileMode">
+                        Mobile Mode (fix/workaround)
+                        <span class="label-description">Stremio makes only 1 request for subtitles and caches it, so
+                            subtitles in Android can't be partially delivered. Mobile Mode holds translation requests
+                            and sends the final subtitle only when ready. Use this if you're watching on Android/iOS. No
+                            partial translations, no loading messages. Might freeze the stream until translation is
+                            ready. Flash-lite recommended. Wait 1-3 min, if it doesn't load automatically switch
+                            subtitles back and forth to load the translation.</span>
+                    </label>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="betaMode">
+                        Beta Mode
+                        <span class="label-description">Unlocks experimental features like Multiple Providers and
+                            Advanced Settings.</span>
+                    </label>
+                </div>
+
+                <div class="form-group" id="devModeGroup" style="display: none;">
+                    <label>
+                        <input type="checkbox" id="devMode">
+                        Dev Mode
+                    </label>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Advanced Settings -->
+        <div class="card collapsed" data-card="advanced" id="advancedSettingsCard" style="display: none;">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <defs>
+                                <linearGradient id="advCore" x1="30%" y1="0%" x2="70%" y2="100%">
+                                    <stop offset="0%" stop-color="currentColor" stop-opacity="0.18" />
+                                    <stop offset="100%" stop-color="currentColor" stop-opacity="0.05" />
+                                </linearGradient>
+                            </defs>
+                            <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="16" cy="16" r="10.5" stroke-width="2.2" />
+                                <path
+                                    d="M16 4.5v2.5M16 25v2.5M7 9.5l2.2 1.3M22.8 21.2l2.2 1.3M7 22.5l2.2-1.3M22.8 10.8l2.2-1.3M4.5 16h2.6M24.9 16h2.6"
+                                    stroke-width="1.4" />
+                                <path d="M16 7.2c2.3 1.7 3.8 4.6 3.1 7.8L16 27l-3.1-12c-0.7-3.2 0.8-6.1 3.1-7.8z"
+                                    stroke-width="1.7" fill="url(#advCore)" />
+                                <path d="M13.3 15.6c-1.6 0.5-3 1.6-3 3.2 0 1 0.4 1.9 1.2 2.5" stroke-width="1.2" />
+                                <path d="M18.7 15.6c1.6 0.5 3 1.6 3 3.2 0 1-0.4 1.9-1.2 2.5" stroke-width="1.2" />
+                                <circle cx="16" cy="13.5" r="1.8" stroke-width="1.5" fill="currentColor" />
+                                <path d="M16 21.2l-2 2.5 2 1.4 2-1.4z" stroke-width="1.3" />
+                                <path d="M12 10.2c1-1.2 2.5-2.1 4-2.2" stroke-width="1.2" opacity="0.6" />
+                                <path d="M20 10.2c-1-1.2-2.5-2.1-4-2.2" stroke-width="1.2" opacity="0.6" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">Advanced Settings (Gemini)</h2>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="advanced"></button>
+            </div>
+            <div class="card-content">
+                <div class="info-box" style="margin-bottom: 0.75rem;">
+                    <p style="font-size: 0.95rem; margin: 0;">
+                        <strong>Fine-tune Gemini behavior:</strong> Override default Gemini model and sampling
+                        parameters.
+                    </p>
+                </div>
+                <div class="highlight-box" style="margin-bottom: 1.25rem;">
+                    <p style="font-size: 0.9rem; margin: 0;">
+                        When any Gemini setting is changed from defaults, <strong style="color: var(--warning);">Bypass
+                            Cache is automatically enabled</strong> to ensure your experimental translations don't
+                        pollute the shared database.
+                    </p>
+                </div>
+
+                <div class="form-group">
+                    <label for="advancedModel">
+                        Translation Model Override
+                        <span class="label-description">Override the default model. Leave empty to use system default
+                            (gemini-flash-latest).</span>
+                    </label>
+                    <select id="advancedModel">
+                        <option value="">Use Default Model</option>
+                    </select>
+                    <div class="model-status" id="modelStatus"></div>
+                </div>
+
+                <div class="form-group">
+                    <label for="advancedThinkingBudget">
+                        Thinking Budget (Extended Reasoning)
+                        <span class="label-description">0 = disabled, -1 = dynamic (auto-adjust), or fixed token count
+                            (1-32768). Higher values = deeper reasoning but slower.</span>
+                    </label>
+                    <input type="number" id="advancedThinkingBudget" min="-1" max="32768" step="1" value="0"
+                        placeholder="0">
+                </div>
+
+                <div class="form-group">
+                    <label for="advancedTemperature">
+                        Temperature (Creativity)
+                        <span class="label-description">Controls randomness (0.0-2.0). Lower = more deterministic,
+                            Higher = more creative. Default: 0.8</span>
+                    </label>
+                    <input type="number" id="advancedTemperature" min="0" max="2" step="0.1" value="0.8"
+                        placeholder="0.8">
+                </div>
+
+                <div class="form-group">
+                    <label for="advancedTopP">
+                        Top-P (Nucleus Sampling)
+                        <span class="label-description">Probability threshold (0.0-1.0). Lower = more focused, Higher =
+                            more diverse. Default: 0.95</span>
+                    </label>
+                    <input type="number" id="advancedTopP" min="0" max="1" step="0.05" value="0.95" placeholder="0.95">
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="enableBatchContext">
+                        Enable Batch Context (Experimental)
+                        <span class="label-description">Include original surrounding context and previous translations
+                            when processing batches. Improves translation coherence but may break outputs and increases
+                            token usage. Disabled by default.</span>
+                    </label>
+                </div>
+
+                <div class="form-group" id="contextSizeGroup" style="display: none;">
+                    <label for="contextSize">
+                        Context Size
+                        <span class="label-description">Number of surrounding entries to include as context (1-10).
+                            Default: 3</span>
+                    </label>
+                    <input type="number" id="contextSize" min="1" max="10" step="1" value="3" placeholder="3">
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Advanced Parameters -->
+        <div class="card collapsed" id="providerAdvancedCard" data-card="provider-advanced" style="display: none;">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <g fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <circle cx="16" cy="16" r="10.5" />
+                                <path d="M16 5v4M16 23v4M5 16h4M23 16h4" />
+                                <path d="M11 21l10-10M21 21 11 11" opacity="0.75" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">Advanced Parameters</h2>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="provider-advanced"></button>
+            </div>
+            <div class="card-content">
+                <div class="info-box" style="margin-bottom: 0.5rem;">
+                    <p style="margin: 0;">Fine-tune generation settings for every enabled provider. These apply in
+                        multi-provider mode only.</p>
+                </div>
+
+                <div id="providerAdvancedEmpty" class="highlight-box" style="display: none; margin-bottom: 0.75rem;">
+                    <p style="margin: 0;">Enable a provider above to unlock its parameters.</p>
+                </div>
+
+                <div id="providerAdvancedContainer" style="display: flex; flex-direction: column; gap: 1rem;">
+                    <div class="provider-advanced-block" data-provider="openai"
+                        style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
+                        <div
+                            style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
+                            <strong>OpenAI Parameters</strong>
+                            <span class="label-description">Applies to OpenAI and compatible endpoints</span>
+                        </div>
+                        <div
+                            style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openai-temperature">Temperature</label>
+                                <input type="number" id="provider-openai-temperature" min="0" max="2" step="0.05"
+                                    value="0.4">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openai-reasoning">Reasoning effort</label>
+                                <select id="provider-openai-reasoning">
+                                    <option value="">None (default - for non-reasoning models)</option>
+                                    <option value="low">Low (faster)</option>
+                                    <option value="medium" selected>Medium (balanced)</option>
+                                    <option value="high">High (deeper reasoning)</option>
+                                </select>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openai-topP">Top-P</label>
+                                <input type="number" id="provider-openai-topP" min="0" max="1" step="0.01" value="0.95">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openai-maxTokens">Max output tokens</label>
+                                <input type="number" id="provider-openai-maxTokens" min="1" max="200000" step="1"
+                                    value="32768">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openai-timeout">Request timeout (s)</label>
+                                <input type="number" id="provider-openai-timeout" min="5" max="600" step="5" value="60">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openai-retries">Max retries</label>
+                                <input type="number" id="provider-openai-retries" min="0" max="5" step="1" value="2">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="provider-advanced-block" data-provider="anthropic"
+                        style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
+                        <div
+                            style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
+                            <strong>Anthropic Parameters</strong>
+                            <span class="label-description">Claude / Anthropic API tuning</span>
+                        </div>
+                        <div
+                            style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-anthropic-temperature">Temperature</label>
+                                <input type="number" id="provider-anthropic-temperature" min="0" max="2" step="0.05"
+                                    value="0.4">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-anthropic-topP">Top-P</label>
+                                <input type="number" id="provider-anthropic-topP" min="0" max="1" step="0.01"
+                                    value="0.95">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-anthropic-maxTokens">Max output tokens</label>
+                                <input type="number" id="provider-anthropic-maxTokens" min="1" max="200000" step="1"
+                                    value="32768">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-anthropic-timeout">Request timeout (s)</label>
+                                <input type="number" id="provider-anthropic-timeout" min="5" max="600" step="5"
+                                    value="60">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-anthropic-retries">Max retries</label>
+                                <input type="number" id="provider-anthropic-retries" min="0" max="5" step="1" value="2">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-anthropic-thinking">Thinking budget (tokens)</label>
+                                <input type="number" id="provider-anthropic-thinking" min="0" max="200000" step="256"
+                                    value="0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="provider-advanced-block" data-provider="xai"
+                        style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
+                        <div
+                            style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
+                            <strong>XAI (Grok) Parameters</strong>
+                            <span class="label-description">Grok API tuning</span>
+                        </div>
+                        <div
+                            style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-xai-temperature">Temperature</label>
+                                <input type="number" id="provider-xai-temperature" min="0" max="2" step="0.05"
+                                    value="0.4">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-xai-topP">Top-P</label>
+                                <input type="number" id="provider-xai-topP" min="0" max="1" step="0.01" value="0.95">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-xai-maxTokens">Max output tokens</label>
+                                <input type="number" id="provider-xai-maxTokens" min="1" max="200000" step="1"
+                                    value="32768">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-xai-timeout">Request timeout (s)</label>
+                                <input type="number" id="provider-xai-timeout" min="5" max="600" step="5" value="60">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-xai-retries">Max retries</label>
+                                <input type="number" id="provider-xai-retries" min="0" max="5" step="1" value="2">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="provider-advanced-block" data-provider="deepseek"
+                        style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
+                        <div
+                            style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
+                            <strong>DeepSeek Parameters</strong>
+                            <span class="label-description">DeepSeek chat endpoints</span>
+                        </div>
+                        <div
+                            style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-deepseek-temperature">Temperature</label>
+                                <input type="number" id="provider-deepseek-temperature" min="0" max="2" step="0.05"
+                                    value="0.4">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-deepseek-topP">Top-P</label>
+                                <input type="number" id="provider-deepseek-topP" min="0" max="1" step="0.01"
+                                    value="0.95">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-deepseek-maxTokens">Max output tokens</label>
+                                <input type="number" id="provider-deepseek-maxTokens" min="1" max="200000" step="1"
+                                    value="32768">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-deepseek-timeout">Request timeout (s)</label>
+                                <input type="number" id="provider-deepseek-timeout" min="5" max="600" step="5"
+                                    value="60">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-deepseek-retries">Max retries</label>
+                                <input type="number" id="provider-deepseek-retries" min="0" max="5" step="1" value="2">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="provider-advanced-block" data-provider="deepl"
+                        style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
+                        <div
+                            style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
+                            <strong>DeepL Parameters</strong>
+                            <span class="label-description">Formality & formatting controls</span>
+                        </div>
+                        <div
+                            style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-deepl-formality">Formality</label>
+                                <select id="provider-deepl-formality">
+                                    <option value="default">Default</option>
+                                    <option value="more">More formal</option>
+                                    <option value="less">Less formal</option>
+                                </select>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-deepl-timeout">Request timeout (s)</label>
+                                <input type="number" id="provider-deepl-timeout" min="5" max="600" step="5" value="60">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-deepl-retries">Max retries</label>
+                                <input type="number" id="provider-deepl-retries" min="0" max="5" step="1" value="2">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-deepl-preserveFormatting">Preserve formatting</label>
+                                <label style="display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0;">
+                                    <input type="checkbox" id="provider-deepl-preserveFormatting" checked>
+                                    <span class="label-description" style="margin:0;">Keep line breaks, casing, and tags
+                                        intact</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="label-description" style="margin-top:0.35rem;">Beta languages auto-enable
+                            quality_optimized and disable latency_optimized.</div>
+                    </div>
+
+                    <div class="provider-advanced-block" data-provider="mistral"
+                        style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
+                        <div
+                            style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
+                            <strong>Mistral Parameters</strong>
+                            <span class="label-description">Mistral API tuning</span>
+                        </div>
+                        <div
+                            style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-mistral-temperature">Temperature</label>
+                                <input type="number" id="provider-mistral-temperature" min="0" max="2" step="0.05"
+                                    value="0.4">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-mistral-topP">Top-P</label>
+                                <input type="number" id="provider-mistral-topP" min="0" max="1" step="0.01"
+                                    value="0.95">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-mistral-maxTokens">Max output tokens</label>
+                                <input type="number" id="provider-mistral-maxTokens" min="1" max="200000" step="1"
+                                    value="32768">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-mistral-timeout">Request timeout (s)</label>
+                                <input type="number" id="provider-mistral-timeout" min="5" max="600" step="5"
+                                    value="60">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-mistral-retries">Max retries</label>
+                                <input type="number" id="provider-mistral-retries" min="0" max="5" step="1" value="2">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="provider-advanced-block" data-provider="cfworkers"
+                        style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
+                        <div
+                            style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
+                            <strong>Cloudflare Workers AI Parameters</strong>
+                            <span class="label-description">Use ACCOUNT_ID|TOKEN format</span>
+                        </div>
+                        <div
+                            style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-cfworkers-temperature">Temperature</label>
+                                <input type="number" id="provider-cfworkers-temperature" min="0" max="2" step="0.05"
+                                    value="0.4">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-cfworkers-topP">Top-P</label>
+                                <input type="number" id="provider-cfworkers-topP" min="0" max="1" step="0.01"
+                                    value="0.9">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-cfworkers-maxTokens">Max output tokens</label>
+                                <input type="number" id="provider-cfworkers-maxTokens" min="1" max="200000" step="1"
+                                    value="32768">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-cfworkers-timeout">Request timeout (s)</label>
+                                <input type="number" id="provider-cfworkers-timeout" min="5" max="600" step="5"
+                                    value="60">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-cfworkers-retries">Max retries</label>
+                                <input type="number" id="provider-cfworkers-retries" min="0" max="5" step="1" value="2">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="provider-advanced-block" data-provider="openrouter"
+                        style="display: none; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-light);">
+                        <div
+                            style="display:flex; align-items:center; justify-content: space-between; gap:0.75rem; margin-bottom: 0.5rem;">
+                            <strong>OpenRouter Parameters</strong>
+                            <span class="label-description">OpenRouter routing</span>
+                        </div>
+                        <div
+                            style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openrouter-temperature">Temperature</label>
+                                <input type="number" id="provider-openrouter-temperature" min="0" max="2" step="0.05"
+                                    value="0.4">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openrouter-topP">Top-P</label>
+                                <input type="number" id="provider-openrouter-topP" min="0" max="1" step="0.01"
+                                    value="0.95">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openrouter-maxTokens">Max output tokens</label>
+                                <input type="number" id="provider-openrouter-maxTokens" min="1" max="200000" step="1"
+                                    value="32768">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openrouter-timeout">Request timeout (s)</label>
+                                <input type="number" id="provider-openrouter-timeout" min="5" max="600" step="5"
+                                    value="60">
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label for="provider-openrouter-retries">Max retries</label>
+                                <input type="number" id="provider-openrouter-retries" min="0" max="5" step="1"
+                                    value="2">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dev Settings (hidden until Ctrl+Alt+D) -->
+        <div class="card collapsed" data-card="dev" id="devSettingsCard" style="display: none;">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <path d="M12 6l-8 10 8 10M20 6l8 10-8 10" />
+                                <path d="M19 4l-6 24" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title">Dev</h2>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="dev"></button>
+            </div>
+            <div class="card-content">
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="btn-group">
+            <button type="submit" class="btn btn-primary" accesskey="enter">
+                💾 Save Configuration
+            </button>
+            <button type="button" class="btn btn-secondary" id="installBtn" disabled>
+                🚀 Install in Stremio
+            </button>
+            <button type="button" class="btn btn-secondary" id="copyBtn" disabled>
+                📋 Copy Install URL
+            </button>
+        </div>
+
+        <!-- Install URL Display -->
+        <div class="install-url-box" id="installUrlBox">
+            <label for="installUrlDisplay">Install URL</label>
+            <input type="text" id="installUrlDisplay" readonly>
+        </div>
+    </form>
+
+    <!-- Full Reset CTA (positioned vertically by JS) -->
+    <div id="resetBarWrapper" class="reset-bar">
+        <div class="reset-text">Any problems- Reset settings to default -></div>
+        <button type="button" id="resetSettingsBtn" class="reset-btn">Reset</button>
     </div>
+</div>

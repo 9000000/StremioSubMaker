@@ -1792,6 +1792,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         </div>
     </div>
 
+    <script src="/js/subtitle-menu.js"></script>
     <script src="/js/combobox.js"></script>
     <script>
         ${quickNavScript()}
@@ -1807,8 +1808,11 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             streamFilename,
             videoHash,
             linkedTitle,
+            languageMaps: config.languageMaps || null,
             geminiApiKey: config.geminiApiKey || ''
         })};
+        const subtitleMenuTargets = ${JSON.stringify(targetLanguages.map(lang => ({ code: lang, name: getLanguageName(lang) || lang })))};
+        let subtitleMenuInstance = null;
 
         let STATE = {
             streamUrl: null,
@@ -1841,6 +1845,55 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
 
         function setInstructionLock(active) {
             document.body.classList.toggle('modal-open', !!active);
+        }
+
+        function mountSubtitleMenu() {
+            if (!window.SubtitleMenu || typeof window.SubtitleMenu.mount !== 'function') return null;
+            try {
+                return window.SubtitleMenu.mount({
+                    configStr: CONFIG.configStr,
+                    videoId: CONFIG.videoId,
+                    filename: CONFIG.streamFilename,
+                    videoHash: CONFIG.videoHash,
+                    targetOptions: subtitleMenuTargets,
+                    languageMaps: CONFIG.languageMaps,
+                    getVideoHash: () => CONFIG.videoHash || ''
+                });
+            } catch (err) {
+                console.warn('Subtitle menu init failed', err);
+                return null;
+            }
+        }
+
+        function handleStreamUpdate(payload = {}) {
+            const nextVideoId = (payload.videoId || '').trim();
+            const nextFilename = (payload.filename || '').trim();
+            const nextHash = (payload.videoHash || '').trim();
+            const changed = (nextVideoId && nextVideoId !== CONFIG.videoId) ||
+                (nextFilename && nextFilename !== CONFIG.streamFilename) ||
+                (nextHash && nextHash !== CONFIG.videoHash);
+            if (!changed) return;
+
+            CONFIG.videoId = nextVideoId || CONFIG.videoId;
+            CONFIG.streamFilename = nextFilename || CONFIG.streamFilename;
+            CONFIG.videoHash = nextHash || CONFIG.videoHash;
+
+            updateLinkedMeta({
+                videoId: CONFIG.videoId,
+                filename: CONFIG.streamFilename,
+                title: CONFIG.linkedTitle
+            });
+
+            if (subtitleMenuInstance && typeof subtitleMenuInstance.updateStream === 'function') {
+                subtitleMenuInstance.updateStream({
+                    videoId: CONFIG.videoId,
+                    filename: CONFIG.streamFilename,
+                    videoHash: CONFIG.videoHash
+                });
+                if (typeof subtitleMenuInstance.prefetch === 'function') {
+                    subtitleMenuInstance.prefetch();
+                }
+            }
         }
 
         function openInstructions(auto = false) {
@@ -1890,6 +1943,10 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         }
 
         initInstructions();
+        subtitleMenuInstance = mountSubtitleMenu();
+        if (subtitleMenuInstance && typeof subtitleMenuInstance.prefetch === 'function') {
+            subtitleMenuInstance.prefetch();
+        }
 
         initStreamRefreshButton({
             buttonId: 'quickNavRefresh',
@@ -1911,7 +1968,8 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                 return '/subtitle-sync?config=' + encodeURIComponent(CONFIG.configStr) +
                     '&videoId=' + encodeURIComponent(payload.videoId || '') +
                     '&filename=' + encodeURIComponent(payload.filename || '');
-            }
+            },
+            onEpisode: handleStreamUpdate
         });
 
         // Helper functions
