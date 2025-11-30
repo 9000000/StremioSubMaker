@@ -11,16 +11,10 @@
     closeTitle: 'Close subtitle list'
   };
 
-  // Guard: ensure a global config object exists and define a global identifier to
-  // avoid ReferenceError when hosts/scripts reference bare `config`
-  if (!global.config) global.config = {};
-  if (typeof global.config === 'object') {
-    try { global.config = global.config || {}; } catch (_) {}
-    // Define a global var so bare `config` lookups don’t throw in non-strict mode
-    // (some hosts reference config before config.js loads)
-    if (typeof config === 'undefined') {
-      var config = global.config; // eslint-disable-line no-var
-    }
+  // Guard: ensure a global config object exists to avoid ReferenceError on hosts that
+  // inject subtitle-menu before setting window.config
+  if (!global.config) {
+    global.config = {};
   }
 
   function injectStyles() {

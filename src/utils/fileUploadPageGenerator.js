@@ -382,7 +382,6 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             --border: #dbe3ea;
             --shadow: rgba(0, 0, 0, 0.08);
             --glow: rgba(8, 164, 213, 0.25);
-            --theme-toggle-size: 48px;
         }
 
         [data-theme="dark"] {
@@ -2026,10 +2025,11 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 width: 100%;
             }
 
-            :root { --theme-toggle-size: 42px; }
             .theme-toggle {
                 top: 1rem;
                 right: 1rem;
+                width: 42px;
+                height: 42px;
             }
 
             .theme-toggle-icon {
