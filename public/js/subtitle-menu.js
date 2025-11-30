@@ -16,6 +16,9 @@
   if (!global.config) {
     global.config = {};
   }
+  // Define a global identifier so bare `config` references (non-strict host scripts) don't throw
+  // before config.js has loaded; keep it pointing at window.config.
+  var config = global.config; // eslint-disable-line no-var
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
