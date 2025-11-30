@@ -1,1 +1,0 @@
-C:\Users\Enzo\Desktop\SubMaker\StremioSubMaker\native\ffsubsync-wasm\target\wasm32-unknown-unknown\release\ffsubsync_wasm.wasm: C:\Users\Enzo\Desktop\SubMaker\StremioSubMaker\native\ffsubsync-wasm\src\lib.rs
