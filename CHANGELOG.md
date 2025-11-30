@@ -4,38 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## SubMaker v1.4.10
 
-- Embedded subtitles page gets a floating “Stream subtitles” quick menu that loads current source/target/xEmbed/xSync/toolbox links for the active stream, listens to Stremio stream-activity updates, ignores placeholder streams, and reuses the inventory to hydrate the target-language selector.
-- Sync page adds a live log panel that forwards background logs to the UI, tightens progress logging to monotonic updates, and ships layout/dependency tweaks for clearer long-running syncs.
-- Stremio subtitle fetch guard now ignores placeholder “stream and refresh” values so real stream requests aren’t blocked by empty IDs.
-- Cache-control hardening: service worker now serves from `/sw.js` with `no-store` and `Service-Worker-Allowed: /`, registration uses `updateViaCache: 'none'`, HTML is forced to `no-store`/`private`, and token-bearing addon routes rely on the shared `setNoStore` helper for consistent cache prevention.
-- No-store standardization: every token/config-bearing endpoint (session APIs, stream-activity SSE, subtitle download/translate/learn/error flows, xSync download/save, addon base/manifest middleware, toolbox/embedded/auto-subtitles/sync/file-upload redirects and pages) now uses the shared `setNoStore` helper to emit CDN/Cloudflare bypass headers (`Vary: *`, `X-Cache-Buster`, `Cloudflare-CDN-Cache-Control`, etc.) instead of hand-written header trios.
-- Redis/session resiliency: normalized key-prefix handling with non-destructive cross-prefix self-healing (colon/no-colon/legacy) and double-prefix cleanup, plus fail-fast Redis init instead of silently falling back to filesystem storage.
-- Session persistence safeguards: sessions now carry token/fingerprint/integrity metadata to detect contamination, backfill legacy payloads on read, refresh TTLs on access, flush in-memory sessions to Redis during shutdown, and track pending writes; docker-compose extends shutdown grace and switches Redis to `noeviction` to avoid session loss on restart, and instance IDs are persisted under `data/` to keep Redis prefixes stable across redeploys.
-- Secure defaults for secrets: encryption key and Redis password are now generated when unset in `.env`; both are persisted to the shared `keys` volume (`ENCRYPTION_KEY_FILE` / `REDIS_PASSWORD_FILE`) so restarts/rebuilds keep the same secrets, and Redis honors `REDIS_PASSWORD` if provided while writing it once to the password file for reuse.
-- **Fixed Redis SCAN pattern that may cause silent session data loss** `src/storage/RedisStorageAdapter.js:866`
-  - **ROOT CAUSE:** ioredis does NOT apply `keyPrefix` to SCAN MATCH patterns
-  - Bug caused `list()` to always return zero keys when `REDIS_KEY_PREFIX` was set
-  - This made cleanup, snapshots, preloading, and monitoring all fail **silently**
-  - Fixed by manually including `keyPrefix` in scan pattern: `stremio:session:*` instead of `session:*`
-  - Added diagnostic logging: `[RedisStorage] SCAN with pattern X found Y key(s)`
-  - Added alerts when storage list returns 0 but in-memory cache has sessions
-  - **IMPACT:** Sessions appeared to vanish due to Redis eviction/maxmemory with no warnings
-- **Disabled automatic prefix migration by default** `.env`
-  - Added `REDIS_PREFIX_MIGRATION=false` to prevent migration-related issues
-  - Migration now opt-in via explicit environment variable
-- **Fixed session/config persistence to prevent data loss during Redis hiccups** `src/utils/sessionManager.js`, `index.js`
-  - **CRITICAL:** `createSession` now clears in-memory cache on persist failure to prevent "ghost" sessions
-  - **CRITICAL:** `updateSession` now throws `StorageUnavailableError` instead of returning false
-  - `/api/create-session` and `/api/update-session` now respond with 503 (Service Unavailable) on Redis failures instead of 500 or silently regenerating tokens
-  - **IMPACT:** Config updates during Redis hiccups no longer silently lose user's token/state or create sessions that vanish on restart
-- **Fixed cross-instance cache invalidation for multi-pod deployments** `src/utils/sessionManager.js`
-  - Pub/sub clients now use same sentinel/TLS/cluster options as storage adapter
-  - Added retry/backoff logic to pub/sub publish operations (3 attempts with exponential backoff)
-  - Failed invalidations now emit `invalidationFailed` event and log visible warnings for monitoring
-  - **IMPACT:** Multi-Redis (sentinel) deployments no longer lose cross-pod cache invalidations
-- Session manager now warns when Redis list operations fail but in-memory cache has data
-- Snapshot creation alerts if storage returns empty when in-memory sessions exist
-- Added detailed SCAN pattern and result count logging for debugging
+**New Features:**
+- **Embedded Subtitles:** Added a floating "Stream subtitles" quick menu that loads current source/target/xEmbed/xSync links for the active stream.
+- **Sync Page:** Added a live log panel that forwards background logs to the UI with monotonic progress updates.
+
+**Security & Infrastructure:**
+
+- **Cache Hardening:** Service worker and all token/config-bearing endpoints now use strict `no-store` and cache bypass headers (`Vary: *`, `X-Cache-Buster`, etc.) to prevent sensitive data caching.
+- **Secure Secrets:** Encryption keys and Redis passwords are now auto-generated and persisted to the `keys` volume if unset.
+- **Session Resiliency:** Improved session persistence with integrity metadata, legacy payload backfilling, and fail-fast Redis initialization.
+- **Redis:** Normalized key-prefix handling with non-destructive cross-prefix self-healing.
+
+**Bug Fixes:**
+
+- **Redis SCAN:** Fixed a critical bug where `list()` returned zero keys due to missing key prefix in SCAN patterns, causing silent session data loss.
+- **Session Persistence:** Fixed `createSession` and `updateSession` to properly handle Redis failures and prevent "ghost" sessions or silent data loss.
+- **Cross-Instance Invalidation:** Fixed Pub/Sub invalidation for multi-pod deployments by using consistent connection options and retry logic.
+- **Stream Guard:** Stremio subtitle fetch guard now ignores placeholder "stream and refresh" values.
+- **Many other bug fixes.**
+
+**Improvements:**
+
+- **Configuration:** Disabled automatic Redis prefix migration by default (`REDIS_PREFIX_MIGRATION=false`) to prevent issues.
+- **Logging:** Added diagnostic logging for Redis SCAN patterns and alerts when storage operations fail but in-memory cache has data.
+- **Layout:** Tweaked layout and dependencies for clearer long-running syncs.
+- **Many other improvements.**
+
 
 ## SubMaker v1.4.9
 
