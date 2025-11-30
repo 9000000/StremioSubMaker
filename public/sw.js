@@ -30,6 +30,14 @@ getAppVersion().then(v => {
 const CACHE_PREFIX = 'submaker';
 const getVersionedCacheName = (version) => `${CACHE_PREFIX}-static-v${version}`;
 const API_CACHE_NAME = `${CACHE_PREFIX}-api-v2`;
+const NON_CACHEABLE_PATH_PREFIXES = [
+    '/sub-toolbox',
+    '/embedded-subtitles',
+    '/auto-subtitles',
+    '/file-upload',
+    '/subtitle-sync',
+    '/addon/'
+];
 const NON_CACHEABLE_ASSETS = new Set([
     '/css/configure.css',
     '/css/combobox.css',
@@ -71,6 +79,14 @@ function responseHasNoStore(response) {
 function responseHasVaryStar(response) {
     const vary = response.headers.get('Vary');
     return !!vary && vary.includes('*');
+}
+
+// Certain routes intentionally send Vary:* and no-store; skip all caching work for them
+function shouldBypassCaching(urlLike) {
+    const url = urlLike instanceof URL ? urlLike : new URL(urlLike, self.location.origin);
+    return NON_CACHEABLE_PATH_PREFIXES.some(prefix =>
+        url.pathname === prefix || url.pathname.startsWith(prefix)
+    );
 }
 
 // Centralized helper to avoid crashing on responses that cannot be cached
@@ -208,6 +224,16 @@ self.addEventListener('fetch', (event) => {
     // Skip cross-origin requests
     if (url.origin !== self.location.origin) {
         return;
+    }
+
+    // Dynamic pages that deliberately set Vary:* (toolbox, upload, addon) should never be cached
+    if (shouldBypassCaching(url)) {
+        return event.respondWith(
+            fetch(request, { cache: 'no-store' }).catch(() => new Response(
+                'Offline - dynamic page not cached',
+                { status: 503, statusText: 'Service Unavailable' }
+            ))
+        );
     }
 
     // API calls: Network-first strategy

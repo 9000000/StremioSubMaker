@@ -524,6 +524,53 @@
     return (lang || '').toString().trim().toLowerCase();
   }
 
+  function normalizeImdbId(id) {
+    if (!id) return '';
+    const match = String(id).match(/(tt)?(\d{5,8})/i);
+    return match ? ('tt' + match[2]) : '';
+  }
+
+  function cleanDisplayName(raw) {
+    if (!raw) return '';
+    const lastSegment = String(raw).split(/[/\\]/).pop() || '';
+    const withoutExt = lastSegment.replace(/\.[^.]+$/, '');
+    const spaced = withoutExt.replace(/[_\\.]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return spaced || withoutExt || lastSegment;
+  }
+
+  function parseStremioId(id) {
+    if (!id) return null;
+    const parts = id.split(':');
+
+    if (parts[0] === 'tmdb') {
+      const tmdbId = parts[1];
+      if (!tmdbId) return null;
+      if (parts.length === 2) return { tmdbId, type: 'movie', tmdbMediaType: 'movie' };
+      if (parts.length === 3) return { tmdbId, type: 'episode', season: 1, episode: parseInt(parts[2], 10), tmdbMediaType: 'tv' };
+      if (parts.length === 4) return { tmdbId, type: 'episode', season: parseInt(parts[2], 10), episode: parseInt(parts[3], 10), tmdbMediaType: 'tv' };
+    }
+
+    if (parts[0] && /^(anidb|kitsu|mal|anilist)/.test(parts[0])) {
+      const animeIdType = parts[0];
+      if (parts.length === 1) return { animeId: parts[0], animeIdType, type: 'anime', isAnime: true };
+      if (parts.length === 3) return { animeId: `${parts[0]}:${parts[1]}`, animeIdType, type: 'anime-episode', episode: parseInt(parts[2], 10), isAnime: true };
+      if (parts.length === 4) return { animeId: `${parts[0]}:${parts[1]}`, animeIdType, type: 'anime-episode', season: parseInt(parts[2], 10), episode: parseInt(parts[3], 10), isAnime: true };
+    }
+
+    const imdbId = normalizeImdbId(parts[0]);
+    if (!imdbId) return null;
+    if (parts.length === 1) return { imdbId, type: 'movie' };
+    if (parts.length === 3) return { imdbId, type: 'episode', season: parseInt(parts[1], 10), episode: parseInt(parts[2], 10) };
+    return null;
+  }
+
+  function formatEpisodeTag(parsed) {
+    if (!parsed) return '';
+    const s = Number.isFinite(parsed.season) ? 'S' + String(parsed.season).padStart(2, '0') : '';
+    const e = Number.isFinite(parsed.episode) ? 'E' + String(parsed.episode).padStart(2, '0') : '';
+    return (s || e) ? (s + e) : '';
+  }
+
   function mergeTargetOptions(primary = [], secondary = []) {
     const merged = [];
     const seen = new Set();
@@ -739,6 +786,11 @@
       hasShownInitialNotice: false,
       statusTimer: null
     };
+    const streamMeta = {
+      parsed: parseStremioId(config.videoId),
+      title: '',
+      episodeTag: ''
+    };
     const subtitleInventory = {
       items: [],
       lastFetched: null,
@@ -760,6 +812,58 @@
     }
 
     rebuildLanguageSets();
+
+    function deriveEpisodeTagFromState() {
+      if (streamMeta.episodeTag) return streamMeta.episodeTag;
+      return formatEpisodeTag(streamMeta.parsed);
+    }
+
+    function deriveStreamDisplayTitle() {
+      if (!hasValidStream()) return '';
+      const cleanedFilename = cleanDisplayName(config.filename);
+      const cleanedVideoId = cleanDisplayName(config.videoId);
+      const base = streamMeta.title || cleanedFilename || cleanedVideoId || config.videoId || '';
+      const episodeTag = deriveEpisodeTagFromState();
+      return [base, episodeTag].filter(Boolean).join(' - ') || base || 'Linked stream';
+    }
+
+    async function hydrateStreamMetadata(els) {
+      if (!hasValidStream()) return;
+      streamMeta.parsed = parseStremioId(config.videoId);
+      streamMeta.episodeTag = formatEpisodeTag(streamMeta.parsed);
+      const imdbId = streamMeta.parsed?.imdbId;
+      const metaType = streamMeta.parsed?.type === 'episode' ? 'series' : 'movie';
+      if (!imdbId) {
+        if (els) {
+          updateSubtitleMenuMeta(els);
+          if (els.footerTitle) {
+            els.footerTitle.textContent = deriveStreamDisplayTitle();
+            els.footerTitle.title = deriveStreamDisplayTitle();
+          }
+        }
+        return;
+      }
+      try {
+        const resp = await fetch('https://v3-cinemeta.strem.io/meta/' + metaType + '/' + encodeURIComponent(imdbId) + '.json', { cache: 'force-cache' });
+        if (!resp.ok) throw new Error('Failed to load metadata');
+        const data = await resp.json();
+        const meta = data && data.meta;
+        const title = meta?.name || meta?.english_name || (meta?.nameTranslated && meta.nameTranslated.en) || '';
+        if (title) {
+          streamMeta.title = title;
+          if (els && els.footerTitle) {
+            els.footerTitle.textContent = deriveStreamDisplayTitle();
+            els.footerTitle.title = deriveStreamDisplayTitle();
+          }
+          if (els) {
+            updateSubtitleMenuMeta(els);
+            setSubtitleMenuStatus(els, '', 'muted', { persist: true });
+          }
+        }
+      } catch (_) {
+        // Ignore metadata errors; fall back to filename/videoId
+      }
+    }
 
     function deriveStreamSignature(stream = {}) {
       const videoId = normalizeStreamValue(stream.videoId !== undefined ? stream.videoId : config.videoId);
@@ -994,12 +1098,11 @@
 
     function getBaseStatusMessage() {
       const parts = [];
-      parts.push(config.version ? 'SubMaker v' + config.version : 'SubMaker');
       const streamLabel = normalizeStreamValue(config.filename) || normalizeStreamValue(config.videoId);
       parts.push(streamLabel ? ('Stream: ' + streamLabel) : 'Waiting for linked stream');
       const hash = (typeof config.getVideoHash === 'function' ? config.getVideoHash() : config.videoHash) || '';
       if (hash) parts.push('Hash ' + hash);
-      return parts.join(' | ');
+      return parts.join(' | ') || 'Waiting for linked stream';
     }
 
     function setSubtitleMenuStatus(els, message, variant = 'muted', options = {}) {
@@ -1112,7 +1215,7 @@
       return row;
     }
 
-    function buildLanguageCard(langEntry, openByDefault, container) {
+    function buildLanguageCard(langEntry, openByDefault, container, groupType) {
       const card = document.createElement('div');
       card.className = 'subtitle-lang-card' + (openByDefault ? ' open' : '');
       const header = document.createElement('button');
@@ -1159,7 +1262,16 @@
       const menu = document.createElement('div');
       menu.className = 'subtitle-lang-menu';
       const sortedItems = [...langEntry.items].sort((a, b) => a.label.localeCompare(b.label));
-      sortedItems.forEach(item => menu.appendChild(buildSubtitleMenuItem(item)));
+      const languageCodeLabel = (() => {
+        const codeCandidate = (langEntry.items.find(it => it.languageKey)?.languageKey || langEntry.key || '').toString().trim();
+        return codeCandidate ? codeCandidate.toUpperCase() : 'SUB';
+      })();
+      sortedItems.forEach((item, idx) => {
+        const displayItem = (groupType === 'source')
+          ? Object.assign({}, item, { label: `${languageCodeLabel} - Subtitle ${idx + 1}` })
+          : item;
+        menu.appendChild(buildSubtitleMenuItem(displayItem));
+      });
 
       const toggle = () => {
         const next = !card.classList.contains('open');
@@ -1181,7 +1293,7 @@
       const filtered = (items || []).filter(shouldDisplaySubtitle);
       const grouped = groupSubtitlesByLanguage(filtered);
 
-      const renderList = (container, groupEl, map) => {
+      const renderList = (container, groupEl, map, groupType) => {
         container.innerHTML = '';
         const languages = Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
 
@@ -1195,14 +1307,14 @@
             groupEl.style.display = 'flex';
             groupEl.removeAttribute('aria-hidden');
           }
-          languages.forEach(lang => container.appendChild(buildLanguageCard(lang, false, container)));
+          languages.forEach(lang => container.appendChild(buildLanguageCard(lang, false, container, groupType)));
         }
       };
 
-      renderList(els.sourceList, els.sourceGroup, grouped.source);
-      renderList(els.targetList, els.targetGroup, grouped.target);
-      renderList(els.translationList, els.translationGroup, grouped.translation);
-      renderList(els.otherList, els.otherGroup, grouped.other);
+      renderList(els.sourceList, els.sourceGroup, grouped.source, 'source');
+      renderList(els.targetList, els.targetGroup, grouped.target, 'target');
+      renderList(els.translationList, els.translationGroup, grouped.translation, 'translation');
+      renderList(els.otherList, els.otherGroup, grouped.other, 'other');
 
       if (els.body) {
         const hasAny = filtered.length > 0;
@@ -1226,11 +1338,12 @@
         `;
       }
 
-      if (els.footerTitle && config.filename) {
-        els.footerTitle.textContent = config.filename;
-        els.footerTitle.title = config.filename;
-      } else if (els.footerTitle && config.videoId) {
-        els.footerTitle.textContent = config.videoId;
+      if (els.footerTitle) {
+        const displayTitle = deriveStreamDisplayTitle();
+        if (displayTitle) {
+          els.footerTitle.textContent = displayTitle;
+          els.footerTitle.title = displayTitle;
+        }
       }
     }
 
@@ -1546,6 +1659,9 @@
       config.sourceLanguages = Array.isArray(options.sourceLanguages) ? normalizeLanguageList(options.sourceLanguages) : config.sourceLanguages;
       config.targetLanguages = Array.isArray(options.targetLanguages) ? normalizeLanguageList(options.targetLanguages) : config.targetLanguages;
       rebuildLanguageSets();
+      streamMeta.title = '';
+      streamMeta.episodeTag = '';
+      streamMeta.parsed = parseStremioId(config.videoId);
 
       resetSubtitleInventoryState();
       subtitleMenuState.items = [];
@@ -1555,6 +1671,7 @@
       renderMenuFromState(els);
       updateSubtitleMenuMeta(els);
       setSubtitleMenuStatus(els, '', 'muted', { persist: true });
+      hydrateStreamMetadata(els).catch(() => { });
       if (config.onTargetsHydrated) {
         config.onTargetsHydrated(config.targetOptions);
       }
@@ -1578,6 +1695,7 @@
     }
     updateSubtitleMenuMeta(elements);
     setSubtitleMenuStatus(elements, '', 'muted', { persist: true });
+    hydrateStreamMetadata(elements).catch(() => { });
 
     if (hasValidStream()) {
       loadSubtitleInventory({ force: false })
