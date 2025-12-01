@@ -11,6 +11,107 @@
         "loadFailed": "Failed to load file translation page"
       }
     },
+    "server": {
+      "errors": {
+        "storageUnavailable": "Session storage temporarily unavailable, please retry.",
+        "configPayloadTooLarge": "Configuration payload too large",
+        "originNotAllowed": "Origin not allowed",
+        "stremioOnly": "Access denied. This addon must be accessed through Stremio.",
+        "stremioHint": "If you are using Stremio and seeing this error, please report it as a bug.",
+        "browserCorsBlocked": "Browser-based cross-origin requests to this API route are not allowed. Please use the Stremio client.",
+        "invalidConfigId": "Invalid addon configuration identifier",
+        "languagesFailed": "Failed to get languages",
+        "localeFailed": "Failed to load locale",
+        "missingConfig": "Missing config",
+        "invalidConfig": "Invalid or expired config",
+        "streamActivityFailed": "Failed to read stream activity",
+        "apiKeyRequired": "API key is required",
+        "invalidSessionToken": "Invalid or expired session token",
+        "modelsFailed": "Failed to fetch models: {reason}",
+        "cloudflareTokenRequired": "Cloudflare Workers AI token is required",
+        "cloudflareAccountRequired": "Cloudflare Workers AI account ID is required. Provide API key as ACCOUNT_ID|TOKEN.",
+        "cloudflareCredentialsMissing": "Cloudflare Workers AI is missing credentials. Use ACCOUNT_ID|TOKEN.",
+        "unsupportedProvider": "Unsupported provider",
+        "requestTimedOut": "Request timed out (7s)",
+        "invalidApiKeyAuth": "Invalid API key - authentication failed",
+        "requestFailed": "Request failed",
+        "invalidApiKey": "Invalid API key",
+        "usernamePasswordRequired": "Username and password are required",
+        "noTokenReceived": "No token received - credentials may be invalid",
+        "invalidCredentials": "Invalid username or password",
+        "invalidRequestFormat": "Invalid request format",
+        "sessionCreateFailed": "Failed to create session",
+        "sessionUpdateFailed": "Failed to update session",
+        "sessionStatsFailed": "Failed to get session statistics",
+        "sessionTokenFormat": "Invalid session token format",
+        "sessionNotFound": "Session not found",
+        "sessionValidateFailed": "Failed to validate session",
+        "sessionFetchFailed": "Failed to fetch session configuration",
+        "sessionNotFoundReason": "Session not found or expired",
+        "sessionConfigCorrupted": "Config payload was empty or corrupted (empty_config_00)",
+        "translateFileMissingContent": "Subtitle content is required",
+        "translateFileMissingTarget": "Target language is required",
+        "translateFileMissingConfig": "Configuration is required",
+        "translateFileError": "Translation failed: {reason}",
+        "subtitleNotFound": "Subtitle not found",
+        "errorSubtitleUnavailable": "Error subtitle unavailable",
+        "subtitleSelectorFailed": "Failed to load subtitle selector",
+        "translationInProgress": "Translation already in progress; waiting on primary request.",
+        "translationInvalidContent": "Translation returned invalid content",
+        "translationFailed": "Translation failed: {reason}",
+        "learnFailed": "Failed to build learning subtitles",
+        "subToolboxLoadFailed": "Failed to load Sub Toolbox",
+        "missingConfigOrVideo": "Missing config or videoId",
+        "subToolboxPageFailed": "Failed to load Sub Toolbox page",
+        "embeddedPageFailed": "Failed to load embedded subtitles page",
+        "autoSubsPageFailed": "Failed to load automatic subtitles page",
+        "configPageFailed": "Failed to load configuration page",
+        "subtitleSyncPageFailed": "Failed to load subtitle sync page",
+        "syncedSubtitleNotFound": "Synced subtitle not found",
+        "downloadSyncedFailed": "Failed to download synced subtitle",
+        "invalidEmbeddedParams": "Invalid embedded subtitle parameters",
+        "translatedEmbeddedMissing": "Translated embedded subtitle not found",
+        "downloadEmbeddedFailed": "Failed to download embedded subtitle",
+        "originalEmbeddedMissing": "Original embedded subtitle not found",
+        "downloadEmbeddedOriginalFailed": "Failed to download original embedded subtitle",
+        "missingFields": "Missing required fields",
+        "missingOrInvalidFields": "Missing or invalid required fields",
+        "embeddedTooLarge": "Embedded subtitle is too large",
+        "subtitleTooLarge": "Subtitle content is too large",
+        "originalEmbeddedRequired": "Original embedded subtitle required: send content or enable KEEP_EMBEDDED_ORIGINALS=true",
+        "saveSyncedFailed": "Failed to save synced subtitle",
+        "saveEmbeddedFailed": "Failed to save embedded subtitle",
+        "translateEmbeddedFailed": "Failed to translate embedded subtitle: {reason}",
+        "manifestFailed": "Failed to generate manifest",
+        "subtitleUnavailable": "ERROR: Subtitle unavailable",
+        "translationUnavailable": "ERROR: Translation unavailable",
+        "fileTranslationPageFailed": "Failed to load file translation page",
+        "internalServerError": "Internal server error"
+      },
+      "session": {
+        "configRequired": "Configuration is required",
+        "usingBase64Localhost": "Using base64 encoding for localhost",
+        "tokenRequired": "Session token is required",
+        "createdBase64Localhost": "Created new base64 token for localhost",
+        "expiredCreated": "Session expired or not found, created new session",
+        "updateSuccess": "Session configuration updated successfully"
+      },
+      "validation": {
+        "apiError": "API error: {reason}",
+        "apiKeyValid": "API key is valid",
+        "apiKeyAppearsValid": "API key appears valid",
+        "credentialsValid": "Credentials are valid"
+      },
+      "sync": {
+        "saveSuccess": "Synced subtitle saved successfully"
+      },
+      "selector": {
+        "title": "Select Subtitle to Translate",
+        "heading": "Translate to {target}",
+        "subheader": "Select a {sources} subtitle to translate",
+        "empty": "No {sources} subtitles available"
+      }
+    },
     "toolbox": {
       "documentTitle": "Sub Toolbox - SubMaker",
       "streamUnknown": "Stream filename not detected (still works)",
@@ -180,8 +281,7 @@
       "translationMultiProvider": "Both the main and secondary providers failed to translate this batch.",
       "osRateLimitTitle": "OpenSubtitles rate limit reached (429)",
       "osAuthRateLimited": "OpenSubtitles is rate limiting your account. Wait a few minutes, then retry or switch to V3 in the addon config.",
-      "osAuthMissingRateLimited": "OpenSubtitles Auth mode is active without credentials, so downloads hit the basic rate limit. Add your username/password or switch to V3 (no login)."
-      ,
+      "osAuthMissingRateLimited": "OpenSubtitles Auth mode is active without credentials, so downloads hit the basic rate limit. Add your username/password or switch to V3 (no login).",
       "providerRateLimitTitle": "{service} rate limit reached (429)",
       "providerRateLimitBody": "Too many requests in a short period.\\nPlease wait a few minutes and try again.",
       "providerAuthErrorTitle": "Authentication Error",
@@ -244,6 +344,16 @@
     "config": {
       "uiLanguageLabel": "Interface",
       "uiLanguageAria": "UI language",
+      "uiLanguages": {
+        "en": {
+          "label": "English",
+          "flag": "US"
+        },
+        "es": {
+          "label": "Español",
+          "flag": "ES"
+        }
+      },
       "heroTitle": "SubMaker",
       "heroSubtitle": "AI-Powered Subtitle Translation",
       "quickStatsStatus": "Status",
@@ -251,8 +361,61 @@
       "quickStatsToolbox": "Toolbox",
       "quickStatsLastSave": "Last Save",
       "quickActionHelp": "Help",
+      "footer": {
+        "love": "Made with <span class=\"footer-heart\">\u2764\ufe0f</span> for Stremio users everywhere",
+        "thanks": "Thank you for using SubMaker! Your support helps make content accessible to everyone."
+      },
       "actions": {
-        "openToolbox": "Open Sub Toolbox"
+        "openToolbox": "Open Sub Toolbox",
+        "save": "Save Configuration",
+        "install": "Install in Stremio",
+        "copy": "Copy Install URL",
+        "installLabel": "Install URL"
+      },
+      "overlays": {
+        "keyboardHint": "Press <span class=\"kbd\">?</span> for keyboard shortcuts",
+        "shared": {
+          "dontShow": "Don't show this again",
+          "gotIt": "Got it!"
+        },
+        "instructions": {
+          "title": "How to Use SubMaker",
+          "usageTitle": "Usage Instructions:",
+          "step1": "Add desired API keys to <strong>\"Subtitles Sources\"</strong> section.",
+          "step2": "Add a Gemini API Key to <strong>AI section</strong>.",
+          "step3": "Select <strong>source languages</strong>.",
+          "step4": "Select <strong>target languages</strong>.",
+          "step5": "<strong>Install on Stremio</strong>.",
+          "stremioTitle": "Stremio will:",
+          "stremioBody": "1. Fetch all Source and Target languages subtitles from sources.<br>2. Create <strong>\"Make [Target Language]\"</strong> buttons within the subtitles list.<br>3. All \"Make\" translation lists are in the same order of the Source language list.",
+          "whenTitle": "When you click a subtitle:",
+          "whenBody": "When a subtitle is clicked within the \"Make\" translation lists, it'll start translation.<br>After 20-30 seconds, reload the same subtitle entry.<br>It'll load <strong>translated</strong>!",
+          "quickTip": "<strong>Quick Tip:</strong> If a translation looks off, broken, or out of sync, quickly triple-click that subtitle in the list to force a fresh re-translation.",
+          "ps": "<b>PS:</b><br>Partial translation is delivered in batches so you can start watching almost instantly.<br>Complete translation may take from <strong>30 seconds-5 minutes</strong> depending on movie/episode length.",
+          "onlyOneSource": "<em>*Only 1 source language recommended:*</em>",
+          "onlyOneSourceBody": "When the \"Make\" translation lists are created, they load the subtitles list in the same order of the source language.<br>That means you can test the source language subtitles for the correct sync and only then select the same one on the translation list instead of translating unsync'd subtitles."
+        },
+        "toolbox": {
+          "title": "\ud83e\uddf0 Sub Toolbox Instructions",
+          "beta": "BETA: New toolbox features are coming soon.<br>For now, enjoy seamless batch SRT file translations with all your configured AI providers and settings.",
+          "howTitle": "\ud83d\ude80 How to use Sub Toolbox:",
+          "step1": "Enable <strong>\"Sub Toolbox\"</strong> on the config page before installing.",
+          "step2": "In Stremio, open the subtitles list and click <strong>\"Sub Toolbox\"</strong>.",
+          "step3": "Right-click the playing stream/video in Stremio and choose <strong>\"Download Subtitles\"</strong> to launch the toolbox in your browser.",
+          "step4": "Pick a tool: Extract & translate embedded subs, Translate subtitle files, Synchronize subtitles, or Automatic subtitles.",
+          "step5": "Each tool opens in your browser using your saved SubMaker session and AI provider settings.",
+          "step6": "Follow the on-screen steps, then drag the result back into Stremio if needed."
+        },
+        "reset": {
+          "title": "Reset All Settings",
+          "intro": "<strong>This will reset literally everything for this site:</strong>",
+          "item1": "- Local storage, session storage, cached config and tokens",
+          "item2": "- Service worker and all caches",
+          "item3": "- Any site data stored by this app",
+          "footer": "The page will reload afterward.",
+          "cancel": "Cancel",
+          "confirm": "Reset Everything"
+        }
       },
       "noTranslation": {
         "title": "Just Fetch Subtitles (No Translation)",
@@ -271,10 +434,13 @@
         "authDescription": "Uses your OpenSubtitles account with API key authentication. Requires username/password.",
         "usernameLabel": "Username",
         "passwordLabel": "Password",
+        "usernamePlaceholder": "Enter OpenSubtitles Username",
+        "passwordPlaceholder": "Enter OpenSubtitles Password",
         "rateNote": "20 subtitles a day. Create a free account if you don't have one.",
         "validateCta": "Run Test",
         "validateTitle": "Validate OpenSubtitles credentials",
-        "showHidePassword": "Show/hide password"
+        "showHidePassword": "Show/hide password",
+        "pingHint": "Run a quick ping before saving to validate your credentials."
       },
       "limits": {
         "sourceDescription": "You can select up to {max} source language(s), but only 1 is recommended (so you have the same list order when translating). All subtitles from this language will be available for translation in the translation selector AND will be fetched (original subtitles will show up).",
@@ -300,7 +466,30 @@
         "invalid": "Invalid",
         "error": "Error",
         "testCredentials": "Test Credentials",
-        "test": "Test"
+        "test": "Test",
+        "targetRequired": "Please select at least one target language",
+        "learnRequired": "Please select at least one learn language",
+        "geminiKeyRequired": "Gemini API key is required",
+        "geminiModelRequired": "Please select a Gemini model",
+        "mainProviderEnable": "Enable {provider} to use it as Main Provider",
+        "mainProviderKeyRequired": "API key required for {provider}",
+        "mainProviderModelRequired": "Select a model for {provider}",
+        "mainProviderRequired": "Select a Main Provider",
+        "opensubsAuthCredentials": "OpenSubtitles Auth requires both username and password. Enter credentials or switch to V3 (no login needed).",
+        "providerKeyMissing": "{provider} is enabled but API key is missing",
+        "providersMinimum": "Add at least one AI provider and enable it (API key required unless provider is keyless)",
+        "secondaryGeminiConfigured": "Gemini must have a valid API key and model when selected as Secondary Provider",
+        "secondaryGeminiKey": "Gemini API key is required when Gemini is the Secondary Provider",
+        "secondaryGeminiModel": "Please select a Gemini model for the Secondary Provider",
+        "secondaryProviderDifferent": "Secondary Provider must be different from Main Provider",
+        "secondaryProviderEnable": "Enable {provider} to use it as Secondary Provider",
+        "secondaryProviderKey": "API key required for {provider} (Secondary Provider)",
+        "secondaryProviderModel": "Select a model for {provider} (Secondary Provider)",
+        "secondaryProviderRequired": "Select a Secondary Provider or disable the fallback toggle",
+        "secondaryProvidersCount": "Secondary Provider requires two configured AI providers (main and fallback)",
+        "subdlKeyRequired": "SubDL is enabled but API key is missing",
+        "subsourceKeyRequired": "SubSource is enabled but API key is missing",
+        "subtitleProviderRequired": "Please enable at least one subtitle provider"
       },
       "alerts": {
         "sessionLost": "Config session was lost. Please reconfigure and save to create a new session.",
@@ -313,7 +502,283 @@
         "betaOn": "Experimental Mode ON",
         "betaOff": "Experimental Mode OFF",
         "missingCfWorkers": "Cloudflare Workers AI key must be in ACCOUNT_ID|TOKEN format",
-        "missingProviderKey": "Add an API key for {provider} to load models"
+        "missingProviderKey": "Add an API key for {provider} to load models",
+        "configurationSaved": "Configuration saved! You can now install the addon in Stremio.",
+        "configurationUpdated": "Configuration updated! Changes will take effect immediately in Stremio.",
+        "installUrlCopied": "Install URL copied to clipboard!",
+        "loadModelsFailed": "Failed to load models for {provider}: {reason}",
+        "loadModelsSuccess": "Loaded {count} models for {provider}",
+        "newVersionDetected": "New version detected",
+        "noTranslationTrimmed": "Only the first {limit} languages were kept for Just Fetch mode.",
+        "openingStremio": "Opening Stremio...",
+        "saveFailed": "Failed to save configuration: {reason}",
+        "sessionExpiredCreated": "Session expired. Created new session - please reinstall addon in Stremio.",
+        "sessionExpiredCreating": "Session expired. Creating new session...",
+        "sessionNetworkError": "Network error updating session. Creating new session...",
+        "sessionUpdateFailed": "Session update failed. Creating new session...",
+        "targetsTrimmed": "Only the first {limit} target languages were kept (combined with Learn Mode)."
+      },
+      "providers": {
+        "subsource": {
+          "title": "SubSource",
+          "description": "Get your free API key from",
+          "linkLabel": "SubSource.net",
+          "placeholder": "Enter SubSource API key",
+          "validateTitle": "Validate API key",
+          "validateCta": "Test",
+          "toggleLabel": "Enable SubSource"
+        },
+        "subdl": {
+          "title": "SubDL",
+          "description": "Get your free API key from",
+          "linkLabel": "SubDL.com",
+          "placeholder": "Enter SubDL API key",
+          "validateTitle": "Validate API key",
+          "validateCta": "Test",
+          "toggleLabel": "Enable SubDL"
+        }
+      },
+      "providersUi": {
+        "loadModels": "Load Models",
+        "loadModelsTitle": "Fetch models",
+        "selectModel": "Select model",
+        "main": {
+          "label": "Main Provider",
+          "description": "Choose which enabled AI provider to use when multiple are configured."
+        },
+        "secondary": {
+          "label": "Secondary Provider<br><span class=\"label-description\">If the main provider errors (429/503/prohibited/other), retry the failed batch with this provider, then continue with the main provider.</span>"
+        },
+        "fallback": {
+          "label": "Fallback Provider",
+          "description": "Used only when the main provider returns an error. Falls back seamlessly."
+        },
+        "placeholders": {
+          "openai": "OpenAI API key",
+          "anthropic": "Anthropic API key",
+          "xai": "XAI API key",
+          "deepseek": "DeepSeek API key",
+          "deepl": "DeepL Auth Key",
+          "mistral": "Mistral API key",
+          "cfworkers": "ACCOUNT_ID|TOKEN",
+          "openrouter": "OpenRouter API key"
+        },
+        "selectProvider": "Select provider",
+        "deeplHint": "Free keys auto-use api-free.deepl.com. Language codes are auto-mapped from your selections.",
+        "cfworkersHint": "Use ACCOUNT|TOKEN to set account ID explicitly.",
+        "noKeyNeeded": "No API key needed",
+        "googleWeb": "web (fixed)",
+        "googleHint": "Uses the public Google Translate web endpoint (may be unstable)."
+      },
+      "gemini": {
+        "title": "AI Translation API Keys",
+        "apiKey": {
+          "label": "Gemini API Key",
+          "helper": "Get your free API key from",
+          "linkLabel": "Google AI Studio",
+          "placeholder": "Enter your Gemini API key",
+          "validateTitle": "Validate API key",
+          "validateCta": "Test"
+        },
+        "model": {
+          "label": "Translation Model",
+          "helper": "AI model for translations",
+          "options": {
+            "flashLite": "Gemini 2.5 Flash-Lite",
+            "flash": "Gemini 2.5 Flash",
+            "pro": "Gemini 2.5 Pro (Slow)"
+          },
+          "hintTitle": "Bad/broken or out-of-sync translation?",
+          "hintBody": "Quickly triple-click the subtitle to force a re-translation.",
+          "betaTitle": "\u26a1 2.5 Pro usage is still in Beta.",
+          "betaAdvice": "If you have translation problems, use Flash-Lite.",
+          "rateWarningTitle": "\u26a0\ufe0f Free Tier Limitation:",
+          "rateWarningBody": "If using a free API key, Gemini 2.5 Pro may trigger rate limits (HTTP 429). You'll likely only be able to translate one subtitle at a time."
+        }
+      },
+      "noTranslationCard": {
+        "title": "Languages",
+        "label": "Subtitle Languages",
+        "search": "Search languages...",
+        "quickPopular": "Popular",
+        "quickAll": "All",
+        "quickClear": "Clear"
+      },
+      "languageCards": {
+        "search": "Search languages...",
+        "quickPopular": "Popular",
+        "quickAll": "All",
+        "quickClear": "Clear",
+        "sourceTitle": "Source Languages",
+        "sourceLabel": "* Source languages for translations",
+        "targetTitle": "Target Languages",
+        "targetLabel": "* Target languages for subtitles and translations",
+        "learnTitle": "Learn Target Languages",
+        "learnLabel": "Select Learn Mode Languages",
+        "learnDescription": "Creates \"Learn (Language)\" entries that pair source + translated lines in WebVTT. Select target \"Learn\" languages above after enabling."
+      },
+      "learnMode": {
+        "label": "Learn Mode",
+        "description": "Adds \"Learn (Language)\" entries that output dual-language WebVTT with source and translated lines for language learning.",
+        "orderLabel": "Learn Mode Subtitle Order",
+        "orderDescription": "Choose which language appears at the top and bottom of the screen.",
+        "sourceTop": "Source Top - Target Bottom",
+        "targetTop": "Target Top - Source Bottom"
+      },
+      "translationSettings": {
+        "title": "Translation Settings",
+        "workflow": {
+          "label": "Translation Workflow",
+          "description": "Switching between modes is recommended if you have translation sync problems. Our main translation workflow removes timestamps and sends the subtitles numbered to the AI, then reconstructs the SRT with the original timestamps. \"Send Timestamps to AI\" sends the subtitles WITH timecodes and trusts the AI to return correct timestamps. Added for future-proofing the addon.",
+          "original": "Original Timestamps (Default)",
+          "ai": "Send Timestamps to AI"
+        },
+        "promptStyle": {
+          "label": "Prompt Style",
+          "description": "Choose between strict structure preservation or natural flow adaptation",
+          "options": {
+            "natural": "Natural - Adapts structure for natural target language flow",
+            "strict": "Strict - Preserves exact timing and structure"
+          }
+        },
+        "database": {
+          "label": "SubMaker Database",
+          "description": "Choose how to handle the SubMaker translation database. The main database caches translations permanently to reduce API usage. Bypass mode forces fresh translations and stores them temporarily (12 hours).",
+          "use": "Use SubMaker Database",
+          "bypass": "Bypass Cache (Force Retranslation)",
+          "noteTitle": "\u26a0\ufe0f Bypass Mode Required:"
+        },
+        "chunking": {
+          "label": "Chunking Strategy",
+          "description": "Multiple Batches sends subtitles in separate requests (chunks). Single-Batch translates the whole subtitle file in one go (still auto-splits into 2 or 3 chunks at 50k and 100k+ tokens). Single-Batch still streams partial outputs while processing (through token streaming) and delivers better contextual translations. Might cause MAX_OUTPUT errors. Long titles may have more sync problems.",
+          "multiple": "Multiple Batches (Default)",
+          "single": "Single-Batch"
+        }
+      },
+      "multiProvider": {
+        "label": "Multiple providers (beta)",
+        "description": "Enables multiple providers and advanced parameters settings."
+      },
+      "otherSettings": {
+        "title": "Other Settings",
+        "subToolbox": {
+          "label": "Enable \"Sub Toolbox\" (Alpha)",
+          "description": "Shows the Sub Toolbox entry in Stremio subtitles for brower access to all tools. (Read instructions after enabling)"
+        },
+        "mobileMode": {
+          "label": "Mobile Mode (fix/workaround)",
+          "description": "Stremio makes only 1 request for subtitles and caches it, so subtitles in Android can't be partially delivered. Mobile Mode holds translation requests and sends the final subtitle only when ready. Use this if you're watching on Android/iOS. No partial translations, no loading messages. Might freeze the stream until translation is ready. Flash-lite recommended. Wait 1-3 min, if it doesn't load automatically switch subtitles back and forth to load the translation."
+        },
+        "betaMode": {
+          "label": "Beta Mode",
+          "description": "Unlocks experimental features like Multiple Providers and Advanced Settings."
+        },
+        "devMode": {
+          "label": "Dev Mode"
+        }
+      },
+      "advancedGemini": {
+        "title": "Advanced Settings (Gemini)",
+        "infoTitle": "Fine-tune Gemini behavior:",
+        "infoBody": "Override default Gemini model and sampling parameters.",
+        "cacheNotePrefix": "When any Gemini setting is changed from defaults,",
+        "cacheNoteStrong": "Bypass Cache is automatically enabled",
+        "cacheNoteSuffix": "to ensure your experimental translations don't pollute the shared database.",
+        "model": {
+          "label": "Translation Model Override",
+          "description": "Override the default model. Leave empty to use system default (gemini-flash-latest).",
+          "default": "Use Default Model"
+        },
+        "thinking": {
+          "label": "Thinking Budget (Extended Reasoning)",
+          "description": "0 = disabled, -1 = dynamic (auto-adjust), or fixed token count (1-32768). Higher values = deeper reasoning but slower."
+        },
+        "temperature": {
+          "label": "Temperature (Creativity)",
+          "description": "Controls randomness (0.0-2.0). Lower = more deterministic, Higher = more creative. Default: 0.8"
+        },
+        "topP": {
+          "label": "Top-P (Nucleus Sampling)",
+          "description": "Probability threshold (0.0-1.0). Lower = more focused, Higher = more diverse. Default: 0.95"
+        },
+        "batchContext": {
+          "label": "Enable Batch Context (Experimental)",
+          "description": "Include original surrounding context and previous translations when processing batches. Improves translation coherence but may break outputs and increases token usage. Disabled by default."
+        },
+        "contextSize": {
+          "label": "Context Size",
+          "description": "Number of surrounding entries to include as context (1-10). Default: 3"
+        }
+      },
+      "providerAdvanced": {
+        "title": "Advanced Parameters",
+        "intro": "Fine-tune generation settings for every enabled provider. These apply in multi-provider mode only.",
+        "empty": "Enable a provider above to unlock its parameters.",
+        "labels": {
+          "temperature": "Temperature",
+          "topP": "Top-P",
+          "maxTokens": "Max output tokens",
+          "timeout": "Request timeout (s)",
+          "retries": "Max retries",
+          "reasoning": "Reasoning effort",
+          "thinking": "Thinking budget (tokens)",
+          "formality": "Formality",
+          "preserveFormatting": "Preserve formatting",
+          "preserveFormattingHint": "Keep line breaks, casing, and tags intact"
+        },
+        "reasoningDefaults": {
+          "none": "None (default - for non-reasoning models)",
+          "low": "Low (faster)",
+          "medium": "Medium (balanced)",
+          "high": "High (deeper reasoning)"
+        },
+        "formality": {
+          "default": "Default",
+          "more": "More formal",
+          "less": "Less formal"
+        },
+        "providers": {
+          "openai": {
+            "title": "OpenAI Parameters",
+            "description": "Applies to OpenAI and compatible endpoints"
+          },
+          "anthropic": {
+            "title": "Anthropic Parameters",
+            "description": "Claude / Anthropic API tuning"
+          },
+          "xai": {
+            "title": "XAI (Grok) Parameters",
+            "description": "Grok API tuning"
+          },
+          "deepseek": {
+            "title": "DeepSeek Parameters",
+            "description": "DeepSeek chat endpoints"
+          },
+          "deepl": {
+            "title": "DeepL Parameters",
+            "description": "Formality & formatting controls",
+            "footer": "Beta languages auto-enable quality_optimized and disable latency_optimized."
+          },
+          "mistral": {
+            "title": "Mistral Parameters",
+            "description": "Mistral API tuning"
+          },
+          "cfworkers": {
+            "title": "Cloudflare Workers AI Parameters",
+            "description": "Use ACCOUNT_ID|TOKEN format"
+          },
+          "openrouter": {
+            "title": "OpenRouter Parameters",
+            "description": "OpenRouter routing"
+          }
+        }
+      },
+      "dev": {
+        "title": "Dev"
+      },
+      "reset": {
+        "hint": "Any problems? Reset settings to default ->",
+        "cta": "Reset"
       }
     },
     "nav": {
@@ -329,8 +794,10 @@
     },
     "fileUpload": {
       "title": "File Translation",
+      "documentTitle": "File Translation - SubMaker",
       "subtitle": "Upload and translate your subtitle files",
       "help": "Show Instructions",
+      "themeToggle": "Toggle theme",
       "drop": {
         "aria": "Upload subtitle files",
         "browse": "Click to browse files",
@@ -349,6 +816,471 @@
         "step5": "Drag it to Stremio 🎬",
         "dontShow": "Don't show this again",
         "gotIt": "Got it!"
+      },
+      "options": {
+        "title": "Translation Options",
+        "provider": {
+          "label": "Translation Provider",
+          "helper": "Choose which configured provider to use for this translation."
+        },
+        "flow": {
+          "label": "Translation Flow",
+          "helper": "Choose between multiple batches or a single batch run.",
+          "multiple": "Multiple Batches (Recommended)",
+          "single": "Single-batch (all at once)"
+        },
+        "timing": {
+          "label": "Timestamps Strategy",
+          "helper": "Decide how timestamps are handled during translation.",
+          "rebuild": "Rebuild Timestamps",
+          "ai": "Send Timestamps to AI"
+        }
+      },
+      "advanced": {
+        "title": "Advanced Settings",
+        "highlightTitle": "Fine-tune AI behavior for this translation only:",
+        "highlightBody": "Override model and parameters.",
+        "highlightNote": "These settings are temporary and won't be saved to your config.",
+        "model": {
+          "label": "Translation Model Override",
+          "helper": "Override the default model for this translation only.",
+          "useConfigured": "Use Configured Model (from your config)",
+          "useConfiguredWith": "Use Configured Model ({model})"
+        },
+        "thinking": {
+          "label": "Thinking Budget (Extended Reasoning)",
+          "helper": "0 = disabled, -1 = dynamic (auto-adjust), or fixed token count (1-32768)."
+        },
+        "temperature": {
+          "label": "Temperature (Creativity)",
+          "helper": "Controls randomness (0.0-2.0). Lower = deterministic, Higher = creative. Default: 0.8"
+        },
+        "reasoning": {
+          "label": "Reasoning Effort",
+          "helper": "Applies to reasoning-capable OpenAI-style models. Leave blank for default.",
+          "default": "None (use provider default)",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        },
+        "topP": {
+          "label": "Top-P (Nucleus Sampling)",
+          "helper": "Probability threshold (0.0-1.0). Lower = focused, Higher = diverse. Default: 0.95"
+        },
+        "topK": {
+          "label": "Top-K (Token Selection)",
+          "helper": "Number of top tokens to consider (1-100). Default: 40"
+        },
+        "maxTokens": {
+          "label": "Max Output Tokens",
+          "helper": "Maximum tokens in output (1-200000). Defaults follow your selected provider."
+        },
+        "formality": {
+          "label": "Formality",
+          "helper": "DeepL-only setting to control tone.",
+          "default": "Default",
+          "more": "More formal",
+          "less": "Less formal"
+        },
+        "preserveFormatting": {
+          "label": "Preserve Formatting",
+          "helper": "Keep line breaks, casing, and tags intact (DeepL only).",
+          "toggle": "Preserve formatting"
+        },
+        "timeout": {
+          "label": "Translation Timeout (seconds)",
+          "helper": "Maximum time to wait for translation (5-600). Defaults follow your selected provider."
+        },
+        "retries": {
+          "label": "Max Retries",
+          "helper": "Number of retry attempts for this translation (0-5). Default: 2"
+        },
+        "reset": "🔄 Reset to Defaults",
+        "modelStatus": {
+          "unavailable": "Model override not available for Google Translate",
+          "fetching": "Fetching models...",
+          "loaded": "Models loaded!",
+          "failed": "Failed to fetch models"
+        }
+      },
+      "toast": {
+        "title": "New stream detected",
+        "meta": "A different episode is playing in Stremio.",
+        "dismiss": "Dismiss notification",
+        "update": "Update"
+      },
+      "source": {
+        "label": "Source Language",
+        "helper": "Required for DeepL; pick the subtitle's original language or leave auto-detect.",
+        "auto": "Auto-detect (recommended)"
+      },
+      "target": {
+        "label": "Target Language",
+        "helper": "Select the language to translate to",
+        "placeholder": "Choose a language..."
+      },
+      "languageToggle": {
+        "showAll": "Show all languages"
+      },
+      "files": {
+        "single": "Files selected: {name}",
+        "multi": "{count} files selected: {preview}{extra}"
+      },
+      "actions": {
+        "start": "🚀 Start Translation"
+      },
+      "progress": {
+        "headline": "Translating your subtitle...",
+        "subtext": "Queued translations run one at a time to respect rate limits.",
+        "button": "Translating...",
+        "active": "Translating {name}",
+        "detail": "Job {position} of {total}. Running {concurrent} at a time.",
+        "subtitle": "subtitle"
+      },
+      "refresh": {
+        "loading": "Refreshing...",
+        "empty": "No stream yet",
+        "error": "Refresh failed",
+        "current": "Already latest"
+      },
+      "queue": {
+        "title": "Upload queue",
+        "subtitle": "Files run sequentially to avoid translation throttling.",
+        "empty": "No files queued",
+        "download": "Download",
+        "untitled": "Untitled",
+        "status": {
+          "pending": "Queued",
+          "processing": "Processing",
+          "completed": "Done",
+          "failed": "Failed"
+        },
+        "summary": {
+          "processing": "{count} in progress",
+          "pending": "{count} queued",
+          "completed": "{count} done",
+          "failed": "{count} failed",
+          "ready": "Queue ready"
+        },
+        "meta": {
+          "single": "Single-batch",
+          "multi": "Multiple batches",
+          "timingAi": "Send timestamps to AI",
+          "timingRebuild": "Rebuild timestamps",
+          "target": "{target}"
+        },
+        "limitFull": "You already have {max} files in the queue. Clear it to add more.",
+        "limitPartial": "Only the first {available} files were added to stay within the queue limit of {max}."
+      },
+      "result": {
+        "title": "Translation Complete!",
+        "body": "Your subtitle has been successfully translated.",
+        "download": "⬇️ Download Translated Subtitle",
+        "translateAnother": "🔄 Translate Another One",
+        "finished": "Finished: {name}"
+      },
+      "reset": {
+        "text": "Reset File Translation page to defaults →",
+        "action": "Reset"
+      },
+      "resetModal": {
+        "title": "Reset File Translation",
+        "lead": "This will reset everything for this tool:",
+        "bullet1": "Clear queued jobs, selections, and any downloaded results",
+        "bullet2": "Remove saved preferences (themes, dismissed tips) for this page",
+        "bullet3": "You'll be reloaded on the same file translation page afterward.",
+        "cancel": "Cancel",
+        "action": "Reset Everything",
+        "busy": "Resetting...",
+        "closeAria": "Close reset dialog"
+      },
+      "provider": {
+        "using": "Using {main}{mainModel} from your saved SubMaker config.",
+        "withFallback": "Using {main}{mainModel} with fallback {fallback}{fallbackModel}."
+      },
+      "errors": {
+        "configMissing": "Missing configuration token. Open this page again from Stremio or the configure page.",
+        "noFiles": "Please select at least one subtitle file (SRT, VTT, ASS, SSA).",
+        "reviewSelections": "Please review your selections.",
+        "translationFailed": "Translation failed: {error}",
+        "warningPrefix": "Warning: ",
+        "targetMissing": "Please select a target language",
+        "sourceMissing": "Please select a source language for DeepL translations"
+      }
+    },
+    "sync": {
+      "documentTitle": "Subtitles Sync Studio - SubMaker",
+      "title": "Subtitles Sync Studio",
+      "subtitle": "Automatically synchronize subtitles with your video using audio analysis",
+      "sectionHeading": "Link your stream, choose a subtitle, and sync",
+      "badges": {
+        "addon": "Addon",
+        "extension": "Extension",
+        "hash": "Hash",
+        "extensionWaiting": "Waiting for extension..."
+      },
+      "meta": {
+        "linkedStream": "Linked stream",
+        "titleLabel": "Title",
+        "videoIdLabel": "Video ID",
+        "episodeLabel": "Episode",
+        "fileLabel": "File",
+        "waiting": "Waiting for a linked stream...",
+        "noStream": "No stream linked",
+        "videoIdUnavailable": "Video ID unavailable",
+        "linkedFallback": "linked stream",
+        "episodeFallback": "Episode"
+      },
+      "instructions": {
+        "help": "Show instructions",
+        "title": "Subtitle Sync Instructions",
+        "methods": "Sync Methods",
+        "items": {
+          "manual": "Manual Offset: Adjust subtitle timing manually with positive/negative milliseconds when you don't want to run autosync.",
+          "fingerprint": "Fast Fingerprint Pre-pass: Coarse ffsubsync fingerprint check to lock the big offset before deeper scans (on by default).",
+          "alass": "ALASS (audio -> subtitle): Fast wasm anchors against the audio; pick Rapid/Balanced/Deep/Complete profiles for coverage.",
+          "ffsubsync": "FFSubSync (audio -> subtitle): Drift-aware audio alignment via ffsubsync-wasm; choose a light, balanced, deep, or complete scan.",
+          "vosk": "Vosk CTC/DTW (text -> audio): Force-align your subtitle text directly to audio with Vosk logits + DTW, great for broken timings or big offsets.",
+          "whisper": "Whisper + ALASS (subtitle -> subtitle): Whisper transcript alignment with an ALASS refinement pass; use light/balanced/deep/complete profiles to control scan size."
+        },
+        "note": "Select a primary engine first, then pick its scan profile. Coverage adapts to the detected runtime so heavy cases can get deeper scans.",
+        "dontShow": "Don't show this again",
+        "gotIt": "Got it",
+        "closeAria": "Close instructions"
+      },
+      "toast": {
+        "title": "New stream detected",
+        "meta": "A different episode is playing in Stremio.",
+        "update": "Update",
+        "dismiss": "Dismiss notification"
+      },
+      "step1": {
+        "chip": "Step 1",
+        "title": "Provide Stream Information",
+        "linkedLabel": "Linked stream",
+        "streamLabel": "Stream URL:",
+        "placeholder": "Paste your stream URL here (e.g., http://... or magnet:...)",
+        "infoTitle": "ℹ️ Subtitles Sync:",
+        "infoBody": "Autosync needs the stream URL and the xSync extension; manual offsets work without them.",
+        "continue": "Continue to Subtitle Selection"
+      },
+      "step2": {
+        "chip": "Step 2",
+        "title": "Select Subtitle to Sync",
+        "selectLabel": "Choose from {title} fetched subtitles:",
+        "selectPlaceholder": "Choose a subtitle",
+        "uploadTitle": "📁 Or drag & drop your .srt file here",
+        "uploadSubtitle": "Click to browse files",
+        "sourceLabel": "Source Language:",
+        "sourcePlaceholder": "Select source language",
+        "translateToggle": "Translate subtitle after syncing",
+        "targetLabel": "Target Language:",
+        "subtitleOption": "{language} - Subtitle #{index}"
+      },
+      "step3": {
+        "chip": "Step 3",
+        "title": "Sync Subtitle",
+        "primaryLabel": "Primary Mode:",
+        "secondaryLabel": "Scan Profile:",
+        "primaryOptions": {
+          "manual": "📝 Manual Offset Adjustment",
+          "alass": "🎯 ALASS (audio -> subtitle)",
+          "ffsubsync": "🎛️ FFSubSync (audio -> subtitle)",
+          "vosk": "🧭 Vosk CTC/DTW (text -> audio)",
+          "whisper": "🗣️ Whisper + ALASS (subtitle -> subtitle)"
+        },
+        "manualLabel": "Time Offset (milliseconds):",
+        "offsetHotkeys": "Hotkeys: ←/→ = ±100ms • Shift+←/→ = ±500ms • 0 = reset",
+        "offsetHintPositive": "Positive values = delay subtitles (appear later)",
+        "offsetHintNegative": "Negative values = advance subtitles (appear earlier)",
+        "offsetButtons": {
+          "minus1000": "-1s",
+          "minus500": "-500ms",
+          "minus100": "-100ms",
+          "reset": "Reset",
+          "plus100": "+100ms",
+          "plus500": "+500ms",
+          "plus1000": "+1s"
+        },
+        "start": "Apply Sync",
+        "startBusy": "Syncing...",
+        "progress": "Syncing subtitles...",
+        "status": {
+          "noStream": "No stream linked. Manual offsets are fine, but autosync will need an http(s) stream URL.",
+          "invalidStream": "Autosync requires a valid http(s) stream URL. Manual offsets can run without it.",
+          "linked": "Stream URL linked for autosync.",
+          "needSubtitle": "Please select a subtitle first",
+          "needLanguage": "Select the subtitle language before syncing.",
+          "extensionRequired": "Autosync requires the SubMaker Chrome Extension. Please install/enable it.",
+          "urlRequired": "Autosync requires a valid http(s) stream URL. Please paste it in Step 1.",
+          "profileRequired": "Select a scan profile before starting autosync.",
+          "success": "Subtitle synced successfully!",
+          "failed": "Sync failed: {reason}",
+          "extensionSyncFailed": "Extension sync failed",
+          "timeout": "Extension sync timeout",
+          "fetchSubtitleFailed": "Failed to fetch subtitle"
+        },
+        "progressApplying": "Applying offset: {ms}ms...",
+        "progressComplete": "Sync complete!",
+        "autosync": {
+          "generic": "Autosync",
+          "starting": "Starting {mode} ({primary}){plan}...",
+          "complete": "{mode} complete!"
+        }
+      },
+      "step4": {
+        "title": "Preview & Download",
+        "downloadSynced": "Download Synced Subtitle",
+        "downloadTranslated": "Download Translated Subtitle"
+      },
+      "offset": {
+        "onTime": "On time",
+        "direction": {
+          "later": "later",
+          "earlier": "earlier"
+        }
+      },
+      "auto": {
+        "fingerprintLabel": "Fast fingerprint pre-pass (recommended)",
+        "fingerprintDescription": "Runs a quick ffsubsync coarse offset pass on the first audio windows before your selected engine. Disable only if the audio is muted, heavily trimmed, or you want to skip the extra hop."
+      },
+      "refresh": {
+        "loading": "Refreshing...",
+        "empty": "No stream yet",
+        "error": "Refresh failed",
+        "current": "Already latest"
+      },
+      "upload": {
+        "invalidFile": "Please select a valid .srt file",
+        "loaded": "Subtitle file loaded: {name}"
+      },
+      "plan": {
+        "summary": "Plan: {plan}",
+        "fullRuntimeSeconds": "Full runtime ({seconds}s) scan",
+        "fullRuntime": "Full runtime scan",
+        "windowCountSeconds": "{count} x {seconds}s",
+        "windowCount": "{count} windows",
+        "coverageDetected": "~{pct}% of detected runtime",
+        "coverageTarget": "~{pct}% target coverage",
+        "fingerprint": "fingerprint pre-pass",
+        "fingerprintSkipped": "Fingerprint pre-pass is skipped when FFSubSync is the primary engine."
+      },
+      "logs": {
+        "estimatedRuntime": "Estimated subtitle runtime (from current subtitle): {duration}",
+        "generic": "Log event",
+        "sentRequest": "Sent sync request ({mode}){summary} to extension."
+      },
+      "modes": {
+        "alass": {
+          "description": "Audio -> subtitle anchors via alass-wasm."
+        },
+        "ffsubsync": {
+          "description": "Audio -> subtitle alignment via ffsubsync-wasm."
+        },
+        "vosk": {
+          "description": "Text -> audio (Vosk CTC logits + DTW)."
+        },
+        "whisper": {
+          "description": "Subtitle -> subtitle (Whisper transcript + ALASS refine)."
+        }
+      },
+      "presets": {
+        "alass": {
+          "rapid": {
+            "label": "Rapid anchors (~8-10%)",
+            "description": "4-6 short anchor windows for quick drift locking."
+          },
+          "balanced": {
+            "label": "Balanced anchors (~14-18%)",
+            "description": "6-9 windows at ~60s for tougher bitrate shifts."
+          },
+          "deep": {
+            "label": "Deep anchors (~26-32%)",
+            "description": "9-14 windows at ~75s for heavy drift/ads."
+          },
+          "complete": {
+            "label": "Complete (full runtime)",
+            "description": "Scan the full runtime with alass anchors."
+          }
+        },
+        "ffsubsync": {
+          "light": {
+            "label": "Light scan (~6-8%)",
+            "description": "4-6 windows (~60s) to catch obvious drifts quickly."
+          },
+          "balanced": {
+            "label": "Balanced scan (~12-16%)",
+            "description": "6-10 windows (~80s) for mixed drift patterns."
+          },
+          "deep": {
+            "label": "Deep scan (~22-28%)",
+            "description": "9-14 windows (~100s) for aggressive correction."
+          },
+          "complete": {
+            "label": "Complete (full runtime)",
+            "description": "Full-runtime ffsubsync scan for maximum accuracy."
+          }
+        },
+        "vosk": {
+          "light": {
+            "label": "Vosk Light (~10-12%)",
+            "description": "Quick CTC/DTW pass for big offsets and broken timings."
+          },
+          "balanced": {
+            "label": "Vosk Balanced (~16-20%)",
+            "description": "Adds more anchors for ads/drift while staying fast."
+          },
+          "deep": {
+            "label": "Vosk Deep (~26-32%)",
+            "description": "Dense anchors for noisy audio or messy subs."
+          },
+          "complete": {
+            "label": "Vosk Complete (full runtime)",
+            "description": "Full-runtime Vosk CTC/DTW alignment when accuracy is critical."
+          }
+        },
+        "whisper": {
+          "light": {
+            "label": "Light scan (~5-7%)",
+            "description": "3-5 Whisper windows (~70s) to sanity-check drift."
+          },
+          "balanced": {
+            "label": "Balanced scan (~12-16%)",
+            "description": "5-8 windows (~85s) for typical shows with ads."
+          },
+          "deep": {
+            "label": "Deep scan (~22-28%)",
+            "description": "8-12 windows (~100s) for stubborn drifts."
+          },
+          "complete": {
+            "label": "Complete (full runtime)",
+            "description": "Full-runtime transcript + align when you need everything."
+          }
+        }
+      },
+      "primary": {
+        "manual": "📝 Manual offset: type the millisecond shift you need.",
+        "alass": "🎯 ALASS anchors the subtitle to audio for fast, offline alignment.",
+        "ffsubsync": "🎛️ FFSubSync detects drifts/ads directly from the audio waveform.",
+        "vosk": "🧭 Vosk CTC/DTW force-aligns your subtitle text directly to the audio.",
+        "whisper": "🗣️ Whisper transcript alignment with an ALASS refinement pass."
+      },
+      "extension": {
+        "ready": "Ready",
+        "notDetected": "Extension not detected",
+        "pinging": "Pinging extension...",
+        "readyVersion": "Ready (v{version})",
+        "detected": "Extension detected (v{version})",
+        "unlocked": "Sync engines unlocked (ALASS / FFSubSync / Vosk CTC/DTW / Whisper + ALASS)"
+      },
+      "translate": {
+        "inProgress": "Translating subtitle... This may take 1-5 minutes.",
+        "failed": "Translation failed",
+        "success": "Translation completed!",
+        "error": "Translation failed: {reason}"
+      },
+      "errors": {
+        "saveFailed": "Failed to save synced subtitle"
       }
     },
     "xsync": {
@@ -367,9 +1299,12 @@
         "open": "Open",
         "reload": "Reload",
         "reset": "Reset",
-        "copyright": "SubMaker xSync © 2025",
+        "copyright": "SubMaker xSync \u00a9 2025",
         "resetConfirm": "Are you sure you want to reset the extension? This will clear all settings and data.",
-        "resetFailed": "Failed to reset extension. Please try removing and reinstalling it."
+        "resetFailed": "Failed to reset extension. Please try removing and reinstalling it.",
+        "engineBusy": "Syncing now",
+        "engineIdle": "Standing by",
+        "themeAria": "Theme: {theme}"
       },
       "options": {
         "title": "SubMaker xSync Settings",
@@ -387,45 +1322,40 @@
         "statusRefresh": "Status Refresh",
         "statusRefreshHint": "How often the popup refreshes job stats.",
         "themePreference": "Theme Preference",
-      "linksEyebrow": "Link Capture",
-      "linksTitle": "Configure and Toolbox links",
-      "linksHint": "Open the configure and toolbox pages once and we’ll remember the URLs.",
-      "configureUrl": "Configure URL",
-      "toolboxUrl": "Toolbox URL",
-      "syncUrl": "Sync Page URL",
-      "saveButton": "Save Settings",
-      "saveSuccess": "Settings saved",
-      "saveError": "Failed to save settings",
-      "saving": "Saving",
-      "statusReady": "Ready",
-      "statusLoadingError": "Error loading",
-      "statusIdle": "Idle",
-      "statusOffline": "Offline",
-      "statusImported": "Imported",
-      "statusResetting": "Resetting...",
-      "statusResetFailed": "Reset failed",
-      "statusImportFailed": "Import failed",
-      "loadError": "Could not load settings",
-      "exported": "Exported settings",
-      "exportFailed": "Export failed",
-      "imported": "Imported settings",
-      "importFailed": "Import failed",
-      "resetConfirm": "Are you sure you want to reset the extension? This will clear all settings and data.",
-      "resetSuccess": "Extension reset; reloading...",
-      "resetFailed": "Reset failed",
-      "statsReset": "Stats reset",
-      "statsResetFailed": "Could not reset stats",
-      "lastSavedUnknown": "Unknown",
-      "clearStatsConfirm": "Reset popup stats (active/total sync counters)?",
-      "statusActiveCount": "{count} syncing",
-      "statusExtractingCount": "{count} extracting",
-      "themeAria": "Theme: {theme}"
-    },
-    "popup": {
-      "engineBusy": "Syncing now",
-      "engineIdle": "Standing by",
-      "themeAria": "Theme: {theme}"
-    }
+        "linksEyebrow": "Link Capture",
+        "linksTitle": "Configure and Toolbox links",
+        "linksHint": "Open the configure and toolbox pages once and we’ll remember the URLs.",
+        "configureUrl": "Configure URL",
+        "toolboxUrl": "Toolbox URL",
+        "syncUrl": "Sync Page URL",
+        "saveButton": "Save Settings",
+        "saveSuccess": "Settings saved",
+        "saveError": "Failed to save settings",
+        "saving": "Saving",
+        "statusReady": "Ready",
+        "statusLoadingError": "Error loading",
+        "statusIdle": "Idle",
+        "statusOffline": "Offline",
+        "statusImported": "Imported",
+        "statusResetting": "Resetting...",
+        "statusResetFailed": "Reset failed",
+        "statusImportFailed": "Import failed",
+        "loadError": "Could not load settings",
+        "exported": "Exported settings",
+        "exportFailed": "Export failed",
+        "imported": "Imported settings",
+        "importFailed": "Import failed",
+        "resetConfirm": "Are you sure you want to reset the extension? This will clear all settings and data.",
+        "resetSuccess": "Extension reset; reloading...",
+        "resetFailed": "Reset failed",
+        "statsReset": "Stats reset",
+        "statsResetFailed": "Could not reset stats",
+        "lastSavedUnknown": "Unknown",
+        "clearStatsConfirm": "Reset popup stats (active/total sync counters)?",
+        "statusActiveCount": "{count} syncing",
+        "statusExtractingCount": "{count} extracting",
+        "themeAria": "Theme: {theme}"
+      }
     }
   }
 }

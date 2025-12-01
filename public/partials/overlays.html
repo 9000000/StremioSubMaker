@@ -2,7 +2,7 @@
         <div class="spinner"></div>
     </div>
 
-    <div class="keyboard-hint" id="keyboardHint">
+    <div class="keyboard-hint" id="keyboardHint" data-i18n="config.overlays.keyboardHint" data-i18n-attr="innerHTML">
         Press <span class="kbd">?</span> for keyboard shortcuts
     </div>
 
@@ -12,49 +12,49 @@
     <div class="modal-overlay" id="instructionsModal">
         <div class="modal">
             <div class="modal-header">
-                <h2>How to Use SubMaker</h2>
+                <h2 data-i18n="config.overlays.instructions.title">How to Use SubMaker</h2>
                 <div class="modal-close" id="closeInstructionsBtn">&times;</div>
             </div>
             <div class="modal-content">
-                <h3>Usage Instructions:</h3>
+                <h3 data-i18n="config.overlays.instructions.usageTitle">Usage Instructions:</h3>
                 <ol>
-                    <li>Add desired API keys to <strong>"Subtitles Sources"</strong> section.</li>
-                    <li>Add a Gemini API Key to <strong>AI section</strong>.</li>
-                    <li>Select <strong>source languages</strong>.</li>
-                    <li>Select <strong>target languages</strong>.</li>
-                    <li><strong>Install on Stremio</strong>.</li>
+                    <li data-i18n="config.overlays.instructions.step1" data-i18n-attr="innerHTML">Add desired API keys to <strong>"Subtitles Sources"</strong> section.</li>
+                    <li data-i18n="config.overlays.instructions.step2" data-i18n-attr="innerHTML">Add a Gemini API Key to <strong>AI section</strong>.</li>
+                    <li data-i18n="config.overlays.instructions.step3" data-i18n-attr="innerHTML">Select <strong>source languages</strong>.</li>
+                    <li data-i18n="config.overlays.instructions.step4" data-i18n-attr="innerHTML">Select <strong>target languages</strong>.</li>
+                    <li data-i18n="config.overlays.instructions.step5" data-i18n-attr="innerHTML"><strong>Install on Stremio</strong>.</li>
                 </ol>
 
-                <h3>Stremio will:</h3>
-                <p>1. Fetch all Source and Target languages subtitles from sources.<br>
+                <h3 data-i18n="config.overlays.instructions.stremioTitle">Stremio will:</h3>
+                <p data-i18n="config.overlays.instructions.stremioBody" data-i18n-attr="innerHTML">1. Fetch all Source and Target languages subtitles from sources.<br>
                 2. Create <strong>"Make [Target Language]"</strong> buttons within the subtitles list.<br>
                 3. All "Make" translation lists are in the same order of the Source language list.</p>
 
-                <h3>When you click a subtitle:</h3>
-                <p>When a subtitle is clicked within the "Make" translation lists, it'll start translation.<br>
+                <h3 data-i18n="config.overlays.instructions.whenTitle">When you click a subtitle:</h3>
+                <p data-i18n="config.overlays.instructions.whenBody" data-i18n-attr="innerHTML">When a subtitle is clicked within the "Make" translation lists, it'll start translation.<br>
                 After 20-30 seconds, reload the same subtitle entry.<br>
                 It'll load <strong>translated</strong>!</p>
-                <div class="highlight-box" style="margin-top: 0.75rem; text-align: left;">
+                <div class="highlight-box" style="margin-top: 0.75rem; text-align: left;" data-i18n="config.overlays.instructions.quickTip" data-i18n-attr="innerHTML">
                     <strong>Quick Tip:</strong> If a translation looks off, broken, or out of sync, quickly triple-click that subtitle in the list to force a fresh re-translation.
                 </div>
 
-                <p style="margin-top: 0.75rem;">
+                <p style="margin-top: 0.75rem;" data-i18n="config.overlays.instructions.ps" data-i18n-attr="innerHTML">
                 <b>PS:</b>
                 Partial translation is delivered in batches so you can start watching almost instantly.<br>
                 Complete translation may take from <strong>30 seconds-5 minutes</strong> depending on movie/episode length.</p>
 
                 <div class="highlight-box">
-                    <p><em>*Only 1 source language recommended:*</em></p>
-                    <p style="color: var(--text-secondary); font-weight: normal; margin-top: 0.5rem;">When the "Make" translation lists are created, they load the subtitles list in the same order of the source language.<br>That means you can test the source language subtitles for the correct sync and only then select the same one on the translation list instead of translating unsync'd subtitles.</p>
+                    <p data-i18n="config.overlays.instructions.onlyOneSource" data-i18n-attr="innerHTML"><em>*Only 1 source language recommended:*</em></p>
+                    <p style="color: var(--text-secondary); font-weight: normal; margin-top: 0.5rem;" data-i18n="config.overlays.instructions.onlyOneSourceBody" data-i18n-attr="innerHTML">When the "Make" translation lists are created, they load the subtitles list in the same order of the source language.<br>That means you can test the source language subtitles for the correct sync and only then select the same one on the translation list instead of translating unsync'd subtitles.</p>
                 </div>	
             </div>
             <div class="modal-footer">
                 <label class="modal-checkbox">
                     <input type="checkbox" id="dontShowInstructions">
-                    Don't show this again
+                    <span data-i18n="config.overlays.shared.dontShow">Don't show this again</span>
                 </label>
                 <button type="button" class="btn btn-primary" id="gotItInstructionsBtn">
-                    Got it!
+                    <span data-i18n="config.overlays.shared.gotIt">Got it!</span>
                 </button>
             </div>
         </div>
@@ -64,33 +64,33 @@
     <div class="modal-overlay" id="subToolboxModal">
         <div class="modal">
             <div class="modal-header">
-                <h2>🧰 Sub Toolbox Instructions</h2>
+                <h2 data-i18n="config.overlays.toolbox.title">🧰 Sub Toolbox Instructions</h2>
                 <div class="modal-close" id="closeSubToolboxBtn">&times;</div>
             </div>
             <div class="modal-content">
                 <div class="highlight-box" style="background: linear-gradient(135deg, rgba(255, 193, 7, 0.15), rgba(255, 152, 0, 0.15)); border-left: 4px solid #ffc107; margin-bottom: 1.5rem;">
-                    <p style="margin: 0.5rem 0 0 0; color: var(--text-secondary); font-size: 0.95em;">
+                    <p style="margin: 0.5rem 0 0 0; color: var(--text-secondary); font-size: 0.95em;" data-i18n="config.overlays.toolbox.beta" data-i18n-attr="innerHTML">
                         BETA: New toolbox features are coming soon.<br>For now, enjoy seamless batch SRT file translations with all your configured AI providers and settings.
                     </p>
                 </div>
 
-                <h3>🚀 How to use Sub Toolbox:</h3>
+                <h3 data-i18n="config.overlays.toolbox.howTitle">🚀 How to use Sub Toolbox:</h3>
                 <ol>
-                    <li>Enable <strong>"Sub Toolbox"</strong> on the config page before installing.</li>
-                    <li>In Stremio, open the subtitles list and click <strong>"Sub Toolbox"</strong>.</li>
-                    <li>Right-click the playing stream/video in Stremio and choose <strong>"Download Subtitles"</strong> to launch the toolbox in your browser.</li>
-                    <li>Pick a tool: Extract & translate embedded subs, Translate subtitle files, Synchronize subtitles, or Automatic subtitles.</li>
-                    <li>Each tool opens in your browser using your saved SubMaker session and AI provider settings.</li>
-                    <li>Follow the on-screen steps, then drag the result back into Stremio if needed.</li>
+                    <li data-i18n="config.overlays.toolbox.step1" data-i18n-attr="innerHTML">Enable <strong>"Sub Toolbox"</strong> on the config page before installing.</li>
+                    <li data-i18n="config.overlays.toolbox.step2" data-i18n-attr="innerHTML">In Stremio, open the subtitles list and click <strong>"Sub Toolbox"</strong>.</li>
+                    <li data-i18n="config.overlays.toolbox.step3" data-i18n-attr="innerHTML">Right-click the playing stream/video in Stremio and choose <strong>"Download Subtitles"</strong> to launch the toolbox in your browser.</li>
+                    <li data-i18n="config.overlays.toolbox.step4" data-i18n-attr="innerHTML">Pick a tool: Extract & translate embedded subs, Translate subtitle files, Synchronize subtitles, or Automatic subtitles.</li>
+                    <li data-i18n="config.overlays.toolbox.step5" data-i18n-attr="innerHTML">Each tool opens in your browser using your saved SubMaker session and AI provider settings.</li>
+                    <li data-i18n="config.overlays.toolbox.step6" data-i18n-attr="innerHTML">Follow the on-screen steps, then drag the result back into Stremio if needed.</li>
                 </ol>
             </div>
             <div class="modal-footer">
                 <label class="modal-checkbox">
                     <input type="checkbox" id="dontShowSubToolbox">
-                    Don't show this again
+                    <span data-i18n="config.overlays.shared.dontShow">Don't show this again</span>
                 </label>
                 <button type="button" class="btn btn-primary" id="gotItSubToolboxBtn">
-                    Got it!
+                    <span data-i18n="config.overlays.shared.gotIt">Got it!</span>
                 </button>
             </div>
         </div>
@@ -100,19 +100,19 @@
     <div class="modal-overlay" id="resetConfirmModal">
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="resetConfirmTitle">
             <div class="modal-header">
-                <h2 id="resetConfirmTitle">Reset All Settings</h2>
+                <h2 id="resetConfirmTitle" data-i18n="config.overlays.reset.title">Reset All Settings</h2>
                 <div class="modal-close" id="closeResetConfirmBtn">&times;</div>
             </div>
             <div class="modal-content">
-                <p><strong>This will reset literally everything for this site:</strong></p>
-                <p>- Local storage, session storage, cached config and tokens</p>
-                <p>- Service worker and all caches</p>
-                <p>- Any site data stored by this app</p>
-                <p style="margin-top: 0.75rem;">The page will reload afterward.</p>
+                <p data-i18n="config.overlays.reset.intro" data-i18n-attr="innerHTML"><strong>This will reset literally everything for this site:</strong></p>
+                <p data-i18n="config.overlays.reset.item1">- Local storage, session storage, cached config and tokens</p>
+                <p data-i18n="config.overlays.reset.item2">- Service worker and all caches</p>
+                <p data-i18n="config.overlays.reset.item3">- Any site data stored by this app</p>
+                <p style="margin-top: 0.75rem;" data-i18n="config.overlays.reset.footer">The page will reload afterward.</p>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" id="cancelResetBtn">Cancel</button>
-                <button type="button" class="btn btn-danger" id="confirmResetBtn">Reset Everything</button>
+                <button type="button" class="btn btn-secondary" id="cancelResetBtn" data-i18n="config.overlays.reset.cancel">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmResetBtn" data-i18n="config.overlays.reset.confirm">Reset Everything</button>
             </div>
         </div>
     </div>

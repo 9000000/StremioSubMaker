@@ -2575,7 +2575,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         <p class="page-subtitle">Extract embedded tracks from your current stream and translate them instantly.</p>
       </div>
       <div class="badge-row">
-        ${renderRefreshBadge()}
+        ${renderRefreshBadge(t)}
         <div class="status-badge">
           <span class="status-dot ok"></span>
           <div class="status-labels">
@@ -4588,7 +4588,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
 </head>
 <body>
   ${themeToggleMarkup()}
-  <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Open menu">
+  <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="${t('nav.mobileMenu', {}, 'Open menu')}" title="${t('nav.mobileMenu', {}, 'Open menu')}">
     <span></span><span></span><span></span>
   </button>
   <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
@@ -4610,7 +4610,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
         <p class="page-subtitle">Generate subtitles with Whisper then translate</p>
       </div>
       <div class="badge-row">
-        ${renderRefreshBadge()}
+        ${renderRefreshBadge(t)}
         <div class="status-badge">
           <span class="status-dot ok"></span>
           <div class="status-labels">

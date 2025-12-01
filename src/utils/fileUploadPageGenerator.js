@@ -334,6 +334,74 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         `<option value="${escapeHtml(lang.code)}">${escapeHtml(lang.name)}</option>`
     ).join('');
 
+    const targetPlaceholderText = t('fileUpload.target.placeholder', {}, 'Choose a language...');
+    const sourceAutoDetectText = t('fileUpload.source.auto', {}, 'Auto-detect (recommended)');
+    const toastTitle = t('fileUpload.toast.title', {}, 'New stream detected');
+    const toastMeta = t('fileUpload.toast.meta', {}, 'A different episode is playing in Stremio.');
+    const toastUpdate = t('fileUpload.toast.update', {}, 'Update');
+    const toastDismiss = t('fileUpload.toast.dismiss', {}, 'Dismiss notification');
+    const progressTitle = t('fileUpload.progress.headline', {}, 'Translating your subtitle...');
+    const progressSubtext = t('fileUpload.progress.subtext', {}, 'Queued translations run one at a time to respect rate limits.');
+    const queueTitle = t('fileUpload.queue.title', {}, 'Upload queue');
+    const queueSubtitle = t('fileUpload.queue.subtitle', {}, 'Files run sequentially to avoid translation throttling.');
+    const queueEmpty = t('fileUpload.queue.empty', {}, 'No files queued');
+    const resultTitleText = t('fileUpload.result.title', {}, 'Translation Complete!');
+    const resultBodyText = t('fileUpload.result.body', {}, 'Your subtitle has been successfully translated.');
+    const downloadCta = t('fileUpload.result.download', {}, '⬇️ Download Translated Subtitle');
+    const translateAgainCta = t('fileUpload.result.translateAnother', {}, '🔄 Translate Another One');
+    const resetBarText = t('fileUpload.reset.text', {}, 'Reset File Translation page to defaults →');
+    const resetBarCta = t('fileUpload.reset.action', {}, 'Reset');
+    const startTranslationCta = t('fileUpload.actions.start', {}, '🚀 Start Translation');
+    const translationOptionsTitle = t('fileUpload.options.title', {}, 'Translation Options');
+    const translationProviderLabel = t('fileUpload.options.provider.label', {}, 'Translation Provider');
+    const translationProviderHelper = t('fileUpload.options.provider.helper', {}, 'Choose which configured provider to use for this translation.');
+    const translationFlowLabel = t('fileUpload.options.flow.label', {}, 'Translation Flow');
+    const translationFlowMulti = t('fileUpload.options.flow.multiple', {}, 'Multiple Batches (Recommended)');
+    const translationFlowSingle = t('fileUpload.options.flow.single', {}, 'Single-batch (all at once)');
+    const timingStrategyLabel = t('fileUpload.options.timing.label', {}, 'Timestamps Strategy');
+    const timingStrategyRebuild = t('fileUpload.options.timing.rebuild', {}, 'Rebuild Timestamps');
+    const timingStrategyAI = t('fileUpload.options.timing.ai', {}, 'Send Timestamps to AI');
+    const advancedSettingsTitle = t('fileUpload.advanced.title', {}, 'Advanced Settings');
+    const advancedHighlightTitle = t('fileUpload.advanced.highlightTitle', {}, 'Fine-tune AI behavior for this translation only:');
+    const advancedHighlightBody = t('fileUpload.advanced.highlightBody', {}, 'Override model and parameters.');
+    const advancedHighlightNote = t('fileUpload.advanced.highlightNote', {}, "These settings are temporary and won't be saved to your config.");
+    const advancedModelLabel = t('fileUpload.advanced.model.label', {}, 'Translation Model Override');
+    const advancedModelHelper = t('fileUpload.advanced.model.helper', {}, 'Override the default model for this translation only.');
+    const thinkingBudgetLabel = t('fileUpload.advanced.thinking.label', {}, 'Thinking Budget (Extended Reasoning)');
+    const thinkingBudgetHelper = t('fileUpload.advanced.thinking.helper', {}, '0 = disabled, -1 = dynamic (auto-adjust), or fixed token count (1-32768).');
+    const temperatureLabel = t('fileUpload.advanced.temperature.label', {}, 'Temperature (Creativity)');
+    const temperatureHelper = t('fileUpload.advanced.temperature.helper', {}, 'Controls randomness (0.0-2.0). Lower = deterministic, Higher = creative. Default: 0.8');
+    const reasoningEffortLabel = t('fileUpload.advanced.reasoning.label', {}, 'Reasoning Effort');
+    const reasoningEffortHelper = t('fileUpload.advanced.reasoning.helper', {}, 'Applies to reasoning-capable OpenAI-style models. Leave blank for default.');
+    const topPLabel = t('fileUpload.advanced.topP.label', {}, 'Top-P (Nucleus Sampling)');
+    const topPHelper = t('fileUpload.advanced.topP.helper', {}, 'Probability threshold (0.0-1.0). Lower = focused, Higher = diverse. Default: 0.95');
+    const topKLabel = t('fileUpload.advanced.topK.label', {}, 'Top-K (Token Selection)');
+    const topKHelper = t('fileUpload.advanced.topK.helper', {}, 'Number of top tokens to consider (1-100). Default: 40');
+    const maxTokensLabel = t('fileUpload.advanced.maxTokens.label', {}, 'Max Output Tokens');
+    const maxTokensHelper = t('fileUpload.advanced.maxTokens.helper', {}, 'Maximum tokens in output (1-200000). Defaults follow your selected provider.');
+    const formalityLabel = t('fileUpload.advanced.formality.label', {}, 'Formality');
+    const formalityHelper = t('fileUpload.advanced.formality.helper', {}, 'DeepL-only setting to control tone.');
+    const preserveFormattingLabel = t('fileUpload.advanced.preserveFormatting.label', {}, 'Preserve Formatting');
+    const preserveFormattingHelper = t('fileUpload.advanced.preserveFormatting.helper', {}, 'Keep line breaks, casing, and tags intact (DeepL only).');
+    const preserveFormattingToggle = t('fileUpload.advanced.preserveFormatting.toggle', {}, 'Preserve formatting');
+    const translationTimeoutLabel = t('fileUpload.advanced.timeout.label', {}, 'Translation Timeout (seconds)');
+    const translationTimeoutHelper = t('fileUpload.advanced.timeout.helper', {}, 'Maximum time to wait for translation (5-600). Defaults follow your selected provider.');
+    const maxRetriesLabel = t('fileUpload.advanced.retries.label', {}, 'Max Retries');
+    const maxRetriesHelper = t('fileUpload.advanced.retries.helper', {}, 'Number of retry attempts for this translation (0-5). Default: 2');
+    const resetDefaultsText = t('fileUpload.advanced.reset', {}, '🔄 Reset to Defaults');
+    const resetConfirmTitle = t('fileUpload.resetModal.title', {}, 'Reset File Translation');
+    const resetConfirmLead = t('fileUpload.resetModal.lead', {}, 'This will reset everything for this tool:');
+    const resetConfirmBullet1 = t('fileUpload.resetModal.bullet1', {}, 'Clear queued jobs, selections, and any downloaded results');
+    const resetConfirmBullet2 = t('fileUpload.resetModal.bullet2', {}, 'Remove saved preferences (themes, dismissed tips) for this page');
+    const resetConfirmBullet3 = t('fileUpload.resetModal.bullet3', {}, "You'll be reloaded on the same file translation page afterward.");
+    const resetConfirmCancel = t('fileUpload.resetModal.cancel', {}, 'Cancel');
+    const resetConfirmAction = t('fileUpload.resetModal.action', {}, 'Reset Everything');
+    const resetConfirmBusy = t('fileUpload.resetModal.busy', {}, 'Resetting...');
+    const modelStatusUnavailable = t('fileUpload.advanced.modelStatus.unavailable', {}, 'Model override not available for Google Translate');
+    const modelStatusFetching = t('fileUpload.advanced.modelStatus.fetching', {}, 'Fetching models...');
+    const modelStatusLoaded = t('fileUpload.advanced.modelStatus.loaded', {}, 'Models loaded!');
+    const modelStatusFailed = t('fileUpload.advanced.modelStatus.failed', {}, 'Failed to fetch models');
+
     return `
 <!DOCTYPE html>
 <html lang="${resolveUiLang(config)}">
@@ -341,7 +409,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     ${localeBootstrap}
-    <title>File Translation - SubMaker</title>
+    <title>${t('fileUpload.documentTitle', {}, 'File Translation - SubMaker')}</title>
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
     <link rel="shortcut icon" href="/favicon-toolbox.svg">
@@ -2055,7 +2123,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
 </head>
 <body>
     <!-- Theme Toggle Button -->
-    <button class="theme-toggle mario" id="themeToggle" aria-label="Toggle theme">
+    <button class="theme-toggle mario" id="themeToggle" aria-label="${escapeHtml(t('fileUpload.themeToggle', {}, 'Toggle theme'))}">
         <span class="theme-toggle-icon sun" aria-hidden="true">
             <svg viewBox="0 0 64 64" width="28" height="28" role="img">
                 <defs>
@@ -2116,11 +2184,11 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
     <div id="episodeToast" class="episode-toast" role="status" aria-live="polite">
         <div class="icon">!</div>
         <div class="content">
-            <p class="title" id="episodeToastTitle">New stream detected</p>
-            <p class="meta" id="episodeToastMeta">A different episode is playing in Stremio.</p>
+            <p class="title" id="episodeToastTitle">${escapeHtml(toastTitle)}</p>
+            <p class="meta" id="episodeToastMeta">${escapeHtml(toastMeta)}</p>
         </div>
-        <button class="close" id="episodeToastDismiss" type="button" aria-label="Dismiss notification">×</button>
-        <button class="action" id="episodeToastUpdate" type="button">Update</button>
+        <button class="close" id="episodeToastDismiss" type="button" aria-label="${escapeHtml(toastDismiss)}">×</button>
+        <button class="action" id="episodeToastUpdate" type="button">${escapeHtml(toastUpdate)}</button>
     </div>
 
     ${renderQuickNav(navLinks, 'translateFiles', false, devMode, t)}
@@ -2133,7 +2201,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 <p class="page-subtitle">${t('fileUpload.subtitle', {}, 'Upload and translate your subtitle files')}</p>
             </div>
             <div class="badge-row">
-                ${renderRefreshBadge()}
+                ${renderRefreshBadge(t)}
                 <div class="status-badge">
                     <span class="status-dot ok"></span>
                     <div class="status-labels">
@@ -2196,22 +2264,22 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
 
                 <div class="form-group" id="sourceLangGroup" style="display: none;">
                     <label for="sourceLang">
-                        Source Language
-                        <span class="label-description">Required for DeepL; pick the subtitle's original language or leave auto-detect.</span>
+                        ${t('fileUpload.source.label', {}, 'Source Language')}
+                        <span class="label-description">${t('fileUpload.source.helper', {}, "Required for DeepL; pick the subtitle's original language or leave auto-detect.")}</span>
                     </label>
                     <select id="sourceLang">
-                        <option value="">Auto-detect (recommended)</option>
+                        <option value="">${escapeHtml(sourceAutoDetectText)}</option>
                         ${allLanguageOptions}
                     </select>
                 </div>
 
                 <div class="form-group">
                     <label for="targetLang">
-                        Target Language
-                        <span class="label-description">Select the language to translate to</span>
+                        ${t('fileUpload.target.label', {}, 'Target Language')}
+                        <span class="label-description">${t('fileUpload.target.helper', {}, 'Select the language to translate to')}</span>
                     </label>
                     <select id="targetLang" required>
-                        <option value="">Choose a language...</option>
+                        <option value="">${escapeHtml(targetPlaceholderText)}</option>
                         ${languageOptions}
                     </select>
                 </div>
@@ -2219,7 +2287,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 <div class="language-toggle-container">
                     <label class="language-toggle">
                         <input type="checkbox" id="showAllLanguages">
-                        <span>Show all languages</span>
+                        <span>${t('fileUpload.languageToggle.showAll', {}, 'Show all languages')}</span>
                     </label>
                 </div>
 
@@ -2228,7 +2296,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                     <div class="translation-options-header" id="translationOptionsHeader">
                         <div class="translation-options-title">
                             <span class="translation-options-icon">⚙️</span>
-                            <span>Translation Options</span>
+                            <span>${escapeHtml(translationOptionsTitle)}</span>
                         </div>
                         <div class="translation-options-toggle">▼</div>
                     </div>
@@ -2236,31 +2304,31 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                         <div class="translation-options-inner">
                             <div class="form-group">
                                 <label for="providerSelect">
-                                    Translation Provider
-                                    <span class="label-description" id="providerDetails">Choose which configured provider to use for this translation.</span>
+                                    ${escapeHtml(translationProviderLabel)}
+                                    <span class="label-description" id="providerDetails">${escapeHtml(translationProviderHelper)}</span>
                                 </label>
                                 <select id="providerSelect"></select>
                             </div>
 
                             <div class="form-group">
                                 <label for="workflowMode">
-                                    Translation Flow
-                                    <span class="label-description">Choose between multiple batches or a single batch run.</span>
+                                    ${escapeHtml(translationFlowLabel)}
+                                    <span class="label-description">${escapeHtml(t('fileUpload.options.flow.helper', {}, 'Choose between multiple batches or a single batch run.'))}</span>
                                 </label>
                                 <select id="workflowMode">
-                                    <option value="batched">Multiple Batches (Recommended)</option>
-                                    <option value="single-pass">Single-batch (all at once)</option>
+                                    <option value="batched">${escapeHtml(translationFlowMulti)}</option>
+                                    <option value="single-pass">${escapeHtml(translationFlowSingle)}</option>
                                 </select>
                             </div>
 
                             <div class="form-group">
                                 <label for="timingMode">
-                                    Timestamps Strategy
-                                    <span class="label-description">Decide how timestamps are handled during translation.</span>
+                                    ${escapeHtml(timingStrategyLabel)}
+                                    <span class="label-description">${escapeHtml(t('fileUpload.options.timing.helper', {}, 'Decide how timestamps are handled during translation.'))}</span>
                                 </label>
                                 <select id="timingMode">
-                                    <option value="preserve-timing">Rebuild Timestamps</option>
-                                    <option value="ai-timing">Send Timestamps to AI</option>
+                                    <option value="preserve-timing">${escapeHtml(timingStrategyRebuild)}</option>
+                                    <option value="ai-timing">${escapeHtml(timingStrategyAI)}</option>
                                 </select>
                             </div>
                         </div>
@@ -2268,7 +2336,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 </div>
 
                 <button type="submit" class="btn" id="translateBtn">
-                    🚀 Start Translation
+                    ${escapeHtml(startTranslationCta)}
                 </button>
 
                 <!-- Advanced Settings -->
@@ -2276,7 +2344,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                     <div class="advanced-settings-header" id="advancedSettingsHeader">
                         <div class="advanced-settings-title">
                             <span class="advanced-settings-icon">🔬</span>
-                            <span>Advanced Settings</span>
+                            <span>${escapeHtml(advancedSettingsTitle)}</span>
                         </div>
                         <div class="advanced-settings-toggle">▼</div>
                     </div>
@@ -2284,116 +2352,116 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                         <div class="advanced-settings-inner">
                             <div class="highlight-box">
                                 <p>
-                                    <strong>Fine-tune AI behavior for this translation only:</strong> Override model and parameters.
-                                    <em>These settings are temporary and won't be saved to your config.</em>
+                                    <strong>${escapeHtml(advancedHighlightTitle)}</strong> ${escapeHtml(advancedHighlightBody)}
+                                    <em>${escapeHtml(advancedHighlightNote)}</em>
                                 </p>
                             </div>
 
                             <div class="form-group">
                                 <label for="advancedModel">
-                                    Translation Model Override
-                                    <span class="label-description">Override the default model for this translation only.</span>
+                                    ${escapeHtml(advancedModelLabel)}
+                                    <span class="label-description">${escapeHtml(advancedModelHelper)}</span>
                                 </label>
                                 <select id="advancedModel">
-                                    <option value="">Use Configured Model (from your config)</option>
+                                    <option value="">${escapeHtml(t('fileUpload.advanced.model.useConfigured', {}, 'Use Configured Model (from your config)'))}</option>
                                 </select>
                                 <div class="model-status" id="modelStatus"></div>
                             </div>
 
                             <div class="form-group" id="thinkingBudgetGroup">
                                 <label for="advancedThinkingBudget">
-                                    Thinking Budget (Extended Reasoning)
-                                    <span class="label-description">0 = disabled, -1 = dynamic (auto-adjust), or fixed token count (1-32768).</span>
+                                    ${escapeHtml(thinkingBudgetLabel)}
+                                    <span class="label-description">${escapeHtml(thinkingBudgetHelper)}</span>
                                 </label>
                                 <input type="number" id="advancedThinkingBudget" min="-1" max="32768" step="1" value="0" placeholder="0">
                             </div>
 
                             <div class="form-group">
                                 <label for="advancedTemperature">
-                                    Temperature (Creativity)
-                                    <span class="label-description">Controls randomness (0.0-2.0). Lower = deterministic, Higher = creative. Default: 0.8</span>
+                                    ${escapeHtml(temperatureLabel)}
+                                    <span class="label-description">${escapeHtml(temperatureHelper)}</span>
                                 </label>
                                 <input type="number" id="advancedTemperature" min="0" max="2" step="0.1" value="0.8" placeholder="0.8">
                             </div>
 
                             <div class="form-group" id="reasoningEffortGroup">
                                 <label for="advancedReasoningEffort">
-                                    Reasoning Effort
-                                    <span class="label-description">Applies to reasoning-capable OpenAI-style models. Leave blank for default.</span>
+                                    ${escapeHtml(reasoningEffortLabel)}
+                                    <span class="label-description">${escapeHtml(reasoningEffortHelper)}</span>
                                 </label>
                                 <select id="advancedReasoningEffort">
-                                    <option value="">None (use provider default)</option>
-                                    <option value="low">Low</option>
-                                    <option value="medium">Medium</option>
-                                    <option value="high">High</option>
+                                    <option value="">${escapeHtml(t('fileUpload.advanced.reasoning.default', {}, 'None (use provider default)'))}</option>
+                                    <option value="low">${escapeHtml(t('fileUpload.advanced.reasoning.low', {}, 'Low'))}</option>
+                                    <option value="medium">${escapeHtml(t('fileUpload.advanced.reasoning.medium', {}, 'Medium'))}</option>
+                                    <option value="high">${escapeHtml(t('fileUpload.advanced.reasoning.high', {}, 'High'))}</option>
                                 </select>
                             </div>
 
                             <div class="form-group">
                                 <label for="advancedTopP">
-                                    Top-P (Nucleus Sampling)
-                                    <span class="label-description">Probability threshold (0.0-1.0). Lower = focused, Higher = diverse. Default: 0.95</span>
+                                    ${escapeHtml(topPLabel)}
+                                    <span class="label-description">${escapeHtml(topPHelper)}</span>
                                 </label>
                                 <input type="number" id="advancedTopP" min="0" max="1" step="0.05" value="0.95" placeholder="0.95">
                             </div>
 
                             <div class="form-group" id="topKGroup">
                                 <label for="advancedTopK">
-                                    Top-K (Token Selection)
-                                    <span class="label-description">Number of top tokens to consider (1-100). Default: 40</span>
+                                    ${escapeHtml(topKLabel)}
+                                    <span class="label-description">${escapeHtml(topKHelper)}</span>
                                 </label>
                                 <input type="number" id="advancedTopK" min="1" max="100" step="1" value="40" placeholder="40">
                             </div>
 
                             <div class="form-group">
                                 <label for="advancedMaxTokens">
-                                    Max Output Tokens
-                                    <span class="label-description">Maximum tokens in output (1-200000). Defaults follow your selected provider.</span>
+                                    ${escapeHtml(maxTokensLabel)}
+                                    <span class="label-description">${escapeHtml(maxTokensHelper)}</span>
                                 </label>
                                 <input type="number" id="advancedMaxTokens" min="1" max="200000" step="1" value="65536" placeholder="65536">
                             </div>
 
                             <div class="form-group" id="formalityGroup">
                                 <label for="advancedFormality">
-                                    Formality
-                                    <span class="label-description">DeepL-only setting to control tone.</span>
+                                    ${escapeHtml(formalityLabel)}
+                                    <span class="label-description">${escapeHtml(formalityHelper)}</span>
                                 </label>
                                 <select id="advancedFormality">
-                                    <option value="default">Default</option>
-                                    <option value="more">More formal</option>
-                                    <option value="less">Less formal</option>
+                                    <option value="default">${escapeHtml(t('fileUpload.advanced.formality.default', {}, 'Default'))}</option>
+                                    <option value="more">${escapeHtml(t('fileUpload.advanced.formality.more', {}, 'More formal'))}</option>
+                                    <option value="less">${escapeHtml(t('fileUpload.advanced.formality.less', {}, 'Less formal'))}</option>
                                 </select>
                             </div>
 
                             <div class="form-group" id="preserveFormattingGroup">
                                 <label for="advancedPreserveFormatting">
-                                    Preserve Formatting
-                                    <span class="label-description">Keep line breaks, casing, and tags intact (DeepL only).</span>
+                                    ${escapeHtml(preserveFormattingLabel)}
+                                    <span class="label-description">${escapeHtml(preserveFormattingHelper)}</span>
                                 </label>
                                 <label class="language-toggle" style="margin-top: 0.25rem;">
                                     <input type="checkbox" id="advancedPreserveFormatting" checked>
-                                    <span>Preserve formatting</span>
+                                    <span>${escapeHtml(preserveFormattingToggle)}</span>
                                 </label>
                             </div>
 
                             <div class="form-group">
                                 <label for="advancedTimeout">
-                                    Translation Timeout (seconds)
-                                    <span class="label-description">Maximum time to wait for translation (5-600). Defaults follow your selected provider.</span>
+                                    ${escapeHtml(translationTimeoutLabel)}
+                                    <span class="label-description">${escapeHtml(translationTimeoutHelper)}</span>
                                 </label>
                                 <input type="number" id="advancedTimeout" min="5" max="600" step="5" value="600" placeholder="600">
                             </div>
 
                             <div class="form-group">
                                 <label for="advancedMaxRetries">
-                                    Max Retries
-                                    <span class="label-description">Number of retry attempts for this translation (0-5). Default: 2</span>
+                                    ${escapeHtml(maxRetriesLabel)}
+                                    <span class="label-description">${escapeHtml(maxRetriesHelper)}</span>
                                 </label>
                                 <input type="number" id="advancedMaxRetries" min="0" max="5" step="1" value="2" placeholder="2">
                             </div>
 
                             <button type="button" class="btn btn-secondary" id="resetDefaultsBtn">
-                                🔄 Reset to Defaults
+                                ${escapeHtml(resetDefaultsText)}
                             </button>
                         </div>
                     </div>
@@ -2402,30 +2470,30 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
 
             <div class="progress" id="progress">
                 <div class="spinner"></div>
-                <div class="progress-text">Translating your subtitle...</div>
-                <div class="progress-subtext">Queued translations run one at a time to respect rate limits.</div>
+                <div class="progress-text">${escapeHtml(progressTitle)}</div>
+                <div class="progress-subtext">${escapeHtml(progressSubtext)}</div>
             </div>
 
             <div class="queue-panel" id="queuePanel" style="display: none;">
                 <div class="queue-header">
                     <div>
-                        <div class="queue-title">Upload queue</div>
-                        <div class="queue-subtitle">Files run sequentially to avoid translation throttling.</div>
+                        <div class="queue-title">${escapeHtml(queueTitle)}</div>
+                        <div class="queue-subtitle">${escapeHtml(queueSubtitle)}</div>
                     </div>
-                    <div class="queue-summary" id="queueSummary">No files queued</div>
+                    <div class="queue-summary" id="queueSummary">${escapeHtml(queueEmpty)}</div>
                 </div>
                 <ul class="queue-list" id="queueList"></ul>
             </div>
 
             <div class="result" id="result">
                 <div class="result-icon">✓</div>
-                <h2>Translation Complete!</h2>
-                <p>Your subtitle has been successfully translated.</p>
+                <h2>${escapeHtml(resultTitleText)}</h2>
+                <p>${escapeHtml(resultBodyText)}</p>
                 <a href="#" id="downloadLink" class="download-btn" download="translated.srt">
-                    ⬇️ Download Translated Subtitle
+                    ${escapeHtml(downloadCta)}
                 </a>
                 <button type="button" class="btn btn-secondary" id="translateAnotherBtn" style="margin-top: 1rem;">
-                    🔄 Translate Another One
+                    ${escapeHtml(translateAgainCta)}
                 </button>
             </div>
 
@@ -2433,8 +2501,8 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         </div>
 
         <div id="resetBarWrapper" class="reset-bar">
-            <div class="reset-text">Reset File Translation page to defaults →</div>
-            <button type="button" id="resetFilePageBtn" class="reset-btn">Reset</button>
+            <div class="reset-text">${escapeHtml(resetBarText)}</div>
+            <button type="button" id="resetFilePageBtn" class="reset-btn">${escapeHtml(resetBarCta)}</button>
         </div>
     </div>
 
@@ -2442,18 +2510,18 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
     <div class="modal-overlay" id="resetConfirmModal" role="dialog" aria-modal="true" aria-labelledby="resetConfirmTitle">
         <div class="modal">
             <div class="modal-header">
-                <h2 id="resetConfirmTitle">Reset File Translation</h2>
-                <div class="modal-close" id="closeResetConfirmBtn" role="button" aria-label="Close reset dialog">×</div>
+                <h2 id="resetConfirmTitle">${escapeHtml(resetConfirmTitle)}</h2>
+                <div class="modal-close" id="closeResetConfirmBtn" role="button" aria-label="${escapeHtml(t('fileUpload.resetModal.closeAria', {}, 'Close reset dialog'))}">×</div>
             </div>
             <div class="modal-content">
-                <p><strong>This will reset everything for this tool:</strong></p>
-                <p>- Clear queued jobs, selections, and any downloaded results</p>
-                <p>- Remove saved preferences (themes, dismissed tips) for this page</p>
-                <p style="margin-top: 0.75rem;">You'll be reloaded on the same file translation page afterward.</p>
+                <p><strong>${escapeHtml(resetConfirmLead)}</strong></p>
+                <p>- ${escapeHtml(resetConfirmBullet1)}</p>
+                <p>- ${escapeHtml(resetConfirmBullet2)}</p>
+                <p style="margin-top: 0.75rem;">${escapeHtml(resetConfirmBullet3)}</p>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" id="cancelResetBtn">Cancel</button>
-                <button type="button" class="btn btn-danger" id="confirmResetBtn">Reset Everything</button>
+                <button type="button" class="btn btn-secondary" id="cancelResetBtn">${escapeHtml(resetConfirmCancel)}</button>
+                <button type="button" class="btn btn-danger" id="confirmResetBtn">${escapeHtml(resetConfirmAction)}</button>
             </div>
         </div>
     </div>
@@ -2473,6 +2541,33 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         const MAX_OUTPUT_TOKEN_LIMIT = ${MAX_OUTPUT_TOKEN_LIMIT};
         const DEFAULT_MAX_OUTPUT_TOKENS = ${DEFAULT_MAX_OUTPUT_TOKENS};
         ${quickNavScript()}
+
+        const localeStrings = {
+            targetPlaceholder: ${JSON.stringify(targetPlaceholderText)},
+            sourceAuto: ${JSON.stringify(sourceAutoDetectText)},
+            queueEmpty: ${JSON.stringify(queueEmpty)},
+            progressHeadline: ${JSON.stringify(progressTitle)},
+            progressQueued: ${JSON.stringify(progressSubtext)},
+            toastTitle: ${JSON.stringify(toastTitle)},
+            toastMeta: ${JSON.stringify(toastMeta)},
+            toastUpdate: ${JSON.stringify(toastUpdate)},
+            toastDismiss: ${JSON.stringify(toastDismiss)},
+            resultTitle: ${JSON.stringify(resultTitleText)},
+            resultBody: ${JSON.stringify(resultBodyText)},
+            downloadCta: ${JSON.stringify(downloadCta)},
+            translateAgain: ${JSON.stringify(translateAgainCta)},
+            startCta: ${JSON.stringify(startTranslationCta)},
+            resetText: ${JSON.stringify(resetBarText)},
+            resetAction: ${JSON.stringify(resetBarCta)}
+        };
+
+        const tt = (key, vars, fallback) => {
+            try {
+                return window.t ? window.t(key, vars, fallback) : (fallback || key);
+            } catch (_) {
+                return fallback || key;
+            }
+        };
 
         if (window.ComboBox && typeof window.ComboBox.enhanceAll === 'function') {
             window.ComboBox.enhanceAll(document);
@@ -2528,7 +2623,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
 
         function forwardMenuNotification(info) {
             if (!subtitleMenuInstance || typeof subtitleMenuInstance.notify !== 'function') return false;
-            const message = (info && info.message) ? info.message : 'New stream detected';
+            const message = (info && info.message) ? info.message : tt('fileUpload.toast.title', {}, 'New stream detected');
             const title = (info && info.title) ? info.title + ': ' : '';
             subtitleMenuInstance.notify(title + message, 'muted', { persist: true });
             return true;
@@ -2538,7 +2633,12 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             buttonId: 'quickNavRefresh',
             configStr: PAGE.configStr,
             current: { videoId: PAGE.videoId, filename: PAGE.filename, videoHash: '' },
-            labels: { loading: 'Refreshing...', empty: 'No stream yet', error: 'Refresh failed', current: 'Already latest' },
+            labels: {
+                loading: tt('fileUpload.refresh.loading', {}, 'Refreshing...'),
+                empty: tt('fileUpload.refresh.empty', {}, 'No stream yet'),
+                error: tt('fileUpload.refresh.error', {}, 'Refresh failed'),
+                current: tt('fileUpload.refresh.current', {}, 'Already latest')
+            },
             buildUrl: (payload) => {
                 return '/file-upload?config=' + encodeURIComponent(PAGE.configStr) +
                     '&videoId=' + encodeURIComponent(payload.videoId || '') +
@@ -2589,8 +2689,10 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         const closeResetConfirmBtn = document.getElementById('closeResetConfirmBtn');
 
         // Language lists
-        const configuredLanguages = \`<option value="">Choose a language...</option>${languageOptions}\`;
-        const allLanguagesList = \`<option value="">Choose a language...</option>${allLanguageOptions}\`;
+        const targetPlaceholderOption = '<option value="">' + localeStrings.targetPlaceholder + '</option>';
+        const sourceAutoOption = '<option value="">' + localeStrings.sourceAuto + '</option>';
+        const configuredLanguages = `${targetPlaceholderOption}${languageOptions}`;
+        const allLanguagesList = `${targetPlaceholderOption}${allLanguageOptions}`;
         const hasConfiguredLanguages = Array.isArray(clientConfig.targetLanguages) && clientConfig.targetLanguages.length > 0;
         const defaultSourceLanguage = Array.isArray(clientConfig.sourceLanguages) && clientConfig.sourceLanguages.length
             ? clientConfig.sourceLanguages[0]
@@ -2648,7 +2750,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         const resetDefaultsBtn = document.getElementById('resetDefaultsBtn');
         const translateAnotherBtn = document.getElementById('translateAnotherBtn');
         const modelStatus = document.getElementById('modelStatus');
-        const translateBtnLabel = translateBtn ? translateBtn.innerHTML : 'Start Translation';
+        const translateBtnLabel = translateBtn ? translateBtn.innerHTML : localeStrings.startCta;
         let translationInFlight = false;
 
         const defaultProviderKey = (providerInfo.mainProvider || 'gemini').toLowerCase();
@@ -2777,8 +2879,8 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
 
             if (sourceLang) {
                 const currentSource = sourceLang.value;
-                const trimmedAllLanguages = allLanguagesList.replace('<option value="">Choose a language...</option>', '');
-                sourceLang.innerHTML = '<option value="">Auto-detect (recommended)</option>' + trimmedAllLanguages;
+                const trimmedAllLanguages = allLanguagesList.replace(targetPlaceholderOption, '');
+                sourceLang.innerHTML = sourceAutoOption + trimmedAllLanguages;
                 if (currentSource) {
                     const optionExists = Array.from(sourceLang.options).some(opt => opt.value === currentSource);
                     sourceLang.value = optionExists ? currentSource : '';
@@ -2811,8 +2913,8 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             const normalized = normalizeProviderKey(providerKey);
             const configuredModel = getConfiguredModelForProvider(normalized);
             const placeholder = configuredModel
-                ? 'Use Configured Model (' + configuredModel + ')'
-                : 'Use Configured Model (from your config)';
+                ? tt('fileUpload.advanced.model.useConfiguredWith', { model: configuredModel }, 'Use Configured Model (' + configuredModel + ')')
+                : tt('fileUpload.advanced.model.useConfigured', {}, 'Use Configured Model (from your config)');
             if (advancedModel) {
                 advancedModel.innerHTML = '<option value="">' + placeholder + '</option>';
                 models.forEach(model => {
@@ -2833,10 +2935,23 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             const fallbackLabel = isMain && fallbackProviderKey ? formatProviderName(fallbackProviderKey) : '';
             if (providerDetails) {
                 if (fallbackLabel) {
-                    providerDetails.textContent = 'Using ' + label + (configuredModel ? ' (' + configuredModel + ')' : '') +
-                        ' with fallback ' + fallbackLabel + (providerInfo.secondaryModel ? ' (' + providerInfo.secondaryModel + ')' : '') + '.';
+                    providerDetails.textContent = tt(
+                        'fileUpload.provider.withFallback',
+                        {
+                            main: label,
+                            mainModel: configuredModel ? ' (' + configuredModel + ')' : '',
+                            fallback: fallbackLabel,
+                            fallbackModel: providerInfo.secondaryModel ? ' (' + providerInfo.secondaryModel + ')' : ''
+                        },
+                        'Using ' + label + (configuredModel ? ' (' + configuredModel + ')' : '') +
+                        ' with fallback ' + fallbackLabel + (providerInfo.secondaryModel ? ' (' + providerInfo.secondaryModel + ')' : '') + '.'
+                    );
                 } else {
-                    providerDetails.textContent = 'Using ' + label + (configuredModel ? ' (' + configuredModel + ')' : '') + ' from your saved SubMaker config.';
+                    providerDetails.textContent = tt(
+                        'fileUpload.provider.using',
+                        { main: label, mainModel: configuredModel ? ' (' + configuredModel + ')' : '' },
+                        'Using ' + label + (configuredModel ? ' (' + configuredModel + ')' : '') + ' from your saved SubMaker config.'
+                    );
                 }
             }
         }
@@ -3020,7 +3135,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         async function performFullReset() {
             if (confirmResetBtn) {
                 confirmResetBtn.disabled = true;
-                confirmResetBtn.textContent = 'Resetting...';
+                confirmResetBtn.textContent = resetConfirmBusy;
             }
             try {
                 resetPageToDefaults();
@@ -3031,7 +3146,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             } finally {
                 if (confirmResetBtn) {
                     confirmResetBtn.disabled = false;
-                    confirmResetBtn.textContent = 'Reset Everything';
+                    confirmResetBtn.textContent = resetConfirmAction;
                 }
                 closeResetConfirm();
 
@@ -3124,12 +3239,12 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             if (normalized === 'googletranslate') {
                 populateModelDropdown(normalized, []);
                 fetchedModels.add(normalized);
-                modelStatus.innerHTML = 'Model override not available for Google Translate';
+                modelStatus.innerHTML = modelStatusUnavailable;
                 modelStatus.className = 'model-status';
                 return;
             }
 
-            modelStatus.innerHTML = '<div class="spinner-small"></div> Fetching models...';
+            modelStatus.innerHTML = '<div class="spinner-small"></div> ' + modelStatusFetching;
             modelStatus.className = 'model-status fetching';
 
             const endpoint = normalized === 'gemini'
@@ -3151,7 +3266,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 modelCache.set(normalized, models);
                 fetchedModels.add(normalized);
 
-                modelStatus.innerHTML = 'Models loaded!';
+                modelStatus.innerHTML = modelStatusLoaded;
                 modelStatus.className = 'model-status success';
 
                 setTimeout(() => {
@@ -3163,7 +3278,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
 
             } catch (err) {
                 console.error('Failed to fetch models:', err);
-                modelStatus.innerHTML = 'Failed to fetch models';
+                modelStatus.innerHTML = modelStatusFailed;
                 modelStatus.className = 'model-status error';
 
                 setTimeout(() => {
@@ -3234,7 +3349,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             const busy = translationInFlight || isQueueBusy();
             if (translateBtn) {
                 translateBtn.disabled = busy;
-                translateBtn.innerHTML = busy ? 'Translating...' : translateBtnLabel;
+                translateBtn.innerHTML = busy ? tt('fileUpload.progress.button', {}, 'Translating...') : translateBtnLabel;
             }
         }
 
@@ -3258,11 +3373,15 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 return;
             }
             if (files.length === 1) {
-                fileName.textContent = 'Files selected: ' + files[0].name;
+                fileName.textContent = tt('fileUpload.files.single', { name: files[0].name }, 'Files selected: ' + files[0].name);
             } else {
                 const preview = files.slice(0, 3).map(f => f.name).join(', ');
                 const extra = files.length > 3 ? ' +' + (files.length - 3) + ' more' : '';
-                fileName.textContent = files.length + ' files selected: ' + preview + extra;
+                fileName.textContent = tt(
+                    'fileUpload.files.multi',
+                    { count: files.length, preview, extra },
+                    files.length + ' files selected: ' + preview + extra
+                );
             }
             fileName.classList.add('active');
         }
@@ -3273,8 +3392,8 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             let selected = files.slice(0, MAX_FILES);
             if (selected.length > availableSlots) {
                 showError(availableSlots === 0
-                    ? 'You already have ' + MAX_FILES + ' files in the queue. Clear it to add more.'
-                    : 'Only the first ' + availableSlots + ' files were added to stay within the queue limit of ' + MAX_FILES + '.');
+                    ? tt('fileUpload.queue.limitFull', { max: MAX_FILES }, 'You already have ' + MAX_FILES + ' files in the queue. Clear it to add more.')
+                    : tt('fileUpload.queue.limitPartial', { available: availableSlots, max: MAX_FILES }, 'Only the first ' + availableSlots + ' files were added to stay within the queue limit of ' + MAX_FILES + '.'));
                 selected = selected.slice(0, availableSlots);
             }
             return selected;
@@ -3295,9 +3414,15 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         }
 
         const summarizeQueueMeta = (job) => {
-            const workflow = job.settings.workflowMode === 'single-pass' ? 'Single-batch' : 'Multiple batches';
-            const timing = job.settings.timingMode === 'ai-timing' ? 'Send timestamps to AI' : 'Rebuild timestamps';
-            return workflow + ' • ' + timing + ' • ' + (job.settings.targetLanguage || '').toUpperCase();
+            const workflow = job.settings.workflowMode === 'single-pass'
+                ? tt('fileUpload.queue.meta.single', {}, 'Single-batch')
+                : tt('fileUpload.queue.meta.multi', {}, 'Multiple batches');
+            const timing = job.settings.timingMode === 'ai-timing'
+                ? tt('fileUpload.queue.meta.timingAi', {}, 'Send timestamps to AI')
+                : tt('fileUpload.queue.meta.timingRebuild', {}, 'Rebuild timestamps');
+            const target = (job.settings.targetLanguage || '').toUpperCase();
+            const targetLabel = tt('fileUpload.queue.meta.target', { target }, target);
+            return workflow + ' • ' + timing + ' • ' + targetLabel;
         };
 
         function buildDownloadName(job) {
@@ -3318,7 +3443,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             if (uploadQueue.length === 0) {
                 queuePanel.style.display = 'none';
                 queueList.innerHTML = '';
-                if (queueSummary) queueSummary.textContent = 'No files queued';
+                if (queueSummary) queueSummary.textContent = localeStrings.queueEmpty;
                 return;
             }
             queuePanel.style.display = 'block';
@@ -3328,11 +3453,11 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             const processing = uploadQueue.filter(j => j.status === 'processing').length;
             if (queueSummary) {
                 const parts = [];
-                if (processing) parts.push(processing + ' in progress');
-                if (pending) parts.push(pending + ' queued');
-                if (completed) parts.push(completed + ' done');
-                if (failed) parts.push(failed + ' failed');
-                queueSummary.textContent = parts.length ? parts.join(' • ') : 'Queue ready';
+                if (processing) parts.push(tt('fileUpload.queue.summary.processing', { count: processing }, processing + ' in progress'));
+                if (pending) parts.push(tt('fileUpload.queue.summary.pending', { count: pending }, pending + ' queued'));
+                if (completed) parts.push(tt('fileUpload.queue.summary.completed', { count: completed }, completed + ' done'));
+                if (failed) parts.push(tt('fileUpload.queue.summary.failed', { count: failed }, failed + ' failed'));
+                queueSummary.textContent = parts.length ? parts.join(' • ') : tt('fileUpload.queue.summary.ready', {}, 'Queue ready');
             }
             queueList.innerHTML = '';
             uploadQueue.forEach(job => {
@@ -3343,7 +3468,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 info.className = 'queue-item-info';
                 const name = document.createElement('div');
                 name.className = 'queue-name';
-                name.innerHTML = safeText(job.name || 'Untitled');
+                name.innerHTML = safeText(job.name || tt('fileUpload.queue.untitled', {}, 'Untitled'));
                 info.appendChild(name);
                 const meta = document.createElement('div');
                 meta.className = 'queue-meta';
@@ -3362,19 +3487,19 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 const status = document.createElement('div');
                 status.className = 'queue-status status-' + job.status;
                 const statusMap = {
-                    pending: 'Queued',
-                    processing: 'Processing',
-                    completed: 'Done',
-                    failed: 'Failed'
+                    pending: tt('fileUpload.queue.status.pending', {}, 'Queued'),
+                    processing: tt('fileUpload.queue.status.processing', {}, 'Processing'),
+                    completed: tt('fileUpload.queue.status.completed', {}, 'Done'),
+                    failed: tt('fileUpload.queue.status.failed', {}, 'Failed')
                 };
-                status.textContent = statusMap[job.status] || 'Queued';
+                status.textContent = statusMap[job.status] || tt('fileUpload.queue.status.pending', {}, 'Queued');
                 actions.appendChild(status);
                 if (job.status === 'completed' && job.downloadUrl) {
                     const link = document.createElement('a');
                     link.href = job.downloadUrl;
                     link.download = job.downloadName || 'translated.srt';
                     link.className = 'queue-download';
-                    link.textContent = 'Download';
+                    link.textContent = tt('fileUpload.queue.download', {}, 'Download');
                     actions.appendChild(link);
                 }
 
@@ -3394,23 +3519,28 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             }
             progress.classList.add('active');
             if (progressText) {
-                progressText.textContent = 'Translating ' + (job.name || 'subtitle');
+                const name = job.name || tt('fileUpload.progress.subtitle', {}, 'subtitle');
+                progressText.textContent = tt('fileUpload.progress.active', { name }, 'Translating ' + name);
             }
             if (progressSubtext) {
-                progressSubtext.textContent = 'Job ' + position + ' of ' + total + '. Running ' + MAX_CONCURRENT + ' at a time.';
+                progressSubtext.textContent = tt(
+                    'fileUpload.progress.detail',
+                    { position, total, concurrent: MAX_CONCURRENT },
+                    'Job ' + position + ' of ' + total + '. Running ' + MAX_CONCURRENT + ' at a time.'
+                );
             }
         }
 
         function captureSelection() {
             if (!targetLang.value) {
-                throw new Error('Please select a target language');
+                throw new Error(tt('fileUpload.errors.targetMissing', {}, 'Please select a target language'));
             }
             const providerKey = normalizeProviderKey(providerSelect ? providerSelect.value : activeProviderKey);
             const caps = getProviderCapabilities(providerKey);
             const selectedSourceLanguage = sourceLang ? sourceLang.value.trim() : '';
 
             if (caps.requiresSourceLanguage && !selectedSourceLanguage) {
-                throw new Error('Please select a source language for DeepL translations');
+                throw new Error(tt('fileUpload.errors.sourceMissing', {}, 'Please select a source language for DeepL translations'));
             }
 
             const selectedModel = advancedModel && advancedModel.value ? advancedModel.value.trim() : '';
@@ -3563,7 +3693,8 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 });
 
                 if (!response.ok) {
-                    throw new Error('Translation failed: ' + await response.text());
+                    const responseText = await response.text();
+                    throw new Error(tt('fileUpload.errors.translationFailed', { error: responseText }, 'Translation failed: ' + responseText));
                 }
 
                 const translatedContent = await response.text();
@@ -3581,12 +3712,15 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 }
                 const resultTitle = result.querySelector('h2');
                 const resultDesc = result.querySelector('p');
-                if (resultTitle) resultTitle.textContent = 'Translation Complete';
-                if (resultDesc) resultDesc.textContent = 'Finished: ' + (nextJob.name || 'subtitle');
+                if (resultTitle) resultTitle.textContent = tt('fileUpload.result.title', {}, 'Translation Complete!');
+                if (resultDesc) {
+                    const name = nextJob.name || tt('fileUpload.progress.subtitle', {}, 'subtitle');
+                    resultDesc.textContent = tt('fileUpload.result.finished', { name }, 'Finished: ' + name);
+                }
             } catch (err) {
                 console.error('Translation error:', err);
                 nextJob.status = 'failed';
-                nextJob.error = err.message || 'Translation failed';
+                nextJob.error = err.message || tt('fileUpload.errors.translationFailed', { error: '' }, 'Translation failed');
                 showError(nextJob.error);
             } finally {
                 activeJobs = Math.max(0, activeJobs - 1);
@@ -3666,13 +3800,13 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             }
 
             if (!configToken) {
-                showError('Missing configuration token. Open this page again from Stremio or the configure page.');
+                showError(tt('fileUpload.errors.configMissing', {}, 'Missing configuration token. Open this page again from Stremio or the configure page.'));
                 return;
             }
 
             const selectedFiles = setSelectedFiles(Array.from(fileInput.files || []));
             if (!selectedFiles.length) {
-                showError('Please select at least one subtitle file (SRT, VTT, ASS, SSA).');
+                showError(tt('fileUpload.errors.noFiles', {}, 'Please select at least one subtitle file (SRT, VTT, ASS, SSA).'));
                 return;
             }
 
@@ -3680,7 +3814,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             try {
                 selection = captureSelection();
             } catch (err) {
-                showError(err.message || 'Please review your selections.');
+                showError(err.message || tt('fileUpload.errors.reviewSelections', {}, 'Please review your selections.'));
                 return;
             }
 
@@ -3699,7 +3833,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         });
 
         function showError(message) {
-            error.textContent = 'Warning: ' + message;
+            error.textContent = tt('fileUpload.errors.warningPrefix', {}, 'Warning: ') + message;
             error.classList.add('active');
             error.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }

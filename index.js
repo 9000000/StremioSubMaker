@@ -45,7 +45,7 @@ const {
 const { getSessionManager } = require('./src/utils/sessionManager');
 const { runStartupValidation } = require('./src/utils/startupValidation');
 const { StorageUnavailableError } = require('./src/storage/errors');
-const { loadLocale } = require('./src/utils/i18n');
+const { loadLocale, getTranslator, DEFAULT_LANG } = require('./src/utils/i18n');
 
 // Cache-buster path segment for temporary HA cache invalidation
 // Default to current package version so it auto-advances on releases
@@ -101,13 +101,21 @@ function isStorageUnavailableError(error) {
     return error instanceof StorageUnavailableError || error?.isStorageUnavailable;
 }
 
-function respondStorageUnavailable(res, error, contextLabel = 'Storage') {
+function respondStorageUnavailable(res, error, contextLabel = 'Storage', translator) {
     if (!res) return false;
     if (!isStorageUnavailableError(error)) {
         return false;
     }
     log.error(() => [`${contextLabel} temporarily unavailable:`, error?.message || error]);
-    res.status(503).json({ error: 'Session storage temporarily unavailable, please retry.' });
+    const tFunc = (() => {
+        if (typeof translator === 'function') return translator;
+        if (typeof translator === 'string') return getTranslator(translator);
+        if (res?.locals?.t && typeof res.locals.t === 'function') return res.locals.t;
+        return getTranslator(DEFAULT_LANG);
+    })();
+    res.status(503).json({
+        error: tFunc('server.errors.storageUnavailable', {}, 'Session storage temporarily unavailable, please retry.')
+    });
     return true;
 }
 
@@ -142,11 +150,11 @@ function isSafeToCache(config) {
     return true;
 }
 
-async function resolveConfigGuarded(configStr, req, res, contextLabel = '[ConfigResolver]') {
+async function resolveConfigGuarded(configStr, req, res, contextLabel = '[ConfigResolver]', translator = null) {
     try {
         return await resolveConfigAsync(configStr, req);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, contextLabel)) {
+        if (respondStorageUnavailable(res, error, contextLabel, translator || res?.locals?.t)) {
             return null;
         }
         throw error;
@@ -449,6 +457,37 @@ function deepCloneConfig(config) {
     }
 }
 
+function resolveRequestLanguage(req, config, fallback = DEFAULT_LANG) {
+    try {
+        const candidates = [];
+        const pick = (value) => {
+            if (!value) return;
+            const normalized = String(value).split(',')[0].trim().toLowerCase();
+            if (normalized) candidates.push(normalized);
+        };
+
+        pick(config && config.uiLanguage);
+        pick(req?.query?.uiLang || req?.query?.lang);
+        pick(req?.headers?.['accept-language']);
+
+        const chosen = candidates.find(Boolean) || fallback;
+        const locale = loadLocale(chosen);
+        return locale?.lang || fallback;
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function getTranslatorFromRequest(req, res, config, fallback = DEFAULT_LANG) {
+    const lang = resolveRequestLanguage(req, config, fallback);
+    const t = getTranslator(lang);
+    if (res && res.locals) {
+        res.locals.t = t;
+        res.locals.uiLanguage = lang;
+    }
+    return t;
+}
+
 // Helper: validate config path parameter early to avoid expensive parsing on garbage payloads
 const configParamSchema = Joi.object({
     config: configStringSchema
@@ -463,7 +502,8 @@ function validateConfigParam(configStr) {
 // Enforce config validation for any :config param route (stops malformed/oversized tokens)
 app.param('config', (req, res, next, value) => {
     if (!validateConfigParam(value)) {
-        return res.status(400).send('Invalid addon configuration identifier');
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        return res.status(400).send(t('server.errors.invalidConfigId', {}, 'Invalid addon configuration identifier'));
     }
     req.params.config = value;
     next();
@@ -475,7 +515,8 @@ function enforceConfigPayloadSize(req, res, next) {
         const serialized = JSON.stringify(req.body || {});
         const size = Buffer.byteLength(serialized, 'utf8');
         if (size > MAX_CONFIG_BYTES) {
-            return res.status(413).json({ error: 'Configuration payload too large' });
+            const t = res.locals?.t || getTranslatorFromRequest(req, res);
+            return res.status(413).json({ error: t('server.errors.configPayloadTooLarge', {}, 'Configuration payload too large') });
         }
     } catch (err) {
         log.warn(() => ['[Security] Failed to measure config payload size:', err.message]);
@@ -653,7 +694,8 @@ function isOriginAllowed(origin, req) {
 function applySafeCors(req, res, next) {
     const origin = req.get('origin');
     if (origin && !isOriginAllowed(origin, req)) {
-        return res.status(403).json({ error: 'Origin not allowed' });
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        return res.status(403).json({ error: t('server.errors.originNotAllowed', {}, 'Origin not allowed') });
     }
     return cors()(req, res, next);
 }
@@ -1015,6 +1057,7 @@ app.use((req, res, next) => {
 // Stremio native clients don't send Origin headers, so we block browser requests for sensitive API routes
 // This prevents malicious websites from triggering expensive API calls
 app.use((req, res, next) => {
+    const t = res.locals?.t || getTranslatorFromRequest(req, res);
     const origin = req.get('origin');
 
     // Routes that MUST be accessible from browsers (configuration UI, file upload, etc.)
@@ -1100,8 +1143,8 @@ app.use((req, res, next) => {
         // Block other origins to prevent browser-based abuse from arbitrary websites
         log.warn(() => `[Security] Blocked addon API request - origin: ${origin}, user-agent: ${userAgent}`);
         return res.status(403).json({
-            error: 'Access denied. This addon must be accessed through Stremio.',
-            hint: 'If you are using Stremio and seeing this error, please report it as a bug.'
+            error: t('server.errors.stremioOnly', {}, 'Access denied. This addon must be accessed through Stremio.'),
+            hint: t('server.errors.stremioHint', {}, 'If you are using Stremio and seeing this error, please report it as a bug.')
         });
     }
 
@@ -1118,13 +1161,21 @@ app.use((req, res, next) => {
     // Block browser-based requests to sensitive API routes (they send Origin header)
     // This prevents cross-site cost abuse attacks from malicious websites
     return res.status(403).json({
-        error: 'Browser-based cross-origin requests to this API route are not allowed. Please use the Stremio client.'
+        error: t('server.errors.browserCorsBlocked', {}, 'Browser-based cross-origin requests to this API route are not allowed. Please use the Stremio client.')
     });
 });
 
 // Security: Limit JSON payload size (raised to handle embedded subtitle uploads up to ~5MB)
 // NOTE: Embedded extraction uploads the entire SRT from the browser; keep this modest but above 5MB allowance.
 app.use(express.json({ limit: '6mb' }));
+
+// Install a request-scoped translator based on UI language hints (query/header)
+app.use((req, res, next) => {
+    try {
+        getTranslatorFromRequest(req, res);
+    } catch (_) {}
+    next();
+});
 
 // Temporary cache-busting: add versioned path segment for addon routes
 // Redirect unversioned addon API routes to versioned equivalents to invalidate stale edge caches,
@@ -1413,7 +1464,8 @@ app.get('/api/languages', (req, res) => {
         res.json(languages);
     } catch (error) {
         log.error(() => '[API] Error getting languages:', error);
-        res.status(500).json({ error: 'Failed to get languages' });
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        res.status(500).json({ error: t('server.errors.languagesFailed', {}, 'Failed to get languages') });
     }
 });
 
@@ -1421,21 +1473,24 @@ app.get('/api/languages', (req, res) => {
 app.get('/api/locale', async (req, res) => {
     try {
         setNoStore(res);
-        let lang = (req.query.lang || '').toString().trim().toLowerCase() || 'en';
+        let lang = (req.query.lang || '').toString().trim().toLowerCase() || DEFAULT_LANG;
         const configStr = req.query.config;
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         // If config token is provided, use user-selected uiLanguage
         if (configStr) {
-            const resolved = await resolveConfigGuarded(configStr, req, res, '[Locale] config');
+            const resolved = await resolveConfigGuarded(configStr, req, res, '[Locale] config', t);
             if (!resolved) return;
             lang = (resolved.uiLanguage || lang || 'en').toString().trim().toLowerCase() || 'en';
+            t = getTranslatorFromRequest(req, res, resolved);
         }
 
         const locale = loadLocale(lang);
         res.json(locale);
     } catch (error) {
         log.error(() => ['[API] Error getting locale:', error]);
-        res.status(500).json({ error: 'Failed to load locale' });
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        res.status(500).json({ error: t('server.errors.localeFailed', {}, 'Failed to load locale') });
     }
 });
 
@@ -1443,17 +1498,20 @@ app.get('/api/locale', async (req, res) => {
 app.get('/api/stream-activity', async (req, res) => {
     // Prevent caching to avoid leaking stream info across users
     setNoStore(res);
+    let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
     const { config: configStr } = req.query || {};
     if (!configStr) {
-        return res.status(400).json({ error: 'Missing config' });
+        return res.status(400).json({ error: t('server.errors.missingConfig', {}, 'Missing config') });
     }
 
     try {
-        const resolvedConfig = await resolveConfigGuarded(configStr, req, res, '[API] stream-activity config');
+        const resolvedConfig = await resolveConfigGuarded(configStr, req, res, '[API] stream-activity config', t);
         if (resolvedConfig?.__sessionTokenError === true) {
-            return res.status(401).json({ error: 'Invalid or expired config' });
+            t = getTranslatorFromRequest(req, res, resolvedConfig);
+            return res.status(401).json({ error: t('server.errors.invalidConfig', {}, 'Invalid or expired config') });
         }
+        t = getTranslatorFromRequest(req, res, resolvedConfig);
 
         const configHash = ensureConfigHash(resolvedConfig, configStr);
         const wantsSse = (req.headers.accept || '').includes('text/event-stream');
@@ -1470,13 +1528,14 @@ app.get('/api/stream-activity', async (req, res) => {
     } catch (error) {
         if (respondStorageUnavailable(res, error, '[API] stream-activity')) return;
         log.error(() => ['[API] stream-activity error:', error.message]);
-        res.status(500).json({ error: 'Failed to read stream activity' });
+        res.status(500).json({ error: t('server.errors.streamActivityFailed', {}, 'Failed to read stream activity') });
     }
 });
 
 // Test endpoint for OpenSubtitles API
 app.get('/api/test-opensubtitles', async (req, res) => {
     try {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
         const OpenSubtitlesService = require('./src/services/opensubtitles');
         const opensubtitles = new OpenSubtitlesService();
         
@@ -1493,13 +1552,15 @@ app.get('/api/test-opensubtitles', async (req, res) => {
         res.json({
             success: true,
             count: results.length,
-            results: results.slice(0, 5) // Return first 5 results
+            results: results.slice(0, 5), // Return first 5 results
+            message: t('server.validation.apiKeyValid', {}, 'API key is valid')
         });
     } catch (error) {
         log.error(() => '[Test] Error:', error);
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
         res.status(500).json({
             success: false,
-            error: error.message
+            error: t('server.validation.apiError', { reason: error.message }, error.message)
         });
     }
 });
@@ -1510,6 +1571,7 @@ app.post('/api/gemini-models', async (req, res) => {
     setNoStore(res);
 
     try {
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { apiKey, configStr } = req.body || {};
         let resolvedConfig = null;
 
@@ -1517,15 +1579,17 @@ app.post('/api/gemini-models', async (req, res) => {
 
         // Allow fetching models using the user's saved config (session token)
         if (!geminiApiKey && configStr) {
-            resolvedConfig = await resolveConfigGuarded(configStr, req, res, '[API] gemini-models config');
+            resolvedConfig = await resolveConfigGuarded(configStr, req, res, '[API] gemini-models config', t);
             if (isInvalidSessionConfig(resolvedConfig)) {
-                return res.status(401).json({ error: 'Invalid or expired session token' });
+                t = getTranslatorFromRequest(req, res, resolvedConfig);
+                return res.status(401).json({ error: t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token') });
             }
+            t = getTranslatorFromRequest(req, res, resolvedConfig);
             geminiApiKey = resolvedConfig?.geminiApiKey || process.env.GEMINI_API_KEY;
         }
 
         if (!geminiApiKey) {
-            return res.status(400).json({ error: 'API key is required' });
+            return res.status(400).json({ error: t('server.errors.apiKeyRequired', {}, 'API key is required') });
         }
 
         const gemini = new GeminiService(
@@ -1546,7 +1610,8 @@ app.post('/api/gemini-models', async (req, res) => {
         log.error(() => '[API] Error fetching Gemini models:', error);
         // Surface upstream error details if available for easier debugging in UI
         const message = error?.response?.data?.error || error?.response?.data?.message || error.message || 'Failed to fetch models';
-        res.status(500).json({ error: message });
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        res.status(500).json({ error: t('server.errors.modelsFailed', { reason: message }, message) });
     }
 });
 
@@ -1556,6 +1621,7 @@ app.post('/api/models/:provider', async (req, res) => {
     setNoStore(res);
 
     try {
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const providerKey = String(req.params.provider || '').toLowerCase();
         const { apiKey, configStr } = req.body || {};
         const providerDefaults = getDefaultProviderParameters();
@@ -1564,10 +1630,11 @@ app.post('/api/models/:provider', async (req, res) => {
         // Allow using the user's saved config (session token) instead of passing API keys in the request body
         const getProviderConfigFromSession = async () => {
             if (!configStr) return null;
-            resolvedConfig = resolvedConfig || await resolveConfigGuarded(configStr, req, res, '[API] models config');
+            resolvedConfig = resolvedConfig || await resolveConfigGuarded(configStr, req, res, '[API] models config', t);
             if (isInvalidSessionConfig(resolvedConfig)) {
                 return { __invalidSession: true };
             }
+            t = getTranslatorFromRequest(req, res, resolvedConfig);
 
             if (providerKey === 'gemini') {
                 return {
@@ -1595,7 +1662,7 @@ app.post('/api/models/:provider', async (req, res) => {
         const sessionProvider = await getProviderConfigFromSession();
 
         if (sessionProvider?.__invalidSession === true) {
-            return res.status(401).json({ error: 'Invalid or expired session token' });
+            return res.status(401).json({ error: t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token') });
         }
 
         let providerApiKey = apiKey || sessionProvider?.apiKey;
@@ -1605,7 +1672,7 @@ app.post('/api/models/:provider', async (req, res) => {
         if (providerKey === 'gemini') {
             providerApiKey = providerApiKey || process.env.GEMINI_API_KEY;
             if (!providerApiKey) {
-                return res.status(400).json({ error: 'API key is required' });
+                return res.status(400).json({ error: t('server.errors.apiKeyRequired', {}, 'API key is required') });
             }
 
             const gemini = new GeminiService(
@@ -1618,17 +1685,17 @@ app.post('/api/models/:provider', async (req, res) => {
         }
 
         if (!providerApiKey) {
-            return res.status(400).json({ error: 'API key is required' });
+            return res.status(400).json({ error: t('server.errors.apiKeyRequired', {}, 'API key is required') });
         }
 
         if (providerKey === 'cfworkers') {
             const creds = resolveCfWorkersCredentials(providerApiKey);
             if (!creds.token) {
-                return res.status(400).json({ error: 'Cloudflare Workers AI token is required' });
+                return res.status(400).json({ error: t('server.errors.cloudflareTokenRequired', {}, 'Cloudflare Workers AI token is required') });
             }
             if (!creds.accountId) {
                 return res.status(400).json({
-                    error: 'Cloudflare Workers AI account ID is required. Provide API key as ACCOUNT_ID|TOKEN.'
+                    error: t('server.errors.cloudflareAccountRequired', {}, 'Cloudflare Workers AI account ID is required. Provide API key as ACCOUNT_ID|TOKEN.')
                 });
             }
             providerApiKey = `${creds.accountId}|${creds.token}`;
@@ -1645,8 +1712,8 @@ app.post('/api/models/:provider', async (req, res) => {
 
         if (!provider || typeof provider.getAvailableModels !== 'function') {
             const unsupportedMessage = providerKey === 'cfworkers'
-                ? 'Cloudflare Workers AI is missing credentials. Use ACCOUNT_ID|TOKEN.'
-                : 'Unsupported provider';
+                ? t('server.errors.cloudflareCredentialsMissing', {}, 'Cloudflare Workers AI is missing credentials. Use ACCOUNT_ID|TOKEN.')
+                : t('server.errors.unsupportedProvider', {}, 'Unsupported provider');
             return res.status(400).json({ error: unsupportedMessage });
         }
 
@@ -1655,7 +1722,8 @@ app.post('/api/models/:provider', async (req, res) => {
     } catch (error) {
         log.error(() => ['[API] Error fetching provider models:', error]);
         const message = error?.response?.data?.error || error?.response?.data?.message || error.message || 'Failed to fetch models';
-        res.status(500).json({ error: message });
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        res.status(500).json({ error: t('server.errors.modelsFailed', { reason: message }, message) });
     }
 });
 
@@ -1664,12 +1732,13 @@ app.post('/api/validate-subsource', async (req, res) => {
     setNoStore(res);
 
     try {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { apiKey } = req.body || {};
 
         if (!apiKey || !String(apiKey).trim()) {
             return res.status(400).json({
                 valid: false,
-                error: 'API key is required'
+                error: t('server.errors.apiKeyRequired', {}, 'API key is required')
             });
         }
 
@@ -1691,7 +1760,7 @@ app.post('/api/validate-subsource', async (req, res) => {
 
             return res.json({
                 valid: true,
-                message: 'API key is valid',
+                message: t('server.validation.apiKeyValid', {}, 'API key is valid'),
                 resultsCount: movies.length || 0
             });
         } catch (apiError) {
@@ -1702,21 +1771,21 @@ app.post('/api/validate-subsource', async (req, res) => {
             // Show a concise, formatted timeout message instead of axios' lowercase default
             const isTimeout = code === 'ECONNABORTED' || /timeout/i.test(msg);
             if (isTimeout) {
-                return res.json({ valid: false, error: 'Request timed out (7s)' });
+                return res.json({ valid: false, error: t('server.errors.requestTimedOut', {}, 'Request timed out (7s)') });
             }
 
             if (status === 401 || status === 403) {
-                return res.json({ valid: false, error: 'Invalid API key - authentication failed' });
+                return res.json({ valid: false, error: t('server.errors.invalidApiKeyAuth', {}, 'Invalid API key - authentication failed') });
             }
 
             // Surface upstream error if present; otherwise the axios message
             const upstream = apiError.response?.data?.error || apiError.response?.data?.message;
-            return res.json({ valid: false, error: upstream || msg || 'Request failed' });
+            return res.json({ valid: false, error: upstream || msg || t('server.errors.requestFailed', {}, 'Request failed') });
         }
     } catch (error) {
         res.json({
             valid: false,
-            error: `API error: ${error.message}`
+            error: (res.locals?.t || getTranslatorFromRequest(req, res))('server.validation.apiError', { reason: error.message }, `API error: ${error.message}`)
         });
     }
 });
@@ -1727,12 +1796,13 @@ app.post('/api/validate-subdl', async (req, res) => {
     setNoStore(res);
 
     try {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { apiKey } = req.body;
 
         if (!apiKey) {
             return res.status(400).json({
                 valid: false,
-                error: 'API key is required'
+                error: t('server.errors.apiKeyRequired', {}, 'API key is required')
             });
         }
 
@@ -1765,20 +1835,20 @@ app.post('/api/validate-subdl', async (req, res) => {
                 const subtitles = response.data.subtitles || [];
                 res.json({
                     valid: true,
-                    message: 'API key is valid',
+                    message: t('server.validation.apiKeyValid', {}, 'API key is valid'),
                     resultsCount: subtitles.length
                 });
             } else if (response.data && response.data.status === false) {
                 // API returned error status
                 res.json({
                     valid: false,
-                    error: response.data.error || 'Invalid API key'
+                    error: response.data.error || t('server.errors.invalidApiKey', {}, 'Invalid API key')
                 });
             } else {
                 // Unexpected response format
                 res.json({
                     valid: true,
-                    message: 'API key appears valid',
+                    message: t('server.validation.apiKeyAppearsValid', {}, 'API key appears valid'),
                     resultsCount: 0
                 });
             }
@@ -1787,7 +1857,7 @@ app.post('/api/validate-subdl', async (req, res) => {
             if (apiError.response?.status === 401 || apiError.response?.status === 403) {
                 res.json({
                     valid: false,
-                    error: 'Invalid API key - authentication failed'
+                    error: t('server.errors.invalidApiKeyAuth', {}, 'Invalid API key - authentication failed')
                 });
             } else if (apiError.response?.data?.error) {
                 // SubDL may return error in response body
@@ -1802,7 +1872,7 @@ app.post('/api/validate-subdl', async (req, res) => {
     } catch (error) {
         res.json({
             valid: false,
-            error: `API error: ${error.message}`
+            error: (res.locals?.t || getTranslatorFromRequest(req, res))('server.validation.apiError', { reason: error.message }, `API error: ${error.message}`)
         });
     }
 });
@@ -1813,12 +1883,13 @@ app.post('/api/validate-opensubtitles', async (req, res) => {
     setNoStore(res);
 
     try {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { username, password } = req.body;
 
         if (!username || !password) {
             return res.status(400).json({
                 valid: false,
-                error: 'Username and password are required'
+                error: t('server.errors.usernamePasswordRequired', {}, 'Username and password are required')
             });
         }
 
@@ -1856,12 +1927,12 @@ app.post('/api/validate-opensubtitles', async (req, res) => {
             if (response.data && response.data.token) {
                 res.json({
                     valid: true,
-                    message: 'Credentials are valid'
+                    message: t('server.validation.credentialsValid', {}, 'Credentials are valid')
                 });
             } else {
                 res.json({
                     valid: false,
-                    error: 'No token received - credentials may be invalid'
+                    error: t('server.errors.noTokenReceived', {}, 'No token received - credentials may be invalid')
                 });
             }
         } catch (apiError) {
@@ -1869,12 +1940,12 @@ app.post('/api/validate-opensubtitles', async (req, res) => {
             if (apiError.response?.status === 401) {
                 res.json({
                     valid: false,
-                    error: 'Invalid username or password'
+                    error: t('server.errors.invalidCredentials', {}, 'Invalid username or password')
                 });
             } else if (apiError.response?.status === 406) {
                 res.json({
                     valid: false,
-                    error: 'Invalid request format'
+                    error: t('server.errors.invalidRequestFormat', {}, 'Invalid request format')
                 });
             } else if (apiError.response?.data?.message) {
                 res.json({
@@ -1888,7 +1959,7 @@ app.post('/api/validate-opensubtitles', async (req, res) => {
     } catch (error) {
         res.json({
             valid: false,
-            error: `API error: ${error.message}`
+            error: (res.locals?.t || getTranslatorFromRequest(req, res))('server.validation.apiError', { reason: error.message }, `API error: ${error.message}`)
         });
     }
 });
@@ -1899,12 +1970,13 @@ app.post('/api/validate-gemini', async (req, res) => {
     setNoStore(res);
 
     try {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { apiKey } = req.body || {};
 
         if (!apiKey) {
             return res.status(400).json({
                 valid: false,
-                error: 'API key is required'
+                error: t('server.errors.apiKeyRequired', {}, 'API key is required')
             });
         }
 
@@ -1926,12 +1998,12 @@ app.post('/api/validate-gemini', async (req, res) => {
             if (response.data && response.data.models) {
                 res.json({
                     valid: true,
-                    message: 'API key is valid'
+                    message: t('server.validation.apiKeyValid', {}, 'API key is valid')
                 });
             } else {
                 res.json({
                     valid: true,
-                    message: 'API key is valid'
+                    message: t('server.validation.apiKeyValid', {}, 'API key is valid')
                 });
             }
         } catch (apiError) {
@@ -1939,7 +2011,7 @@ app.post('/api/validate-gemini', async (req, res) => {
             if (apiError.response?.status === 401 || apiError.response?.status === 403) {
                 res.json({
                     valid: false,
-                    error: 'Invalid API key - authentication failed'
+                    error: t('server.errors.invalidApiKeyAuth', {}, 'Invalid API key - authentication failed')
                 });
             } else if (apiError.response?.status === 400) {
                 // Extract error message, handling both string and object responses
@@ -1952,7 +2024,7 @@ app.post('/api/validate-gemini', async (req, res) => {
                 }
                 res.json({
                     valid: false,
-                    error: errorMessage
+                    error: t('server.errors.invalidApiKey', {}, errorMessage)
                 });
             } else {
                 throw apiError;
@@ -1967,7 +2039,9 @@ app.post('/api/validate-gemini', async (req, res) => {
 
         res.json({
             valid: false,
-            error: isAuthError ? 'Invalid API key' : `API error: ${error.message}`
+            error: isAuthError
+                ? (res.locals?.t || getTranslatorFromRequest(req, res))('server.errors.invalidApiKey', {}, 'Invalid API key')
+                : (res.locals?.t || getTranslatorFromRequest(req, res))('server.validation.apiError', { reason: error.message }, `API error: ${error.message}`)
         });
     }
 });
@@ -1978,9 +2052,10 @@ app.post('/api/create-session', sessionCreationLimiter, enforceConfigPayloadSize
     try {
         setNoStore(res); // prevent any caching of session tokens
         const config = req.body;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res, config);
 
         if (!config) {
-            return res.status(400).json({ error: 'Configuration is required' });
+            return res.status(400).json({ error: t('server.session.configRequired', {}, 'Configuration is required') });
         }
 
         // For localhost, can use either session or base64 (backward compatibility)
@@ -1996,7 +2071,7 @@ app.post('/api/create-session', sessionCreationLimiter, enforceConfigPayloadSize
             return res.json({
                 token: configStr,
                 type: 'base64',
-                message: 'Using base64 encoding for localhost'
+                message: t('server.session.usingBase64Localhost', {}, 'Using base64 encoding for localhost')
             });
         }
 
@@ -2012,11 +2087,12 @@ app.post('/api/create-session', sessionCreationLimiter, enforceConfigPayloadSize
     } catch (error) {
         // Respond with 503 if storage is temporarily unavailable to signal retry-ability
         // instead of 500 which might cause clients to give up or discard the config
-        if (respondStorageUnavailable(res, error, '[Session API]')) {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Session API]', t)) {
             return;
         }
         log.error(() => '[Session API] Error creating session:', error);
-        res.status(500).json({ error: 'Failed to create session' });
+        res.status(500).json({ error: t('server.errors.sessionCreateFailed', {}, 'Failed to create session') });
     }
 });
 
@@ -2027,13 +2103,14 @@ app.post('/api/update-session/:token', sessionCreationLimiter, enforceConfigPayl
         setNoStore(res); // prevent any caching of session tokens
         const { token } = req.params;
         const config = req.body;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res, config);
 
         if (!config) {
-            return res.status(400).json({ error: 'Configuration is required' });
+            return res.status(400).json({ error: t('server.session.configRequired', {}, 'Configuration is required') });
         }
 
         if (!token) {
-            return res.status(400).json({ error: 'Session token is required' });
+            return res.status(400).json({ error: t('server.session.tokenRequired', {}, 'Session token is required') });
         }
 
         // For localhost with base64, we can't update (create new instead)
@@ -2052,7 +2129,7 @@ app.post('/api/update-session/:token', sessionCreationLimiter, enforceConfigPayl
                 token: configStr,
                 type: 'base64',
                 updated: true,
-                message: 'Created new base64 token for localhost'
+                message: t('server.session.createdBase64Localhost', {}, 'Created new base64 token for localhost')
             });
         }
 
@@ -2069,7 +2146,7 @@ app.post('/api/update-session/:token', sessionCreationLimiter, enforceConfigPayl
                 type: 'session',
                 updated: false,
                 created: true,
-                message: 'Session expired or not found, created new session',
+                message: t('server.session.expiredCreated', {}, 'Session expired or not found, created new session'),
                 expiresIn: process.env.SESSION_MAX_AGE || 90 * 24 * 60 * 60 * 1000
             });
         }
@@ -2081,30 +2158,32 @@ app.post('/api/update-session/:token', sessionCreationLimiter, enforceConfigPayl
             token,
             type: 'session',
             updated: true,
-            message: 'Session configuration updated successfully'
+            message: t('server.session.updateSuccess', {}, 'Session configuration updated successfully')
         });
     } catch (error) {
         // CRITICAL: Respond with 503 if storage is temporarily unavailable.
         // This prevents silently regenerating a new token (which loses the user's existing
         // state) during transient Redis hiccups. The 503 signals to clients that they should
         // retry with the same token instead of discarding it.
-        if (respondStorageUnavailable(res, error, '[Session API]')) {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Session API]', t)) {
             return;
         }
         log.error(() => '[Session API] Error updating session:', error);
-        res.status(500).json({ error: 'Failed to update session' });
+        res.status(500).json({ error: t('server.errors.sessionUpdateFailed', {}, 'Failed to update session') });
     }
 });
 
 // API endpoint to get session statistics (for monitoring)
 app.get('/api/session-stats', statsLimiter, async (req, res) => {
+    const t = res.locals?.t || getTranslatorFromRequest(req, res);
     try {
         const stats = await sessionManager.getStats();
         const limits = getLanguageSelectionLimits();
         res.json({ ...stats, version, limits });
     } catch (error) {
         log.error(() => '[Session API] Error getting stats:', error);
-        res.status(500).json({ error: 'Failed to get session statistics' });
+        res.status(500).json({ error: t('server.errors.sessionStatsFailed', {}, 'Failed to get session statistics') });
     }
 });
 
@@ -2112,15 +2191,16 @@ app.get('/api/session-stats', statsLimiter, async (req, res) => {
 app.get('/api/validate-session/:token', async (req, res) => {
     try {
         setNoStore(res);
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { token } = req.params;
 
         if (!token || !/^[a-f0-9]{32}$/.test(token)) {
-            return res.status(400).json({ error: 'Invalid session token format' });
+            return res.status(400).json({ error: t('server.errors.sessionTokenFormat', {}, 'Invalid session token format') });
         }
 
         const config = await sessionManager.getSession(token);
         if (!config) {
-            return res.status(404).json({ error: 'Session not found' });
+            return res.status(404).json({ error: t('server.errors.sessionNotFound', {}, 'Session not found') });
         }
 
         // Return diagnostic information
@@ -2141,9 +2221,10 @@ app.get('/api/validate-session/:token', async (req, res) => {
 
         log.info(() => `[Session Validation] Token ${redactToken(token)} validated from IP ${clientIP}, targets: ${JSON.stringify(config.targetLanguages || [])}`);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Session API] validate-session')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Session API] validate-session', t)) return;
         log.error(() => '[Session API] Error validating session:', error);
-        res.status(500).json({ error: 'Failed to validate session' });
+        res.status(500).json({ error: t('server.errors.sessionValidateFailed', {}, 'Failed to validate session') });
     }
 });
 
@@ -2151,11 +2232,12 @@ app.get('/api/validate-session/:token', async (req, res) => {
 // Supports autoRegenerate=true query param to create a fresh default session if the stored one is missing/corrupted
 app.get('/api/get-session/:token', async (req, res) => {
     try {
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { token } = req.params;
         const autoRegenerate = req.query.autoRegenerate === 'true';
 
         if (!token || !/^[a-f0-9]{32}$/.test(token)) {
-            return res.status(400).json({ error: 'Invalid session token format' });
+            return res.status(400).json({ error: t('server.errors.sessionTokenFormat', {}, 'Invalid session token format') });
         }
 
         // CRITICAL: Set aggressive cache prevention headers to avoid cross-user config contamination
@@ -2171,6 +2253,7 @@ app.get('/api/get-session/:token', async (req, res) => {
                 log.info(() => `[Session API] Session not found for ${redactToken(token)}, auto-regenerating fresh default config`);
 
                 const { config: freshConfig, token: freshToken } = await regenerateDefaultConfig();
+                t = getTranslatorFromRequest(req, res, freshConfig);
 
                 // Invalidate any cached routers for the old token
                 invalidateRouterCache(token, 'session not found, regenerated');
@@ -2179,11 +2262,11 @@ app.get('/api/get-session/:token', async (req, res) => {
                     config: freshConfig,
                     token: freshToken,
                     regenerated: true,
-                    reason: 'Session not found or expired'
+                    reason: t('server.errors.sessionNotFoundReason', {}, 'Session not found or expired')
                 });
             }
 
-            return res.status(404).json({ error: 'Session not found' });
+            return res.status(404).json({ error: t('server.errors.sessionNotFound', {}, 'Session not found') });
         }
 
         // Check if this config resolves to empty_config_00 (corrupted payload)
@@ -2194,6 +2277,7 @@ app.get('/api/get-session/:token', async (req, res) => {
             log.warn(() => `[Session API] Session ${redactToken(token)} resolved to empty_config_00, auto-regenerating`);
 
             const { config: freshConfig, token: freshToken } = await regenerateDefaultConfig();
+            t = getTranslatorFromRequest(req, res, freshConfig);
 
             // Invalidate cached router for the old token
             invalidateRouterCache(token, 'empty_config_00 detected, regenerated');
@@ -2202,15 +2286,16 @@ app.get('/api/get-session/:token', async (req, res) => {
                 config: freshConfig,
                 token: freshToken,
                 regenerated: true,
-                reason: 'Config payload was empty or corrupted (empty_config_00)'
+                reason: t('server.errors.sessionConfigCorrupted', {}, 'Config payload was empty or corrupted (empty_config_00)')
             });
         }
 
         return res.json({ config: normalized, token, regenerated: false });
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Session API] get-session')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Session API] get-session', t)) return;
         log.error(() => '[Session API] Error fetching session:', error);
-        res.status(500).json({ error: 'Failed to fetch session configuration' });
+        res.status(500).json({ error: t('server.errors.sessionFetchFailed', {}, 'Failed to fetch session configuration') });
     }
 });
 
@@ -2219,28 +2304,31 @@ app.post('/api/translate-file', fileTranslationLimiter, validateRequest(fileTran
     try {
         // Prevent caching of user-specific translation results
         setNoStore(res);
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { content, targetLanguage, sourceLanguage, configStr, advancedSettings, overrides } = req.body;
 
         if (!content) {
-            return res.status(400).send('Subtitle content is required');
+            return res.status(400).send(t('server.errors.translateFileMissingContent', {}, 'Subtitle content is required'));
         }
 
         if (!targetLanguage) {
-            return res.status(400).send('Target language is required');
+            return res.status(400).send(t('server.errors.translateFileMissingTarget', {}, 'Target language is required'));
         }
 
         if (!configStr) {
-            return res.status(400).send('Configuration is required');
+            return res.status(400).send(t('server.errors.translateFileMissingConfig', {}, 'Configuration is required'));
         }
 
         log.debug(() => `[File Translation API] Translating to ${targetLanguage}`);
 
         // Parse config
-        const config = await resolveConfigGuarded(configStr, req, res, '[API] translate-file config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[API] translate-file config', t);
         if (isInvalidSessionConfig(config)) {
-            return res.status(401).send('Invalid or expired session token');
+            t = getTranslatorFromRequest(req, res, config);
+            return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
         }
+        t = getTranslatorFromRequest(req, res, config);
         const providerDefaults = getDefaultProviderParameters();
         const optionalProviders = new Set(['googletranslate']);
         const normalizeProviderKey = (key) => String(key || '').toLowerCase();
@@ -2568,7 +2656,8 @@ app.post('/api/translate-file', fileTranslationLimiter, validateRequest(fileTran
 
     } catch (error) {
         log.error(() => '[File Translation API] Error:', error);
-        res.status(500).send(`Translation failed: ${error.message}`);
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        res.status(500).send(t('server.errors.translateFileError', { reason: error.message }, `Translation failed: ${error.message}`));
     }
 });
 
@@ -2705,9 +2794,10 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
     try {
         // Defense-in-depth: Prevent caching (already set by early middleware, but explicit is safer)
         setNoStore(res);
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, fileId, language } = req.params;
-        const config = await resolveConfigGuarded(configStr, req, res, '[Download] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Download] config', t);
         if (isInvalidSessionConfig(config)) {
             log.warn(() => `[Download] Blocked subtitle download due to invalid session token ${redactToken(configStr)}`);
             const errorSubtitle = createSessionTokenErrorSubtitle(null, null, config?.uiLanguage || 'en');
@@ -2715,6 +2805,7 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
             res.setHeader('Content-Disposition', 'attachment; filename=\"session-token-not-found.srt\"');
             return res.status(401).send(errorSubtitle);
         }
+        t = getTranslatorFromRequest(req, res, config);
         const configKey = ensureConfigHash(config, configStr);
 
         const langCode = language.replace('.srt', '');
@@ -2782,9 +2873,10 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
         res.send(content);
 
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Download]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Download]', t)) return;
         log.error(() => '[Download] Error:', error);
-        res.status(404).send('Subtitle not found');
+        res.status(404).send(t('server.errors.subtitleNotFound', {}, 'Subtitle not found'));
     }
 });
 
@@ -2793,13 +2885,15 @@ app.get('/addon/:config/error-subtitle/:errorType.srt', async (req, res) => {
     try {
         // Defense-in-depth: Prevent caching (already set by early middleware, but explicit is safer)
         setNoStore(res);
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, errorType } = req.params;
 
         log.debug(() => `[Error Subtitle] Serving error subtitle for: ${errorType}`);
 
         // Resolve config to check if this is a session token error
-        const config = await resolveConfigGuarded(configStr, req, res, '[Error Subtitle] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Error Subtitle] config', t);
+        t = getTranslatorFromRequest(req, res, config);
 
         // Build base URL for reinstall links
         const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -2839,9 +2933,10 @@ app.get('/addon/:config/error-subtitle/:errorType.srt', async (req, res) => {
         res.send(content);
 
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Error Subtitle]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Error Subtitle]', t)) return;
         log.error(() => '[Error Subtitle] Error:', error);
-        res.status(500).send('Error subtitle unavailable');
+        res.status(500).send(t('server.errors.errorSubtitleUnavailable', {}, 'Error subtitle unavailable'));
     }
 });
 
@@ -2850,13 +2945,16 @@ app.get('/addon/:config/translate-selector/:videoId/:targetLang', searchLimiter,
     try {
         // Defense-in-depth: Prevent caching (already set by early middleware, but explicit is safer)
         setNoStore(res);
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, videoId, targetLang } = req.params;
-        const config = await resolveConfigGuarded(configStr, req, res, '[Translation Selector] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Translation Selector] config', t);
         if (isInvalidSessionConfig(config)) {
             log.warn(() => `[Translation Selector] Blocked due to invalid session token ${redactToken(configStr)}`);
-            return res.status(401).send('Invalid or expired session token');
+            t = getTranslatorFromRequest(req, res, config);
+            return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
         }
+        t = getTranslatorFromRequest(req, res, config);
         const configKey = ensureConfigHash(config, configStr);
 
         // Create deduplication key based on video ID and config
@@ -2877,23 +2975,25 @@ app.get('/addon/:config/translate-selector/:videoId/:targetLang', searchLimiter,
         );
 
         // Generate HTML page for subtitle selection
-        const html = generateTranslationSelectorPage(subtitles, videoId, targetLang, configStr, config);
+        const html = generateTranslationSelectorPage(subtitles, videoId, targetLang, configStr, config, t, res.locals?.uiLanguage);
 
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
 
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Translation Selector]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Translation Selector]', t)) return;
         log.error(() => '[Translation Selector] Error:', error);
-        res.status(500).send('Failed to load subtitle selector');
+        res.status(500).send(t('server.errors.subtitleSelectorFailed', {}, 'Failed to load subtitle selector'));
     }
 });
 
 // Custom route: Perform translation (BEFORE SDK router to take precedence)
 app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleFormatParams, searchLimiter, validateRequest(translationParamsSchema, 'params'), async (req, res) => {
     try {
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { config: configStr, sourceFileId, targetLang } = req.params;
-        const config = await resolveConfigGuarded(configStr, req, res, '[Translation] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Translation] config', t);
         if (isInvalidSessionConfig(config)) {
             log.warn(() => `[Translation] Blocked translation due to invalid session token ${redactToken(configStr)}`);
             const errorSubtitle = createSessionTokenErrorSubtitle(null, null, config?.uiLanguage || 'en');
@@ -2902,6 +3002,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleF
             setSubtitleCacheHeaders(res, 'loading');
             return res.status(401).send(errorSubtitle);
         }
+        t = getTranslatorFromRequest(req, res, config);
         const configKey = ensureConfigHash(config, configStr);
         const userAgent = (req.headers['user-agent'] || '').toLowerCase();
         const isAndroid = userAgent.includes('android');
@@ -2971,7 +3072,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleF
             res.status(202);
             setSubtitleCacheHeaders(res, 'loading');
             res.setHeader('Retry-After', '3');
-            return res.send('Translation already in progress; waiting on primary request.');
+            return res.send(t('server.errors.translationInProgress', {}, 'Translation already in progress; waiting on primary request.'));
         } else if (isAlreadyInFlight) {
             log.debug(() => `[Translation] Duplicate request detected for ${sourceFileId} to ${targetLang} - checking for partial results`);
 
@@ -3021,7 +3122,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleF
         // Validate content before processing
         if (!subtitleContent || typeof subtitleContent !== 'string') {
             log.error(() => `[Translation] Invalid subtitle content returned: ${typeof subtitleContent}, value: ${subtitleContent}`);
-            return res.status(500).send('Translation returned invalid content');
+            return res.status(500).send(t('server.errors.translationInvalidContent', {}, 'Translation returned invalid content'));
         }
 
         // Check if this is a loading message or actual translation
@@ -3050,9 +3151,10 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleF
         log.debug(() => `[Translation] Response sent successfully for ${sourceFileId}`);
 
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Translation]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Translation]', t)) return;
         log.error(() => '[Translation] Error:', error);
-        res.status(500).send(`Translation failed: ${error.message}`);
+        res.status(500).send(t('server.errors.translationFailed', { reason: error.message }, `Translation failed: ${error.message}`));
     }
 });
 
@@ -3061,9 +3163,10 @@ app.get('/addon/:config/learn/:sourceFileId/:targetLang', normalizeSubtitleForma
     try {
         // Defense-in-depth: Prevent caching of learn-mode responses
         setNoStore(res);
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, sourceFileId, targetLang } = req.params;
-        const baseConfig = await resolveConfigGuarded(configStr, req, res, '[Learn] config');
+        const baseConfig = await resolveConfigGuarded(configStr, req, res, '[Learn] config', t);
         if (isInvalidSessionConfig(baseConfig)) {
             log.warn(() => `[Learn] Blocked request due to invalid session token ${redactToken(configStr)}`);
             const errorSubtitle = createSessionTokenErrorSubtitle(null, null, baseConfig?.uiLanguage || 'en');
@@ -3072,6 +3175,7 @@ app.get('/addon/:config/learn/:sourceFileId/:targetLang', normalizeSubtitleForma
             setSubtitleCacheHeaders(res, 'loading');
             return res.status(401).send(errorSubtitle);
         }
+        t = getTranslatorFromRequest(req, res, baseConfig);
         const configKey = ensureConfigHash(baseConfig, configStr);
 
         // Force bypass cache for Learn Mode translations only (does not affect normal translations)
@@ -3185,9 +3289,10 @@ app.get('/addon/:config/learn/:sourceFileId/:targetLang', normalizeSubtitleForma
         return res.send(vtt);
 
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Learn]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Learn]', t)) return;
         log.error(() => '[Learn] Error:', error);
-        res.status(500).send('Failed to build learning subtitles');
+        res.status(500).send(t('server.errors.learnFailed', {}, 'Failed to build learning subtitles'));
     }
 });
 
@@ -3199,30 +3304,34 @@ app.get('/addon/:config/sub-toolbox/:videoId', async (req, res) => {
     try {
         // Ensure the redirect carrying user token never caches
         setNoStore(res);
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, videoId } = req.params;
         const { filename } = req.query;
         // Validate config to ensure token is valid before redirect
-        await resolveConfigGuarded(configStr, req, res, '[Sub Toolbox] config');
+        await resolveConfigGuarded(configStr, req, res, '[Sub Toolbox] config', t);
         log.debug(() => `[Sub Toolbox] Request for video ${videoId}, filename: ${filename || 'n/a'}`);
         res.redirect(302, `/sub-toolbox?config=${encodeURIComponent(configStr)}&videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename || '')}`);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Sub Toolbox]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Sub Toolbox]', t)) return;
         log.error(() => '[Sub Toolbox] Error:', error);
-        res.status(500).send('Failed to load Sub Toolbox');
+        res.status(500).send(t('server.errors.subToolboxLoadFailed', {}, 'Failed to load Sub Toolbox'));
     }
 });
 
 // Sub Toolbox standalone page (HTML)
 app.get('/sub-toolbox', async (req, res) => {
     try {
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { config: configStr, videoId, filename } = req.query;
 
         if (!configStr || !videoId) {
-            return res.status(400).send('Missing config or videoId');
+            return res.status(400).send(t('server.errors.missingConfigOrVideo', {}, 'Missing config or videoId'));
         }
 
-        const config = await resolveConfigGuarded(configStr, req, res, '[Sub Toolbox Page] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Sub Toolbox Page] config', t);
+        t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, configStr);
 
         log.debug(() => `[Sub Toolbox Page] Loading toolbox for video ${videoId}`);
@@ -3233,9 +3342,10 @@ app.get('/sub-toolbox', async (req, res) => {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Sub Toolbox Page]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Sub Toolbox Page]', t)) return;
         log.error(() => '[Sub Toolbox Page] Error:', error);
-        res.status(500).send('Failed to load Sub Toolbox page');
+        res.status(500).send(t('server.errors.subToolboxPageFailed', {}, 'Failed to load Sub Toolbox page'));
     }
 });
 
@@ -3243,30 +3353,34 @@ app.get('/sub-toolbox', async (req, res) => {
 app.get('/addon/:config/embedded-subtitles/:videoId', async (req, res) => {
     try {
         setNoStore(res);
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, videoId } = req.params;
         const { filename } = req.query;
-        await resolveConfigGuarded(configStr, req, res, '[Embedded Subs Addon] config');
+        await resolveConfigGuarded(configStr, req, res, '[Embedded Subs Addon] config', t);
 
         log.debug(() => `[Embedded Subs] Addon redirect for video ${videoId}, filename: ${filename}`);
 
         res.redirect(302, `/embedded-subtitles?config=${encodeURIComponent(configStr)}&videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename || '')}`);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Embedded Subs Addon Route]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Embedded Subs Addon Route]', t)) return;
         log.error(() => '[Embedded Subs Addon Route] Error:', error);
-        res.status(500).send('Failed to load embedded subtitles page');
+        res.status(500).send(t('server.errors.embeddedPageFailed', {}, 'Failed to load embedded subtitles page'));
     }
 });
 
 // Placeholder page: Embedded subtitle extractor
 app.get('/embedded-subtitles', async (req, res) => {
     try {
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { config: configStr, videoId, filename } = req.query;
         if (!configStr || !videoId) {
-            return res.status(400).send('Missing config or videoId');
+            return res.status(400).send(t('server.errors.missingConfigOrVideo', {}, 'Missing config or videoId'));
         }
 
-        const config = await resolveConfigGuarded(configStr, req, res, '[Embedded Subs Page] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Embedded Subs Page] config', t);
+        t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, configStr);
         log.debug(() => `[Embedded Subs Page] Loading extractor for video ${videoId}`);
 
@@ -3276,9 +3390,10 @@ app.get('/embedded-subtitles', async (req, res) => {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Embedded Subs Page]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Embedded Subs Page]', t)) return;
         log.error(() => '[Embedded Subs Page] Error:', error);
-        res.status(500).send('Failed to load embedded subtitles page');
+        res.status(500).send(t('server.errors.embeddedPageFailed', {}, 'Failed to load embedded subtitles page'));
     }
 });
 
@@ -3287,33 +3402,37 @@ app.get('/addon/:config/auto-subtitles/:videoId', async (req, res) => {
     try {
         // CRITICAL: Prevent caching to avoid cross-user config contamination (defense-in-depth)
         setNoStore(res);
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, videoId } = req.params;
         const { filename } = req.query;
-        await resolveConfigGuarded(configStr, req, res, '[Auto Subs Addon] config');
+        await resolveConfigGuarded(configStr, req, res, '[Auto Subs Addon] config', t);
 
         log.debug(() => `[Auto Subs] Addon redirect for video ${videoId}, filename: ${filename}`);
 
         res.redirect(302, `/auto-subtitles?config=${encodeURIComponent(configStr)}&videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename || '')}`);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Auto Subs Addon Route]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Auto Subs Addon Route]', t)) return;
         log.error(() => '[Auto Subs Addon Route] Error:', error);
-        res.status(500).send('Failed to load automatic subtitles page');
+        res.status(500).send(t('server.errors.autoSubsPageFailed', {}, 'Failed to load automatic subtitles page'));
     }
 });
 
 // Auto-subtitles page (standalone UI)
 app.get('/auto-subtitles', async (req, res) => {
     try {
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { config: configStr, videoId, filename } = req.query;
         if (!configStr || !videoId) {
-            return res.status(400).send('Missing config or videoId');
+            return res.status(400).send(t('server.errors.missingConfigOrVideo', {}, 'Missing config or videoId'));
         }
 
         // Defense-in-depth: prevent caching of page embedding user config/videoId
         setNoStore(res);
 
-        const config = await resolveConfigGuarded(configStr, req, res, '[Auto Subs Page] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Auto Subs Page] config', t);
+        t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, configStr);
 
         log.debug(() => `[Auto Subs Page] Loading auto-subtitling tool for video ${videoId}`);
@@ -3327,9 +3446,10 @@ app.get('/auto-subtitles', async (req, res) => {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Auto Subs Page]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Auto Subs Page]', t)) return;
         log.error(() => '[Auto Subs Page] Error:', error);
-        res.status(500).send('Failed to load automatic subtitles page');
+        res.status(500).send(t('server.errors.autoSubsPageFailed', {}, 'Failed to load automatic subtitles page'));
     }
 });
 
@@ -3339,6 +3459,7 @@ app.get('/addon/:config/configure', (req, res) => {
     try {
         // CRITICAL: Prevent caching to avoid cross-user config contamination (defense-in-depth)
         setNoStore(res);
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr } = req.params;
 
@@ -3347,7 +3468,8 @@ app.get('/addon/:config/configure', (req, res) => {
         res.redirect(302, `/configure?config=${encodeURIComponent(configStr)}`);
     } catch (error) {
         log.error(() => '[Configure] Error:', error);
-        res.status(500).send('Failed to load configuration page');
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        res.status(500).send(t('server.errors.configPageFailed', {}, 'Failed to load configuration page'));
     }
 });
 
@@ -3356,10 +3478,11 @@ app.get('/addon/:config/sync-subtitles/:videoId', async (req, res) => {
     try {
         // Defense-in-depth: Prevent caching (carries session token in query)
         setNoStore(res);
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, videoId } = req.params;
         const { filename } = req.query;
-        const config = await resolveConfigGuarded(configStr, req, res, '[Sync Subtitles] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Sync Subtitles] config', t);
 
         log.debug(() => `[Sync Subtitles] Request for video ${videoId}, filename: ${filename}`);
 
@@ -3367,9 +3490,10 @@ app.get('/addon/:config/sync-subtitles/:videoId', async (req, res) => {
         res.redirect(302, `/subtitle-sync?config=${encodeURIComponent(configStr)}&videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename || '')}`);
 
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Sync Subtitles]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Sync Subtitles]', t)) return;
         log.error(() => '[Sync Subtitles] Error:', error);
-        res.status(500).send('Failed to load subtitle sync page');
+        res.status(500).send(t('server.errors.subtitleSyncPageFailed', {}, 'Failed to load subtitle sync page'));
     }
 });
 
@@ -3379,13 +3503,15 @@ app.get('/subtitle-sync', async (req, res) => {
     setNoStore(res);
 
     try {
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { config: configStr, videoId, filename } = req.query;
 
         if (!configStr || !videoId) {
-            return res.status(400).send('Missing config or videoId');
+            return res.status(400).send(t('server.errors.missingConfigOrVideo', {}, 'Missing config or videoId'));
         }
 
-        const config = await resolveConfigGuarded(configStr, req, res, '[Subtitle Sync Page] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Subtitle Sync Page] config', t);
+        t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, configStr);
 
         log.debug(() => `[Subtitle Sync Page] Loading page for video ${videoId}`);
@@ -3403,9 +3529,10 @@ app.get('/subtitle-sync', async (req, res) => {
         res.send(html);
 
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Subtitle Sync Page]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Subtitle Sync Page]', t)) return;
         log.error(() => '[Subtitle Sync Page] Error:', error);
-        res.status(500).send('Failed to load subtitle sync page');
+        res.status(500).send(t('server.errors.subtitleSyncPageFailed', {}, 'Failed to load subtitle sync page'));
     }
 });
 
@@ -3414,13 +3541,16 @@ app.get('/addon/:config/xsync/:videoHash/:lang/:sourceSubId', async (req, res) =
     try {
         // Defense-in-depth: Prevent caching (user-specific synced subtitle)
         setNoStore(res);
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, videoHash, lang, sourceSubId } = req.params;
-        const config = await resolveConfigGuarded(configStr, req, res, '[xSync Download] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[xSync Download] config', t);
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[xSync Download] Rejected due to invalid/missing session token');
-            return res.status(401).send('Invalid or expired session token');
+            t = getTranslatorFromRequest(req, res, config);
+            return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
         }
+        t = getTranslatorFromRequest(req, res, config);
 
         log.debug(() => `[xSync Download] Request for ${videoHash}_${lang}_${sourceSubId}`);
 
@@ -3429,7 +3559,7 @@ app.get('/addon/:config/xsync/:videoHash/:lang/:sourceSubId', async (req, res) =
 
         if (!syncedSub || !syncedSub.content) {
             log.debug(() => '[xSync Download] Not found in cache');
-            return res.status(404).send('Synced subtitle not found');
+            return res.status(404).send(t('server.errors.syncedSubtitleNotFound', {}, 'Synced subtitle not found'));
         }
 
         log.debug(() => '[xSync Download] Serving synced subtitle from cache');
@@ -3439,9 +3569,10 @@ app.get('/addon/:config/xsync/:videoHash/:lang/:sourceSubId', async (req, res) =
         res.send(syncedSub.content);
 
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[xSync Download]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[xSync Download]', t)) return;
         log.error(() => '[xSync Download] Error:', error);
-        res.status(500).send('Failed to download synced subtitle');
+        res.status(500).send(t('server.errors.downloadSyncedFailed', {}, 'Failed to download synced subtitle'));
     }
 });
 
@@ -3478,11 +3609,12 @@ app.post('/api/save-synced-subtitle', userDataWriteLimiter, async (req, res) => 
     try {
         // CRITICAL: Prevent caching to avoid cross-user config contamination (user config in body)
         setNoStore(res);
+        let t = res.locals?.t || getTranslatorFromRequest(req, res, req.body);
 
         const { configStr, videoHash, languageCode, sourceSubId, content, originalSubId, metadata } = req.body;
 
         if (!configStr || !videoHash || !languageCode || !sourceSubId || !content) {
-            return res.status(400).json({ error: 'Missing required fields' });
+            return res.status(400).json({ error: t('server.errors.missingFields', {}, 'Missing required fields') });
         }
 
         // Validate config
@@ -3491,8 +3623,10 @@ app.post('/api/save-synced-subtitle', userDataWriteLimiter, async (req, res) => 
         // Reject writes when session token is missing/invalid to prevent cross-user pollution of shared sync cache
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[Save Synced] Rejected write due to invalid/missing session token');
-            return res.status(401).json({ error: 'Invalid or expired session token' });
+            t = getTranslatorFromRequest(req, res, config);
+            return res.status(401).json({ error: t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token') });
         }
+        t = getTranslatorFromRequest(req, res, config);
 
         log.debug(() => `[Save Synced] Saving synced subtitle: ${videoHash}_${languageCode}_${sourceSubId}`);
 
@@ -3510,12 +3644,13 @@ app.post('/api/save-synced-subtitle', userDataWriteLimiter, async (req, res) => 
             }
         });
 
-        res.json({ success: true, message: 'Synced subtitle saved successfully' });
+        res.json({ success: true, message: t('server.sync.saveSuccess', {}, 'Synced subtitle saved successfully') });
 
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Save Synced]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Save Synced]', t)) return;
         log.error(() => '[Save Synced] Error:', error);
-        res.status(500).json({ error: 'Failed to save synced subtitle' });
+        res.status(500).json({ error: t('server.errors.saveSyncedFailed', {}, 'Failed to save synced subtitle') });
     }
 });
 
@@ -3524,18 +3659,21 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId', async (req, res) =
     try {
         const { config: configStr, videoHash, lang, trackId } = req.params;
         setNoStore(res);
-        const config = await resolveConfigGuarded(configStr, req, res, '[xEmbed Download] config');
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
+        const config = await resolveConfigGuarded(configStr, req, res, '[xEmbed Download] config', t);
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[xEmbed Download] Rejected due to invalid/missing session token');
-            return res.status(401).send('Invalid or expired session token');
+            t = getTranslatorFromRequest(req, res, config);
+            return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
         }
+        t = getTranslatorFromRequest(req, res, config);
 
         const safeVideoHash = (typeof videoHash === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(videoHash)) ? videoHash : null;
         const safeTrackId = (typeof trackId === 'string' || typeof trackId === 'number') && /^[a-zA-Z0-9._-]{1,120}$/.test(String(trackId)) ? String(trackId) : null;
         const safeLang = (typeof lang === 'string' && /^[a-zA-Z0-9_-]{1,24}$/.test(lang)) ? lang.toLowerCase() : null;
 
         if (!safeVideoHash || !safeTrackId || !safeLang) {
-            return res.status(400).send('Invalid embedded subtitle parameters');
+            return res.status(400).send(t('server.errors.invalidEmbeddedParams', {}, 'Invalid embedded subtitle parameters'));
         }
 
         log.debug(() => `[xEmbed Download] Request for ${safeVideoHash}_${safeLang}_${safeTrackId}`);
@@ -3547,16 +3685,17 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId', async (req, res) =
         );
 
         if (!match || !match.content) {
-            return res.status(404).send('Translated embedded subtitle not found');
+            return res.status(404).send(t('server.errors.translatedEmbeddedMissing', {}, 'Translated embedded subtitle not found'));
         }
 
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_xembed.srt"`);
         res.send(match.content);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[xEmbed Download]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[xEmbed Download]', t)) return;
         log.error(() => '[xEmbed Download] Error:', error);
-        res.status(500).send('Failed to download embedded subtitle');
+        res.status(500).send(t('server.errors.downloadEmbeddedFailed', {}, 'Failed to download embedded subtitle'));
     }
 });
 
@@ -3565,18 +3704,21 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId/original', async (re
     try {
         const { config: configStr, videoHash, lang, trackId } = req.params;
         setNoStore(res);
-        const config = await resolveConfigGuarded(configStr, req, res, '[xEmbed Original] config');
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
+        const config = await resolveConfigGuarded(configStr, req, res, '[xEmbed Original] config', t);
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[xEmbed Original] Rejected due to invalid/missing session token');
-            return res.status(401).send('Invalid or expired session token');
+            t = getTranslatorFromRequest(req, res, config);
+            return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
         }
+        t = getTranslatorFromRequest(req, res, config);
 
         const safeVideoHash = (typeof videoHash === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(videoHash)) ? videoHash : null;
         const safeTrackId = (typeof trackId === 'string' || typeof trackId === 'number') && /^[a-zA-Z0-9._-]{1,120}$/.test(String(trackId)) ? String(trackId) : null;
         const safeLang = (typeof lang === 'string' && /^[a-zA-Z0-9_-]{1,24}$/.test(lang)) ? lang.toLowerCase() : null;
 
         if (!safeVideoHash || !safeTrackId || !safeLang) {
-            return res.status(400).send('Invalid embedded subtitle parameters');
+            return res.status(400).send(t('server.errors.invalidEmbeddedParams', {}, 'Invalid embedded subtitle parameters'));
         }
 
         log.debug(() => `[xEmbed Original] Request for ${safeVideoHash}_${safeLang}_${safeTrackId}`);
@@ -3588,16 +3730,17 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId/original', async (re
         );
 
         if (!match || !match.content) {
-            return res.status(404).send('Original embedded subtitle not found');
+            return res.status(404).send(t('server.errors.originalEmbeddedMissing', {}, 'Original embedded subtitle not found'));
         }
 
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_original.srt"`);
         res.send(match.content);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[xEmbed Original]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[xEmbed Original]', t)) return;
         log.error(() => '[xEmbed Original] Error:', error);
-        res.status(500).send('Failed to download original embedded subtitle');
+        res.status(500).send(t('server.errors.downloadEmbeddedOriginalFailed', {}, 'Failed to download original embedded subtitle'));
     }
 });
 
@@ -3605,6 +3748,7 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId/original', async (re
 app.post('/api/save-embedded-subtitle', userDataWriteLimiter, async (req, res) => {
     try {
         setNoStore(res); // prevent caching of user-config-bearing request/response
+        let t = res.locals?.t || getTranslatorFromRequest(req, res, req.body);
         const { configStr, videoHash, trackId, languageCode, content, metadata } = req.body || {};
 
         const normalizedVideoHash = typeof videoHash === 'string' ? videoHash.trim() : '';
@@ -3617,17 +3761,19 @@ app.post('/api/save-embedded-subtitle', userDataWriteLimiter, async (req, res) =
         const langIsSafe = normalizedLang && normalizedLang.length <= 24;
 
         if (!configStr || !hashIsSafe || !trackIsSafe || !langIsSafe || !subtitleContent) {
-            return res.status(400).json({ error: 'Missing or invalid required fields' });
+            return res.status(400).json({ error: t('server.errors.missingOrInvalidFields', {}, 'Missing or invalid required fields') });
         }
         if (subtitleContent.length > 5 * 1024 * 1024) {
-            return res.status(413).json({ error: 'Embedded subtitle is too large' });
+            return res.status(413).json({ error: t('server.errors.embeddedTooLarge', {}, 'Embedded subtitle is too large') });
         }
 
-        const config = await resolveConfigGuarded(configStr, req, res, '[Save Embedded] config');
+        const config = await resolveConfigGuarded(configStr, req, res, '[Save Embedded] config', t);
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[Save Embedded] Rejected write due to invalid/missing session token');
-            return res.status(401).json({ error: 'Invalid or expired session token' });
+            t = getTranslatorFromRequest(req, res, config);
+            return res.status(401).json({ error: t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token') });
         }
+        t = getTranslatorFromRequest(req, res, config);
 
         let kept = false;
         let cacheKey = null;
@@ -3651,9 +3797,10 @@ app.post('/api/save-embedded-subtitle', userDataWriteLimiter, async (req, res) =
 
         return res.json({ success: true, kept, cacheKey, metadata: normalizedMetadata });
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Save Embedded]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Save Embedded]', t)) return;
         log.error(() => '[Save Embedded] Error:', error);
-        res.status(500).json({ error: 'Failed to save embedded subtitle' });
+        res.status(500).json({ error: t('server.errors.saveEmbeddedFailed', {}, 'Failed to save embedded subtitle') });
     }
 });
 
@@ -3661,6 +3808,7 @@ app.post('/api/save-embedded-subtitle', userDataWriteLimiter, async (req, res) =
 app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res) => {
     try {
         setNoStore(res); // prevent caching of user-config-bearing request/response
+        let t = res.locals?.t || getTranslatorFromRequest(req, res, req.body);
         const {
             configStr,
             videoHash,
@@ -3686,10 +3834,10 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
         const langIsSafe = normalizedTargetLang && normalizedTargetLang.length <= 24;
 
         if (!configStr || !hashIsSafe || !trackIsSafe || !langIsSafe) {
-            return res.status(400).json({ error: 'Invalid or missing required fields' });
+            return res.status(400).json({ error: t('server.errors.missingOrInvalidFields', {}, 'Invalid or missing required fields') });
         }
         if (subtitleContent && subtitleContent.length > 5 * 1024 * 1024) {
-            return res.status(413).json({ error: 'Subtitle content is too large' });
+            return res.status(413).json({ error: t('server.errors.subtitleTooLarge', {}, 'Subtitle content is too large') });
         }
 
         const safeVideoHash = normalizedVideoHash;
@@ -3697,11 +3845,13 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
         const safeTargetLanguage = normalizedTargetLang;
         const safeSourceLanguage = normalizedSourceLang || 'und';
 
-        const baseConfig = await resolveConfigGuarded(configStr, req, res, '[Embedded Translate] config');
+        const baseConfig = await resolveConfigGuarded(configStr, req, res, '[Embedded Translate] config', t);
         if (!baseConfig || baseConfig.__sessionTokenError === true) {
             log.warn(() => '[Embedded Translate] Rejected due to invalid/missing session token');
-            return res.status(401).json({ error: 'Invalid or expired session token' });
+            t = getTranslatorFromRequest(req, res, baseConfig);
+            return res.status(401).json({ error: t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token') });
         }
+        t = getTranslatorFromRequest(req, res, baseConfig);
         const workingConfig = {
             ...baseConfig,
             advancedSettings: { ...(baseConfig.advancedSettings || {}) }
@@ -3881,11 +4031,11 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
         let originalEntry = null;
         if (!sourceContent) {
             if (!KEEP_EMBEDDED_ORIGINALS) {
-                return res.status(400).json({ error: 'Original embedded subtitle required: send content or enable KEEP_EMBEDDED_ORIGINALS=true' });
+                return res.status(400).json({ error: t('server.errors.originalEmbeddedRequired', {}, 'Original embedded subtitle required: send content or enable KEEP_EMBEDDED_ORIGINALS=true') });
             }
             originalEntry = await embeddedCache.getOriginalEmbedded(safeVideoHash, safeTrackId, safeSourceLanguage);
             if (!originalEntry || !originalEntry.content) {
-                return res.status(404).json({ error: 'Original embedded subtitle not found' });
+                return res.status(404).json({ error: t('server.errors.originalEmbeddedMissing', {}, 'Original embedded subtitle not found') });
             }
             sourceContent = originalEntry.content;
         } else if (KEEP_EMBEDDED_ORIGINALS) {
@@ -3968,9 +4118,10 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
             metadata: saveMeta
         });
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Embedded Translate]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Embedded Translate]', t)) return;
         log.error(() => ['[Embedded Translate] Error:', error]);
-        res.status(500).json({ error: error.message || 'Failed to translate embedded subtitle' });
+        res.status(500).json({ error: t('server.errors.translateEmbeddedFailed', { reason: error.message || '' }, error.message || 'Failed to translate embedded subtitle') });
     }
 });
 
@@ -3992,7 +4143,9 @@ function escapeHtml(text) {
 }
 
 // Generate HTML page for translation selector
-function generateTranslationSelectorPage(subtitles, videoId, targetLang, configStr, config) {
+function generateTranslationSelectorPage(subtitles, videoId, targetLang, configStr, config, t, lang) {
+    const selectedLang = lang || (config && config.uiLanguage) || DEFAULT_LANG;
+    const tx = typeof t === 'function' ? t : getTranslator(selectedLang);
     const targetLangName = getLanguageName(targetLang) || targetLang;
     const sourceLangs = config.sourceLanguages.map(lang => getLanguageName(lang) || lang).join(', ');
 
@@ -4011,11 +4164,11 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
 
     return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${escapeHtml(selectedLang)}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Select Subtitle to Translate</title>
+    <title>${escapeHtml(tx('server.selector.title', { target: targetLangName }, `Select Subtitle to Translate`))}</title>
     <style>
         * {
             margin: 0;
@@ -4487,17 +4640,17 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
     <div id="episodeToast" class="episode-toast" role="status" aria-live="polite">
         <div class="icon">!</div>
         <div class="content">
-            <p class="title" id="episodeToastTitle">New stream detected</p>
-            <p class="meta" id="episodeToastMeta">A different episode is playing in Stremio.</p>
+            <p class="title" id="episodeToastTitle">${escapeHtml(tx('toolbox.toast.title', {}, 'New stream detected'))}</p>
+            <p class="meta" id="episodeToastMeta">${escapeHtml(tx('toolbox.toast.meta', {}, 'A different episode is playing in Stremio.'))}</p>
         </div>
-        <button class="close" id="episodeToastDismiss" type="button" aria-label="Dismiss notification">×</button>
-        <button class="action" id="episodeToastUpdate" type="button">Update</button>
+        <button class="close" id="episodeToastDismiss" type="button" aria-label="${escapeHtml(tx('toolbox.toast.dismiss', {}, 'Dismiss notification'))}">×</button>
+        <button class="action" id="episodeToastUpdate" type="button">${escapeHtml(tx('toolbox.toast.update', {}, 'Update'))}</button>
     </div>
 
     <div class="container">
-        <h1>Translate to ${targetLangName} <span class="version-badge">v${version}</span></h1>
-        <div class="subtitle-header">Select a ${sourceLangs} subtitle to translate</div>
-        ${subtitles.length > 0 ? subtitleOptions : `<div class="no-subtitles">No ${sourceLangs} subtitles available</div>`}
+        <h1>${escapeHtml(tx('server.selector.heading', { target: targetLangName }, `Translate to ${targetLangName}`))} <span class="version-badge">v${version}</span></h1>
+        <div class="subtitle-header">${escapeHtml(tx('server.selector.subheader', { sources: sourceLangs }, `Select a ${sourceLangs} subtitle to translate`))}</div>
+        ${subtitles.length > 0 ? subtitleOptions : `<div class="no-subtitles">${escapeHtml(tx('server.selector.empty', { sources: sourceLangs }, `No ${sourceLangs} subtitles available`))}</div>`}
     </div>
 
     <script>
@@ -4738,9 +4891,11 @@ app.get('/addon/:config/manifest.json', async (req, res) => {
         // Without these headers, proxies/CDNs can cache User A's manifest and serve it to User B
         // This was causing the "random language in Make button" bug reported in v1.4.1
         setNoStore(res);
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         log.debug(() => `[Manifest] Parsing config for manifest request`);
-        const config = await resolveConfigGuarded(req.params.config, req, res, '[Manifest] config');
+        const config = await resolveConfigGuarded(req.params.config, req, res, '[Manifest] config', t);
+        t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, req.params.config);
 
         // Construct base URL from request
@@ -4758,9 +4913,10 @@ app.get('/addon/:config/manifest.json', async (req, res) => {
 
         res.json(manifest);
     } catch (error) {
-        if (respondStorageUnavailable(res, error, '[Manifest]')) return;
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Manifest]', t)) return;
         log.error(() => ['[Manifest] Error:', error]);
-        res.status(500).json({ error: 'Failed to generate manifest' });
+        res.status(500).json({ error: t('server.errors.manifestFailed', {}, 'Failed to generate manifest') });
     }
 });
 
@@ -4769,6 +4925,7 @@ app.get('/addon/:config/manifest.json', async (req, res) => {
 // It must be placed AFTER all specific routes but BEFORE the SDK router
 app.get('/addon/:config', (req, res, next) => {
     try {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { config: configStr } = req.params;
         // Defense-in-depth: Prevent caching (redirect includes session token)
         setNoStore(res);
@@ -4777,7 +4934,8 @@ app.get('/addon/:config', (req, res, next) => {
         res.redirect(302, `/configure?config=${encodeURIComponent(configStr)}`);
     } catch (error) {
         log.error(() => ['[Addon Base] Error:', error]);
-        res.status(500).send('Failed to load configuration page');
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        res.status(500).send(t('server.errors.configPageFailed', {}, 'Failed to load configuration page'));
     }
 });
 
@@ -4941,43 +5099,52 @@ app.use('/addon/:config', async (req, res, next) => {
 // Error handling middleware - Route-specific handlers
 // Error handler for /addon/:config/subtitle/* routes (returns SRT format)
 app.use('/addon/:config/subtitle', (error, req, res, next) => {
+    const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] Subtitle Error:', error]);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.status(500).end('ERROR: Subtitle unavailable\n\n');
+    res.status(500).end(`${t('server.errors.subtitleUnavailable', {}, 'ERROR: Subtitle unavailable')}\n\n`);
 });
 
 // Error handler for /addon/:config/translate/* routes (returns SRT format)
 app.use('/addon/:config/translate', (error, req, res, next) => {
+    const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] Translation Error:', error]);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.status(500).end('ERROR: Translation unavailable\n\n');
+    res.status(500).end(`${t('server.errors.translationUnavailable', {}, 'ERROR: Translation unavailable')}\n\n`);
 });
 
 // Error handler for /addon/:config/translate-selector/* routes (returns HTML format)
 app.use('/addon/:config/translate-selector', (error, req, res, next) => {
+    const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] Translation Selector Error:', error]);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.status(500).end('<html><body><p>Error: Failed to load subtitle selector</p></body></html>');
+    const message = escapeHtml(t('server.errors.subtitleSelectorFailed', {}, 'Failed to load subtitle selector'));
+    res.status(500).end(`<html><body><p>${message}</p></body></html>`);
 });
 
 // Error handler for /addon/:config/file-translate/* routes (returns redirect/HTML format)
 app.use('/addon/:config/file-translate', (error, req, res, next) => {
+    const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] File Translation Error:', error]);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.status(500).end('<html><body><p>Error: Failed to load file translation page</p></body></html>');
+    const message = escapeHtml(t('server.errors.fileTranslationPageFailed', {}, 'Failed to load file translation page'));
+    res.status(500).end(`<html><body><p>${message}</p></body></html>`);
 });
 
 // Error handler for /addon/:config/sub-toolbox/* routes (returns redirect/HTML format)
 app.use('/addon/:config/sub-toolbox', (error, req, res, next) => {
+    const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] Sub Toolbox Error:', error]);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.status(500).end('<html><body><p>Error: Failed to load Sub Toolbox page</p></body></html>');
+    const message = escapeHtml(t('server.errors.subToolboxPageFailed', {}, 'Failed to load Sub Toolbox page'));
+    res.status(500).end(`<html><body><p>${message}</p></body></html>`);
 });
 
 // Default error handler for manifest/router and other routes (JSON responses)
 app.use((error, req, res, next) => {
+    const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] General Error:', error]);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: t('server.errors.internalServerError', {}, 'Internal server error') });
 });
 
 // Initialize sync cache and session manager, then start server

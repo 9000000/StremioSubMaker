@@ -3,6 +3,7 @@
     'use strict';
 
     const DEFAULT_LOCALE = { lang: 'en', messages: {} };
+    const UI_LANGUAGE_STORAGE_KEY = 'submaker_ui_language';
     let locale = DEFAULT_LOCALE;
 
     function bootstrapTranslator(payload) {
@@ -81,6 +82,49 @@
         el.setAttribute(attr, tConfig(key, {}, fallback || current || ''));
     }
 
+    function applyDataI18n() {
+        try {
+            const nodes = document.querySelectorAll('[data-i18n]');
+            nodes.forEach(node => {
+                const key = node.getAttribute('data-i18n');
+                if (!key) return;
+                const attr = node.getAttribute('data-i18n-attr');
+                const fallbackAttr = node.getAttribute('data-i18n-fallback');
+                const fallback = fallbackAttr || (attr ? node.getAttribute(attr) : node.textContent);
+                const value = tConfig(key, {}, fallback || '');
+                if (attr === 'innerHTML') {
+                    node.innerHTML = value;
+                } else if (attr) {
+                    node.setAttribute(attr, value);
+                } else {
+                    node.textContent = value;
+                }
+            });
+        } catch (err) {
+            console.warn('[i18n] Failed to apply data-i18n copy', err);
+        }
+    }
+
+    function setDescriptionWithLink(id, textKey, linkKey, fallbackText) {
+        const wrapper = document.getElementById(id);
+        if (!wrapper) return;
+        const link = wrapper.querySelector('a');
+        const linkHref = link ? link.getAttribute('href') : '';
+        const linkColor = link ? link.style.color : '';
+        const linkTarget = link ? link.getAttribute('target') : '';
+        const linkText = link ? link.textContent : '';
+        const translatedLink = tConfig(linkKey, {}, linkText || '');
+        const translatedText = tConfig(textKey, {}, fallbackText || wrapper.textContent || '');
+        wrapper.textContent = translatedText + (translatedText ? ' ' : '');
+        if (link) {
+            link.textContent = translatedLink;
+            if (linkHref) link.href = linkHref;
+            if (linkTarget) link.target = linkTarget;
+            if (linkColor) link.style.color = linkColor;
+            wrapper.appendChild(link);
+        }
+    }
+
     function applyStaticCopy() {
         setText('uiLanguageLabel', 'config.uiLanguageLabel', 'Interface');
         setAttr('uiLanguageSelect', 'aria-label', 'config.uiLanguageAria', 'UI language');
@@ -123,6 +167,15 @@
             const textEl = validateBtn.querySelector('.validate-text');
             if (textEl) setText(textEl, 'config.opensubs.validateCta', 'Run Test');
         }
+        setText('subsourceTitle', 'config.providers.subsource.title', 'SubSource');
+        setDescriptionWithLink('subsourceDescription', 'config.providers.subsource.description', 'config.providers.subsource.linkLabel', 'Get your free API key from');
+        setText('subdlTitle', 'config.providers.subdl.title', 'SubDL');
+        setDescriptionWithLink('subdlDescription', 'config.providers.subdl.description', 'config.providers.subdl.linkLabel', 'Get your free API key from');
+        setDescriptionWithLink('geminiApiHelper', 'config.gemini.apiKey.helper', 'config.gemini.apiKey.linkLabel', 'Get your free API key from');
+        setText('sourceLanguagesError', 'config.validation.sourceRequired', 'Please select at least one source language');
+        setText('targetLanguagesError', 'config.validation.targetRequired', 'Please select at least one target language');
+        setText('learnLanguagesError', 'config.validation.learnRequired', 'Please select at least one learn language');
+        applyDataI18n();
     }
 
     /**
@@ -154,10 +207,21 @@
         maxNoTranslationLanguages: 9
     };
     const SUPPORTED_UI_LANGUAGES = [
-        { value: 'en', label: 'English', flag: '🇬🇧' },
-        { value: 'es', label: 'Español', flag: '🇪🇸' }
+        {
+            value: 'en',
+            labelKey: 'config.uiLanguages.en.label',
+            flagKey: 'config.uiLanguages.en.flag',
+            fallbackLabel: 'English',
+            fallbackFlag: '🇺🇸'
+        },
+        {
+            value: 'es',
+            labelKey: 'config.uiLanguages.es.label',
+            flagKey: 'config.uiLanguages.es.flag',
+            fallbackLabel: 'Español',
+            fallbackFlag: '🇪🇸'
+        }
     ];
-    const UI_LANGUAGE_STORAGE_KEY = 'submaker_ui_language';
     const KEY_OPTIONAL_PROVIDERS = new Set(['googletranslate']);
 
     function parseLimit(value, fallback, min = 1, max = 50) {
@@ -176,12 +240,34 @@
         return (navigator.language || 'en').toLowerCase();
     }
 
+    function toFlagEmoji(raw) {
+        const candidate = (raw || '').toString().trim();
+        if (/^[a-z]{2}$/i.test(candidate)) {
+            const base = 127397;
+            return String.fromCodePoint(candidate[0].toUpperCase().charCodeAt(0) + base, candidate[1].toUpperCase().charCodeAt(0) + base);
+        }
+        return '';
+    }
+
+    function resolveUiLanguageMeta(entry) {
+        if (!entry) return null;
+        const label = tConfig(entry.labelKey, {}, entry.fallbackLabel || entry.value.toUpperCase());
+        const translatedFlag = tConfig(entry.flagKey, {}, entry.fallbackFlag || entry.value.toUpperCase());
+        const emojiFlag = toFlagEmoji(translatedFlag) || toFlagEmoji(entry.fallbackFlag) || translatedFlag || entry.fallbackFlag || entry.value.toUpperCase();
+        return {
+            ...entry,
+            label,
+            flag: emojiFlag
+        };
+    }
+
     function getUiLanguageMeta(lang) {
         const normalized = (lang || '').toString().toLowerCase();
         const exact = SUPPORTED_UI_LANGUAGES.find(l => l.value === normalized);
-        if (exact) return exact;
+        if (exact) return resolveUiLanguageMeta(exact);
         const base = normalized.split('-')[0];
-        return SUPPORTED_UI_LANGUAGES.find(l => l.value === base) || SUPPORTED_UI_LANGUAGES[0];
+        const fallback = SUPPORTED_UI_LANGUAGES.find(l => l.value === base) || SUPPORTED_UI_LANGUAGES[0];
+        return resolveUiLanguageMeta(fallback);
     }
 
     function updateUiLanguageBadge(lang) {
@@ -620,10 +706,11 @@ Translate to {target_language}.`;
         const select = document.getElementById('uiLanguageSelect');
         if (!select) return;
         select.innerHTML = '';
-        SUPPORTED_UI_LANGUAGES.forEach(({ value, label }) => {
+        SUPPORTED_UI_LANGUAGES.forEach((entry) => {
+            const resolved = resolveUiLanguageMeta(entry);
             const opt = document.createElement('option');
-            opt.value = value;
-            opt.textContent = label;
+            opt.value = entry.value;
+            opt.textContent = resolved?.label || entry.value.toUpperCase();
             select.appendChild(opt);
         });
         const meta = getUiLanguageMeta(selectedLang || select.value);
@@ -656,13 +743,16 @@ Translate to {target_language}.`;
         updateUiLanguageBadge((currentConfig && currentConfig.uiLanguage) || (locale && locale.lang) || 'en');
         const dock = document.getElementById('uiLanguageDock');
         if (dock) {
-            dock.title = translate('config.uiLanguageLabel', 'Interface language');
+            const dockLabel = translate('config.uiLanguageLabel', 'Interface language');
+            dock.title = dockLabel;
+            dock.setAttribute('aria-label', dockLabel);
         }
         const uiLangSelect = document.getElementById('uiLanguageSelect');
         if (uiLangSelect) {
             const labelText = translate('config.uiLanguageLabel', 'Interface language');
             uiLangSelect.setAttribute('aria-label', labelText);
             uiLangSelect.setAttribute('title', labelText);
+            populateUiLanguageSelect((currentConfig && currentConfig.uiLanguage) || (locale && locale.lang) || 'en');
         }
         const heroTitle = document.getElementById('heroTitle');
         if (heroTitle) {
@@ -768,7 +858,7 @@ Translate to {target_language}.`;
                                 try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
 
                                 // Show a warning to the user
-                                showAlert(tConfig('config.alerts.sessionLost', {}, 'Config session was lost. Please reconfigure and save to create a new session.'), 'warning');
+                                showAlert(tConfig('config.alerts.sessionLost', {}, 'Config session was lost. Please reconfigure and save to create a new session.'), 'warning', 'config.alerts.sessionLost', {});
                             } else {
                                 // Normal path - store the original token
                                 try { localStorage.setItem(TOKEN_KEY, rawConfigParam); } catch (_) {}
@@ -827,7 +917,7 @@ Translate to {target_language}.`;
 
         // Kick off language loading without blocking UI/modals
         loadLanguages().catch(err => {
-            try { showAlert(tConfig('config.alerts.loadLanguagesFailed', { reason: err.message }, 'Failed to load languages: ' + err.message), 'error'); } catch (_) {}
+            try { showAlert(tConfig('config.alerts.loadLanguagesFailed', { reason: err.message }, 'Failed to load languages: ' + err.message), 'error', 'config.alerts.loadLanguagesFailed', { reason: err.message }); } catch (_) {}
         });
 
         setupEventListeners();
@@ -1491,7 +1581,7 @@ Translate to {target_language}.`;
         }
 
         // All retries failed
-        showAlert(tConfig('config.alerts.loadLanguagesExhausted', { retries: maxRetries, reason: lastError.message }, `Failed to load languages after ${maxRetries} attempts: ${lastError.message}. Please refresh the page.`), 'error');
+        showAlert(tConfig('config.alerts.loadLanguagesExhausted', { retries: maxRetries, reason: lastError.message }, `Failed to load languages after ${maxRetries} attempts: ${lastError.message}. Please refresh the page.`), 'error', 'config.alerts.loadLanguagesExhausted', { retries: maxRetries, reason: lastError.message });
     }
 
     // Normalize/dedupe languages for UI (e.g., merge ptbr/pt-br/pob into one 'pob')
@@ -1582,19 +1672,19 @@ Translate to {target_language}.`;
             // Add language
             if (type === 'source') {
                 if (currentConfig[configKey].length >= MAX_SOURCE_LANGUAGES) {
-                    showAlert(tConfig('config.alerts.sourceLimit', { limit: MAX_SOURCE_LANGUAGES }, `You can only select up to ${MAX_SOURCE_LANGUAGES} source languages`), 'warning');
+                    showAlert(tConfig('config.alerts.sourceLimit', { limit: MAX_SOURCE_LANGUAGES }, `You can only select up to ${MAX_SOURCE_LANGUAGES} source languages`), 'warning', 'config.alerts.sourceLimit', { limit: MAX_SOURCE_LANGUAGES });
                     return;
                 }
                 currentConfig[configKey].push(code);
             } else if (type === 'target' || type === 'learn') {
                 if (!canAddTargetLanguage(code)) {
-                    showAlert(tConfig('config.alerts.targetLimit', { limit: MAX_TARGET_LANGUAGES }, `You can only select up to ${MAX_TARGET_LANGUAGES} total target languages (including Learn Mode)`), 'warning');
+                    showAlert(tConfig('config.alerts.targetLimit', { limit: MAX_TARGET_LANGUAGES }, `You can only select up to ${MAX_TARGET_LANGUAGES} total target languages (including Learn Mode)`), 'warning', 'config.alerts.targetLimit', { limit: MAX_TARGET_LANGUAGES });
                     return;
                 }
                 currentConfig[configKey].push(code);
             } else if (type === 'notranslation') {
                 if (currentConfig[configKey].length >= MAX_NO_TRANSLATION_LANGUAGES) {
-                    showAlert(tConfig('config.alerts.noTranslationLimit', { limit: MAX_NO_TRANSLATION_LANGUAGES }, `You can only select up to ${MAX_NO_TRANSLATION_LANGUAGES} languages in Just Fetch mode`), 'warning');
+                    showAlert(tConfig('config.alerts.noTranslationLimit', { limit: MAX_NO_TRANSLATION_LANGUAGES }, `You can only select up to ${MAX_NO_TRANSLATION_LANGUAGES} languages in Just Fetch mode`), 'warning', 'config.alerts.noTranslationLimit', { limit: MAX_NO_TRANSLATION_LANGUAGES });
                     return;
                 }
                 currentConfig[configKey].push(code);
@@ -1878,7 +1968,7 @@ Translate to {target_language}.`;
                 const configRef = toolboxLauncher.dataset.configRef || getActiveConfigRef();
                 const url = buildToolboxUrl(configRef);
                 if (!url) {
-                    showAlert(tConfig('config.alerts.saveConfigFirst', {}, 'Save your config first to open Sub Toolbox.'), 'warning');
+                    showAlert(tConfig('config.alerts.saveConfigFirst', {}, 'Save your config first to open Sub Toolbox.'), 'warning', 'config.alerts.saveConfigFirst', {});
                     return;
                 }
                 window.open(url, '_blank', 'noopener,noreferrer');
@@ -2308,7 +2398,7 @@ Translate to {target_language}.`;
 
         if (!options.silent && prev !== betaEnabled) {
             try {
-                showAlert(betaEnabled ? tConfig('config.alerts.betaOn', {}, '🔬 Experimental Mode ON') : tConfig('config.alerts.betaOff', {}, '🔬 Experimental Mode OFF'), betaEnabled ? 'success' : 'info');
+                showAlert(betaEnabled ? tConfig('config.alerts.betaOn', {}, '🔬 Experimental Mode ON') : tConfig('config.alerts.betaOff', {}, '🔬 Experimental Mode OFF'), betaEnabled ? 'success' : 'info', betaEnabled ? 'config.alerts.betaOn' : 'config.alerts.betaOff', {});
             } catch (_) {}
         }
 
@@ -2676,7 +2766,7 @@ Translate to {target_language}.`;
         const apiKey = apiKeyInput.value.trim();
         if (!apiKey) {
             if (!options.silent) {
-                showAlert(tConfig('config.alerts.missingProviderKey', { provider: PROVIDERS[providerKey]?.label || providerKey }, `Add an API key for ${PROVIDERS[providerKey]?.label || providerKey} to load models`), 'warning');
+                showAlert(tConfig('config.alerts.missingProviderKey', { provider: PROVIDERS[providerKey]?.label || providerKey }, `Add an API key for ${PROVIDERS[providerKey]?.label || providerKey} to load models`), 'warning', 'config.alerts.missingProviderKey', { provider: PROVIDERS[providerKey]?.label || providerKey });
             }
             return;
         }
@@ -2692,7 +2782,7 @@ Translate to {target_language}.`;
                     modelSelect.innerHTML = '<option value="">Add ACCOUNT_ID|TOKEN to load models</option>';
                 }
                 if (!options.silent) {
-                    showAlert(tConfig('config.alerts.missingCfWorkers', {}, 'Cloudflare Workers AI key must be in ACCOUNT_ID|TOKEN format'), 'error');
+                    showAlert(tConfig('config.alerts.missingCfWorkers', {}, 'Cloudflare Workers AI key must be in ACCOUNT_ID|TOKEN format'), 'error', 'config.alerts.missingCfWorkers', {});
                 }
                 return;
             }
@@ -2722,12 +2812,12 @@ Translate to {target_language}.`;
             providerModelCache[providerKey] = models;
             populateProviderModels(providerKey, models, currentConfig.providers?.[providerKey]?.model || '');
             if (!options.silent) {
-                showAlert(`Loaded ${models.length} models for ${PROVIDERS[providerKey]?.label || providerKey}`, 'success');
+                showAlert(tConfig('config.alerts.loadModelsSuccess', { count: models.length, provider: PROVIDERS[providerKey]?.label || providerKey }, `Loaded ${models.length} models for ${PROVIDERS[providerKey]?.label || providerKey}`), 'success', 'config.alerts.loadModelsSuccess', { count: models.length, provider: PROVIDERS[providerKey]?.label || providerKey });
             }
         } catch (err) {
             populateProviderModels(providerKey, [], '');
             if (!options.silent) {
-                showAlert(`Failed to load models for ${PROVIDERS[providerKey]?.label || providerKey}: ${err.message}`, 'error');
+                showAlert(tConfig('config.alerts.loadModelsFailed', { provider: PROVIDERS[providerKey]?.label || providerKey, reason: err.message }, `Failed to load models for ${PROVIDERS[providerKey]?.label || providerKey}: ${err.message}`), 'error', 'config.alerts.loadModelsFailed', { provider: PROVIDERS[providerKey]?.label || providerKey, reason: err.message });
             }
         }
     }
@@ -2738,11 +2828,15 @@ Translate to {target_language}.`;
         const value = input.value.trim();
 
         if (!value) {
+            const message = tConfig('config.validation.geminiKeyRequired', {}, '⚠️ Gemini API key is required');
             input.classList.add('invalid');
             input.classList.remove('valid');
             error.classList.add('show');
+            if (error) {
+                error.textContent = message;
+            }
             if (showNotification) {
-                showAlert('⚠️ Gemini API key is required', 'error');
+                showAlert(message, 'error');
             }
             return false;
         } else {
@@ -2759,9 +2853,13 @@ Translate to {target_language}.`;
         const value = select.value;
 
         if (!value) {
+            const message = tConfig('config.validation.geminiModelRequired', {}, '⚠️ Please select a Gemini model');
             select.classList.add('invalid');
             select.classList.remove('valid');
             error.classList.add('show');
+            if (error) {
+                error.textContent = message;
+            }
             return false;
         } else {
             select.classList.remove('invalid');
@@ -3564,8 +3662,8 @@ Translate to {target_language}.`;
 
                     if (truncated) {
                         const msg = type === 'notranslation'
-                            ? `Only the first ${MAX_NO_TRANSLATION_LANGUAGES} languages were kept for Just Fetch mode.`
-                            : `Only the first ${MAX_TARGET_LANGUAGES} target languages were kept (combined with Learn Mode).`;
+                            ? tConfig('config.alerts.noTranslationTrimmed', { limit: MAX_NO_TRANSLATION_LANGUAGES }, `Only the first ${MAX_NO_TRANSLATION_LANGUAGES} languages were kept for Just Fetch mode.`)
+                            : tConfig('config.alerts.targetsTrimmed', { limit: MAX_TARGET_LANGUAGES }, `Only the first ${MAX_TARGET_LANGUAGES} target languages were kept (combined with Learn Mode).`);
                         showAlert(msg, 'warning');
                     }
                 }
@@ -3833,7 +3931,7 @@ Translate to {target_language}.`;
                 } catch (_) {}
 
                 // Notify user briefly that a new version was detected
-                try { showAlert('New Version Detected', 'info'); } catch (_) {}
+                try { showAlert(tConfig('config.alerts.newVersionDetected', {}, 'New Version Detected'), 'info', 'config.alerts.newVersionDetected', {}); } catch (_) {}
 
                 return migrated;
             }
@@ -4209,7 +4307,7 @@ Translate to {target_language}.`;
 
         const anyProviderEnabled = Object.values(config.subtitleProviders).some(p => p.enabled);
         if (!anyProviderEnabled) {
-            errors.push('⚠️ Please enable at least one subtitle provider');
+            errors.push(tConfig('config.validation.subtitleProviderRequired', {}, '⚠️ Please enable at least one subtitle provider'));
         }
         
 
@@ -4218,10 +4316,10 @@ Translate to {target_language}.`;
 
         // Validate enabled subtitle sources have API keys (where required)
         if (config.subtitleProviders.subdl?.enabled && !config.subtitleProviders.subdl.apiKey?.trim()) {
-            errors.push('⚠️ SubDL is enabled but API key is missing');
+            errors.push(tConfig('config.validation.subdlKeyRequired', {}, '⚠️ SubDL is enabled but API key is missing'));
         }
         if (config.subtitleProviders.subsource?.enabled && !config.subtitleProviders.subsource.apiKey?.trim()) {
-            errors.push('⚠️ SubSource is enabled but API key is missing');
+            errors.push(tConfig('config.validation.subsourceKeyRequired', {}, '⚠️ SubSource is enabled but API key is missing'));
         }
 
         // Validate that every enabled AI provider has an API key
@@ -4229,7 +4327,7 @@ Translate to {target_language}.`;
             const optionalKey = KEY_OPTIONAL_PROVIDERS.has(String(providerKey).toLowerCase());
             if (providerCfg?.enabled && !optionalKey && !providerCfg.apiKey?.trim()) {
                 const label = PROVIDERS[providerKey]?.label || providerKey;
-                errors.push(`Warning: ${label} is enabled but API key is missing`);
+                errors.push(tConfig('config.validation.providerKeyMissing', { provider: label }, `⚠️ ${label} is enabled but API key is missing`));
             }
         });
 
@@ -4237,7 +4335,7 @@ Translate to {target_language}.`;
         const openSubCfg = config.subtitleProviders.opensubtitles;
         const usingOpenSubsAuth = openSubCfg?.enabled && openSubCfg.implementationType === 'auth';
         if (usingOpenSubsAuth && (!openSubCfg.username || !openSubCfg.password)) {
-            errors.push('⚠️ OpenSubtitles Auth requires both username and password. Enter credentials or switch to V3 (no login needed).');
+            errors.push(tConfig('config.validation.opensubsAuthCredentials', {}, '⚠️ OpenSubtitles Auth requires both username and password. Enter credentials or switch to V3 (no login needed).'));
         }
 
         // If not in no-translation mode, validate AI provider and languages
@@ -4263,66 +4361,66 @@ Translate to {target_language}.`;
             });
 
             if (!mainProvider) {
-                errors.push('⚠️ Select a Main Provider');
+                errors.push(tConfig('config.validation.mainProviderRequired', {}, '⚠️ Select a Main Provider'));
             } else if (mainProvider === 'gemini') {
                 if (!validateGeminiApiKey(true)) {
-                    errors.push('⚠️ Gemini API key is required');
+                    errors.push(tConfig('config.validation.geminiKeyRequired', {}, '⚠️ Gemini API key is required'));
                 }
 
                 if (!validateGeminiModel()) {
-                    errors.push('⚠️ Please select a Gemini model');
+                    errors.push(tConfig('config.validation.geminiModelRequired', {}, '⚠️ Please select a Gemini model'));
                 }
             } else {
                 const providerCfg = config.providers?.[mainProvider];
                 if (!providerCfg || !providerCfg.enabled) {
-                    errors.push(`⚠️ Enable ${PROVIDERS[mainProvider]?.label || mainProvider} to use it as Main Provider`);
+                    errors.push(tConfig('config.validation.mainProviderEnable', { provider: PROVIDERS[mainProvider]?.label || mainProvider }, `⚠️ Enable ${PROVIDERS[mainProvider]?.label || mainProvider} to use it as Main Provider`));
                 }
                 const keyOptional = KEY_OPTIONAL_PROVIDERS.has(String(mainProvider).toLowerCase());
                 if (!keyOptional && (!providerCfg || !providerCfg.apiKey?.trim())) {
-                    errors.push(`⚠️ API key required for ${PROVIDERS[mainProvider]?.label || mainProvider}`);
+                    errors.push(tConfig('config.validation.mainProviderKeyRequired', { provider: PROVIDERS[mainProvider]?.label || mainProvider }, `⚠️ API key required for ${PROVIDERS[mainProvider]?.label || mainProvider}`));
                 }
                 if (!providerCfg || !providerCfg.model) {
-                    errors.push(`⚠️ Select a model for ${PROVIDERS[mainProvider]?.label || mainProvider}`);
+                    errors.push(tConfig('config.validation.mainProviderModelRequired', { provider: PROVIDERS[mainProvider]?.label || mainProvider }, `⚠️ Select a model for ${PROVIDERS[mainProvider]?.label || mainProvider}`));
                 }
             }
 
             if (multiEnabled && config.secondaryProviderEnabled) {
                 const secondaryKey = config.secondaryProvider;
                 if (!secondaryKey) {
-                    errors.push('⚠️ Select a Secondary Provider or disable the fallback toggle');
+                    errors.push(tConfig('config.validation.secondaryProviderRequired', {}, '⚠️ Select a Secondary Provider or disable the fallback toggle'));
                 } else if (secondaryKey === mainProvider) {
-                    errors.push('⚠️ Secondary Provider must be different from Main Provider');
+                    errors.push(tConfig('config.validation.secondaryProviderDifferent', {}, '⚠️ Secondary Provider must be different from Main Provider'));
                 } else if (secondaryKey === 'gemini') {
                     if (!validateGeminiApiKey(true)) {
-                        errors.push('⚠️ Gemini API key is required when Gemini is the Secondary Provider');
+                        errors.push(tConfig('config.validation.secondaryGeminiKey', {}, '⚠️ Gemini API key is required when Gemini is the Secondary Provider'));
                     }
                     if (!validateGeminiModel()) {
-                        errors.push('⚠️ Please select a Gemini model for the Secondary Provider');
+                        errors.push(tConfig('config.validation.secondaryGeminiModel', {}, '⚠️ Please select a Gemini model for the Secondary Provider'));
                     }
                     if (!geminiConfigured) {
-                        errors.push('⚠️ Gemini must have a valid API key and model when selected as Secondary Provider');
+                        errors.push(tConfig('config.validation.secondaryGeminiConfigured', {}, '⚠️ Gemini must have a valid API key and model when selected as Secondary Provider'));
                     }
                 } else {
                     const secondaryCfg = config.providers?.[secondaryKey];
                     if (!secondaryCfg || !secondaryCfg.enabled) {
-                        errors.push(`⚠️ Enable ${PROVIDERS[secondaryKey]?.label || secondaryKey} to use it as Secondary Provider`);
+                        errors.push(tConfig('config.validation.secondaryProviderEnable', { provider: PROVIDERS[secondaryKey]?.label || secondaryKey }, `⚠️ Enable ${PROVIDERS[secondaryKey]?.label || secondaryKey} to use it as Secondary Provider`));
                     }
                     const keyOptional = KEY_OPTIONAL_PROVIDERS.has(String(secondaryKey).toLowerCase());
                     if (!keyOptional && (!secondaryCfg || !secondaryCfg.apiKey)) {
-                        errors.push(`⚠️ API key required for ${PROVIDERS[secondaryKey]?.label || secondaryKey} (Secondary Provider)`);
+                        errors.push(tConfig('config.validation.secondaryProviderKey', { provider: PROVIDERS[secondaryKey]?.label || secondaryKey }, `⚠️ API key required for ${PROVIDERS[secondaryKey]?.label || secondaryKey} (Secondary Provider)`));
                     }
                     if (!secondaryCfg || !secondaryCfg.model) {
-                        errors.push(`⚠️ Select a model for ${PROVIDERS[secondaryKey]?.label || secondaryKey} (Secondary Provider)`);
+                        errors.push(tConfig('config.validation.secondaryProviderModel', { provider: PROVIDERS[secondaryKey]?.label || secondaryKey }, `⚠️ Select a model for ${PROVIDERS[secondaryKey]?.label || secondaryKey} (Secondary Provider)`));
                     }
                 }
             }
 
             if (configuredProviders.size === 0) {
-                errors.push('⚠️ Add at least one AI provider and enable it (API key required unless provider is keyless)');
+                errors.push(tConfig('config.validation.providersMinimum', {}, '⚠️ Add at least one AI provider and enable it (API key required unless provider is keyless)'));
             }
 
             if (config.secondaryProviderEnabled && configuredProviders.size < 2) {
-                errors.push('⚠️ Secondary Provider requires two configured AI providers (main and fallback)');
+                errors.push(tConfig('config.validation.secondaryProvidersCount', {}, '⚠️ Secondary Provider requires two configured AI providers (main and fallback)'));
             }
 
             if (!validateLanguageSelection('source')) {
@@ -4423,13 +4521,13 @@ Translate to {target_language}.`;
                         if (updateResponse.status === 404 || updateResponse.status === 410) {
                             // Token not found or expired - create new session
                             
-                            showAlert('Session expired. Creating new session...', 'info');
+                            showAlert(tConfig('config.alerts.sessionExpiredCreating', {}, 'Session expired. Creating new session...'), 'info', 'config.alerts.sessionExpiredCreating', {});
                             localStorage.removeItem(TOKEN_KEY);
                             existingToken = null;
                         } else if (!updateResponse.ok) {
                             // Other errors - log and try to create new session
                             const errorText = await updateResponse.text();
-                            showAlert('Session update failed. Creating new session...', 'warning');
+                            showAlert(tConfig('config.alerts.sessionUpdateFailed', {}, 'Session update failed. Creating new session...'), 'warning', 'config.alerts.sessionUpdateFailed', {});
                             localStorage.removeItem(TOKEN_KEY);
                             existingToken = null;
                         } else {
@@ -4439,16 +4537,16 @@ Translate to {target_language}.`;
                             isUpdate = sessionData.updated;
 
                             if (sessionData.updated) {
-                                showAlert('Configuration updated! Changes will take effect immediately in Stremio.', 'success');
+                                showAlert(tConfig('config.alerts.configurationUpdated', {}, 'Configuration updated! Changes will take effect immediately in Stremio.'), 'success', 'config.alerts.configurationUpdated', {});
                             } else if (sessionData.created) {
                                 // Token was expired, new one created
-                                showAlert('Session expired. Created new session - please reinstall addon in Stremio.', 'warning');
+                                showAlert(tConfig('config.alerts.sessionExpiredCreated', {}, 'Session expired. Created new session - please reinstall addon in Stremio.'), 'warning', 'config.alerts.sessionExpiredCreated', {});
                                 localStorage.setItem(TOKEN_KEY, configToken);
                             }
                         }
                     } catch (updateError) {
                         // Network error or timeout - fall back to create new session
-                        showAlert('Network error updating session. Creating new session...', 'warning');
+                        showAlert(tConfig('config.alerts.sessionNetworkError', {}, 'Network error updating session. Creating new session...'), 'warning', 'config.alerts.sessionNetworkError', {});
                         localStorage.removeItem(TOKEN_KEY);
                         existingToken = null;
                     }
@@ -4484,7 +4582,7 @@ Translate to {target_language}.`;
                     configToken = sessionData.token;
                     isUpdate = false;
                 } catch (createError) {
-                    showAlert('Failed to save configuration: ' + createError.message, 'error');
+                    showAlert(tConfig('config.alerts.saveFailed', { reason: createError.message }, 'Failed to save configuration: ' + createError.message), 'error', 'config.alerts.saveFailed', { reason: createError.message });
                     return;
                 }
             }
@@ -4497,7 +4595,7 @@ Translate to {target_language}.`;
             // Store token for future updates (only if valid)
             localStorage.setItem(TOKEN_KEY, configToken);
         } catch (error) {
-            showAlert('Failed to save configuration: ' + error.message, 'error');
+            showAlert(tConfig('config.alerts.saveFailed', { reason: error.message }, 'Failed to save configuration: ' + error.message), 'error', 'config.alerts.saveFailed', { reason: error.message });
             return;
         }
 
@@ -4534,7 +4632,7 @@ Translate to {target_language}.`;
 
         // Show appropriate message based on update vs new install
         if (!isUpdate) {
-            showAlert('Configuration saved! You can now install the addon in Stremio.', 'success');
+            showAlert(tConfig('config.alerts.configurationSaved', {}, 'Configuration saved! You can now install the addon in Stremio.'), 'success', 'config.alerts.configurationSaved', {});
         }
         // Update message already shown above
     }
@@ -4545,7 +4643,7 @@ Translate to {target_language}.`;
             // Preserve any percent-encoding so Stremio receives a URL-safe config token
             const stremioUrl = window.installUrl.replace(/^https?:\/\//i, 'stremio://');
             window.location.href = stremioUrl;
-            showAlert('Opening Stremio...', 'info');
+            showAlert(tConfig('config.alerts.openingStremio', {}, 'Opening Stremio...'), 'info', 'config.alerts.openingStremio', {});
         }
     }
 
@@ -4553,7 +4651,7 @@ Translate to {target_language}.`;
         if (window.installUrl) {
             try {
                 await navigator.clipboard.writeText(window.installUrl);
-                showAlert('Install URL copied to clipboard!', 'success');
+                showAlert(tConfig('config.alerts.installUrlCopied', {}, 'Install URL copied to clipboard!'), 'success', 'config.alerts.installUrlCopied', {});
             } catch (error) {
                 // Fallback
                 const input = document.createElement('input');
@@ -4562,12 +4660,12 @@ Translate to {target_language}.`;
                 input.select();
                 document.execCommand('copy');
                 document.body.removeChild(input);
-                showAlert('Install URL copied to clipboard!', 'success');
+                showAlert(tConfig('config.alerts.installUrlCopied', {}, 'Install URL copied to clipboard!'), 'success', 'config.alerts.installUrlCopied', {});
             }
         }
     }
 
-    function showAlert(message, type = 'success') {
+    function showAlert(message, type = 'success', i18nKey = '', i18nVars = {}) {
         const container = document.getElementById('alertContainer');
 
         // Remove existing alerts
@@ -4582,6 +4680,12 @@ Translate to {target_language}.`;
             warning: '⚠',
             info: 'ℹ'
         }[type] || 'ℹ';
+
+        alert.setAttribute('data-i18n', i18nKey || '');
+        if (i18nKey) {
+            alert.setAttribute('data-i18n-vars', JSON.stringify(i18nVars || {}));
+            alert.setAttribute('data-i18n-fallback', message || '');
+        }
 
         alert.innerHTML = `<span style="font-size: 1.25rem;">${icon}</span><div style="flex: 1;">${message}</div>`;
 

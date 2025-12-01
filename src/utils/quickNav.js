@@ -296,8 +296,9 @@ function quickNavStyles() {
 function renderQuickNav(links, activeKey, showRefreshButton = true, devMode = true, t = (k, vars, fallback) => fallback || k) {
   const devDisabled = devMode !== true ? ' dev-disabled' : '';
   const label = (key, fallback, vars) => t(`nav.${key}`, vars || {}, fallback);
+  const mobileMenuLabel = label('mobileMenu', 'Open menu');
   return `
-  <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Open menu">
+  <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="${mobileMenuLabel}" title="${mobileMenuLabel}">
     <span></span>
     <span></span>
     <span></span>
@@ -344,11 +345,29 @@ function renderQuickNav(links, activeKey, showRefreshButton = true, devMode = tr
 
 function quickNavScript() {
   return `
+    function quickNavTranslate(customT) {
+      const base = (typeof customT === 'function') ? customT : (typeof window !== 'undefined' && typeof window.t === 'function' ? window.t : null);
+      return function(key, vars, fallback) {
+        try {
+          if (base) return base(key, vars || {}, fallback || key);
+        } catch (_) { /* ignore translation errors */ }
+        return fallback || key;
+      };
+    }
+
     window.initStreamRefreshButton = window.initStreamRefreshButton || function(opts) {
       const btn = document.getElementById(opts.buttonId);
       if (!btn || !opts.configStr || typeof fetch === 'undefined') return;
       const labelEl = btn.querySelector('.refresh-label');
-      const defaultLabel = labelEl ? labelEl.textContent : 'Refresh';
+      const t = quickNavTranslate(opts && opts.t);
+      const defaultLabel = labelEl ? labelEl.textContent : t('nav.refresh', {}, 'Refresh stream');
+      const labels = {
+        loading: (opts.labels && opts.labels.loading) || t('nav.refreshLoading', {}, 'Refreshing...'),
+        empty: (opts.labels && opts.labels.empty) || t('nav.refreshEmpty', {}, 'No recent stream'),
+        current: (opts.labels && opts.labels.current) || t('nav.refreshCurrent', {}, 'Already current'),
+        error: (opts.labels && opts.labels.error) || t('nav.refreshError', {}, 'Refresh failed'),
+        missing: (opts.labels && opts.labels.missing) || t('nav.refreshMissing', {}, 'Missing stream data')
+      };
       const currentSig = (() => {
         const payload = opts.current || {};
         return [payload.videoHash || '', payload.videoId || '', payload.filename || ''].join('::');
@@ -365,22 +384,22 @@ function quickNavScript() {
       btn.addEventListener('click', async () => {
         if (busy) return;
         setBusy(true);
-        setLabel(opts.labels?.loading || 'Refreshing...');
+        setLabel(labels.loading);
         try {
           const resp = await fetch('/api/stream-activity?config=' + encodeURIComponent(opts.configStr), { cache: 'no-store' });
           if (resp.status === 204) {
-            setLabel(opts.labels?.empty || 'No recent stream');
+            setLabel(labels.empty);
             return;
           }
           if (!resp.ok) throw new Error('Bad response');
           const data = await resp.json();
           const payloadSig = [data.videoHash || '', data.videoId || '', data.filename || ''].join('::');
           if (!data || !data.videoId || !payloadSig.trim()) {
-            setLabel(opts.labels?.empty || 'No recent stream');
+            setLabel(labels.empty);
             return;
           }
           if (payloadSig === currentSig) {
-            setLabel(opts.labels?.current || 'Already current');
+            setLabel(labels.current);
             setTimeout(() => setLabel(defaultLabel), 1200);
             return;
           }
@@ -390,9 +409,9 @@ function quickNavScript() {
             window.location.href = targetUrl;
             return;
           }
-          setLabel(opts.labels?.error || 'Missing stream data');
+          setLabel(labels.missing);
         } catch (_) {
-          setLabel(opts.labels?.error || 'Refresh failed');
+          setLabel(labels.error);
         } finally {
           setTimeout(() => setLabel(defaultLabel), 1400);
           setBusy(false);
@@ -413,6 +432,7 @@ function quickNavScript() {
         filename: opts.current?.filename || '',
         videoHash: opts.current?.videoHash || ''
       };
+      const t = quickNavTranslate(opts && opts.t);
       const configStr = opts.configStr;
       const buildUrl = typeof opts.buildUrl === 'function' ? opts.buildUrl : null;
       const notify = typeof opts.notify === 'function' ? opts.notify : null;
@@ -490,7 +510,7 @@ function quickNavScript() {
         const parsed = parseVideoId(payload.videoId);
         const tag = formatEpisodeTag(parsed);
         const base = cleanName(payload.filename) || parsed?.imdbId || payload.videoId;
-        return tag ? (base + ' ' + tag) : (base || 'New stream detected');
+        return tag ? (base + ' ' + tag) : (base || t('nav.streamDetected', {}, 'New stream detected'));
       }
 
       let lastMetaRequestKey = '';
@@ -516,7 +536,7 @@ function quickNavScript() {
 
       function showToast(payload) {
         const description = describe(payload);
-        const titleText = opts.labels?.title || 'New stream detected';
+        const titleText = opts.labels?.title || t('nav.streamDetected', {}, 'New stream detected');
         if (notify) {
           const handled = notify({
             title: titleText,
@@ -787,11 +807,12 @@ function quickNavScript() {
   `;
 }
 
-function renderRefreshBadge() {
+function renderRefreshBadge(t = (k, vars, fallback) => fallback || k) {
+  const label = (key, fallback, vars) => t(`nav.${key}`, vars || {}, fallback);
   return `
-    <button type="button" class="quick-nav-link quick-nav-refresh" id="quickNavRefresh" title="Jump to your latest stream">
+    <button type="button" class="quick-nav-link quick-nav-refresh" id="quickNavRefresh" title="${label('refreshTitle', 'Jump to your latest stream')}">
       <span class="refresh-icon">⟳</span>
-      <span class="refresh-label">Refresh stream</span>
+      <span class="refresh-label">${label('refresh', 'Refresh stream')}</span>
     </button>
   `;
 }
