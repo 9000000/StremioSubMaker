@@ -2498,6 +2498,30 @@
         }
         [data-theme="true-dark"] .card-icon::before { display: none; }
 
+        .quick-stats-grid {
+            background: var(--surface-light);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1rem;
+        }
+        .quick-stat {
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+        .quick-stat-label {
+            margin: 0;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+        .quick-stat-value {
+            display: block;
+            margin-top: 0.25rem;
+            font-size: 1.05rem;
+            color: var(--text-primary);
+        }
+
         /* Help button — match toggle style, slightly different (radius, rivets) */
         .help-button {
             position: fixed;

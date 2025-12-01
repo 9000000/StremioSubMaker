@@ -5029,7 +5029,9 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
             clearTimeout(pingTimer);
             pingTimer = null;
           }
-          const readyLabel = tt('toolbox.autoSubs.extension.readyWithVersion', { version: msg.version || '-' }, 'Ready (v' + (msg.version || '-') + ')');
+          const readyLabel = msg.version
+            ? tt('toolbox.autoSubs.extension.readyWithVersion', { version: msg.version || '-' }, 'Ready (v' + (msg.version || '-') + ')')
+            : tt('toolbox.autoSubs.extension.ready', {}, 'Ready');
           updateExtensionStatus(true, readyLabel);
         }
       });

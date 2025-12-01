@@ -927,6 +927,7 @@ Translate to {target_language}.`;
         loadConfigToForm();
         initLocale(currentConfig.uiLanguage || locale.lang || 'en');
         updateToolboxLauncherVisibility();
+        updateQuickStats();
         setupKeyboardShortcuts();
         showKeyboardHint();
 
@@ -1301,6 +1302,34 @@ Translate to {target_language}.`;
         return '';
     }
 
+    function updateQuickStats() {
+        const statStatus = document.getElementById('quickStatStatus');
+        const statConfigure = document.getElementById('quickStatConfigure');
+        const statToolbox = document.getElementById('quickStatToolbox');
+        const statLastSave = document.getElementById('quickStatLastSave');
+
+        const hasToken = !!getActiveConfigRef();
+        const cachedAt = (() => {
+            try { return parseInt(localStorage.getItem(CACHE_EXPIRY_KEY) || '0', 10); } catch (_) { return 0; }
+        })();
+
+        const readyLabel = tConfig('toolbox.status.ready', {}, 'Ready');
+        const missingLabel = tConfig('server.errors.missingConfig', {}, 'Missing config');
+        const toolboxMissing = tConfig('toolbox.autoSubs.extension.notDetected', {}, 'Extension not detected');
+
+        if (statStatus) statStatus.textContent = hasToken ? readyLabel : missingLabel;
+        if (statConfigure) statConfigure.textContent = hasToken ? tConfig('config.actions.install', {}, 'Install') : missingLabel;
+        if (statToolbox) statToolbox.textContent = hasToken ? readyLabel : toolboxMissing;
+        if (statLastSave) {
+            if (cachedAt) {
+                const dt = new Date(cachedAt);
+                statLastSave.textContent = dt.toLocaleString();
+            } else {
+                statLastSave.textContent = '—';
+            }
+        }
+    }
+
     function isMobileViewport() {
         try {
             if (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) return true;
@@ -1340,6 +1369,8 @@ Translate to {target_language}.`;
             btn.dataset.configRef = '';
             btn.classList.remove('show');
         }
+
+        updateQuickStats();
     }
 
     window.closeSubToolboxModal = function() {
@@ -2303,12 +2334,18 @@ Translate to {target_language}.`;
 
             if (type === 'target') {
                 if (requiresSelection && combinedCount === 0) {
-                    if (errorDiv) errorDiv.classList.add('show');
+                    if (errorDiv) {
+                        errorDiv.textContent = tConfig('config.validation.targetMissing', {}, 'At least one target language is required');
+                        errorDiv.classList.add('show');
+                    }
                     return false;
                 }
             } else {
                 if (requiresSelection && learnCount === 0) {
-                    if (errorDiv) errorDiv.classList.add('show');
+                    if (errorDiv) {
+                        errorDiv.textContent = tConfig('validation.learnTargetMissing', {}, 'Learn Mode requires at least one target language');
+                        errorDiv.classList.add('show');
+                    }
                     return false;
                 }
             }
@@ -4614,6 +4651,7 @@ Translate to {target_language}.`;
         // Cache the configuration to localStorage
         saveConfigToCache(config, configToken);
         updateToolboxLauncherVisibility(configToken);
+        updateQuickStats();
 
         // Enable install and copy buttons
         document.getElementById('installBtn').disabled = false;

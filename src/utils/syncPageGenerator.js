@@ -425,7 +425,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         step1: {
             chip: t('sync.step1.chip', {}, 'Step 1'),
             title: t('sync.step1.title', {}, 'Provide Stream Information'),
-            linkedLabel: t('sync.meta.linkedStream', {}, 'Linked stream'),
+            linkedLabel: t('sync.step1.linkedLabel', {}, 'Linked stream'),
             streamLabel: t('sync.step1.streamLabel', {}, 'Stream URL:'),
             placeholder: t('sync.step1.placeholder', {}, 'Paste your stream URL here (e.g., http://... or magnet:...)'),
             infoTitle: t('sync.step1.infoTitle', {}, 'ℹ️ Subtitles Sync:'),
@@ -1936,6 +1936,9 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                         <select id="targetLanguage">
                             ${targetLangOptionsHTML}
                         </select>
+                        <p class="label-description" id="syncAddTargetsHint" style="display:none; margin-top: 0.35rem;">
+                            ${escapeHtml(t('sync.step3.options.addTargets', {}, 'Add target languages in Configure to enable translation outputs.'))}
+                        </p>
                     </div>
                 </div>
             </div>
@@ -3197,6 +3200,11 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         // Translate checkbox
         document.getElementById('translateAfterSync').addEventListener('change', (e) => {
             document.getElementById('targetLangGroup').style.display = e.target.checked ? 'block' : 'none';
+            const hint = document.getElementById('syncAddTargetsHint');
+            const hasTargets = Array.isArray(CONFIG.targetLanguages) && CONFIG.targetLanguages.length > 0;
+            if (hint) {
+                hint.style.display = e.target.checked && !hasTargets ? 'block' : 'none';
+            }
         });
 
         // Step 3: Start Sync

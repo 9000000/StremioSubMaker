@@ -2296,6 +2296,9 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                         <option value="">${escapeHtml(targetPlaceholderText)}</option>
                         ${languageOptions}
                     </select>
+                    <p class="label-description" id="targetLanguagesHint" style="display:none; margin-top: 0.25rem;">
+                        ${escapeHtml(t('fileUpload.queue.options.addTargets', {}, 'Add target languages in Configure to see your presets here.'))}
+                    </p>
                 </div>
 
                 <div class="language-toggle-container">
@@ -2888,6 +2891,9 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                     if (optionExists) {
                         targetLang.value = currentTarget;
                     }
+                } else if (!useAll && defaultTargetLanguage) {
+                    const defaultExists = Array.from(targetLang.options).some(opt => opt.value === defaultTargetLanguage);
+                    if (defaultExists) targetLang.value = defaultTargetLanguage;
                 }
             }
 
@@ -2967,6 +2973,12 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                         'Using ' + label + (configuredModel ? ' (' + configuredModel + ')' : '') + ' from your saved SubMaker config.'
                     );
                 }
+            }
+
+            const targetHint = document.getElementById('targetLanguagesHint');
+            if (targetHint) {
+                const showHint = !useAll && (!clientConfig.targetLanguages || clientConfig.targetLanguages.length === 0);
+                targetHint.style.display = showHint ? 'block' : 'none';
             }
         }
 
