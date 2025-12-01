@@ -3,7 +3,7 @@
   "messages": {
     "manifest": {
       "name": "SubMaker - Traductor de subtítulos",
-      "description": "Obtiene subtítulos de OpenSubtitles y los traduce con {provider}.\\n\\nIdiomas origen: {sources}\\nIdiomas destino: {targets}"
+      "description": "Subtítulos todo en uno para Stremio: reúne varias fuentes, traduce con {provider} (o el proveedor que elijas) y entrega subtítulos pulidos y localizados en tus idiomas preferidos.\n\nIdiomas origen: {sources}\nIdiomas destino: {targets}"
     },
     "validation": {
       "configRequired": "Se requiere la configuración",
@@ -29,6 +29,7 @@
       "loadingTitle": "TRADUCCIÓN EN PROGRESO",
       "loadingBody": "Haz clic para recargar. Los resultados parciales aparecerán a medida que estén listos.",
       "loadingTail": "Recarga este subtítulo más tarde para obtener más",
+      "infoNote": "Este subtítulo informativo fue generado por el addon.",
       "sessionErrorTitle": "Error de configuración",
       "sessionErrorBody": "Tu token de sesión no se encontró o expiró.",
       "sessionErrorAdvice": "Vuelve a configurar e instalar el addon.",
@@ -71,7 +72,22 @@
       "translationInvalidSource": "Traducción fallida: archivo de origen inválido",
       "translationInvalidSourceBody": "El archivo parece corrupto o con formato incorrecto.",
       "translationInvalidSourceRetry": "Vuelve a intentar o selecciona otro subtítulo.",
-      "translationMultiProvider": "Fallaron el proveedor principal y el secundario."
+      "translationMultiProvider": "Fallaron el proveedor principal y el secundario.",
+      "osRateLimitTitle": "Límite de OpenSubtitles alcanzado (429)",
+      "osAuthRateLimited": "OpenSubtitles está limitando tu cuenta. Espera unos minutos y vuelve a intentar o cambia a V3 en la configuración.",
+      "osAuthMissingRateLimited": "El modo de OpenSubtitles con usuario/contraseña está activo sin credenciales, así que se aplica el límite básico. Añade usuario/contraseña o cambia a V3 (sin login)."
+      ,
+      "providerRateLimitTitle": "Límite de {service} alcanzado (429)",
+      "providerRateLimitBody": "Demasiadas solicitudes en poco tiempo. Espera unos minutos y vuelve a intentar.",
+      "providerAuthErrorTitle": "Error de autenticación",
+      "providerAuthErrorBody": "{service} rechazó tu clave o credenciales",
+      "notAvailableTitle": "Subtítulo no disponible (Error 404)",
+      "notAvailableBody": "Suele ocurrir con subtítulos eliminados. Prueba con otro subtítulo de la lista.",
+      "providerUnavailableTitle": "Proveedor de subtítulos temporalmente no disponible (Error 503)",
+      "providerUnavailableBody": "Inténtalo de nuevo en unos minutos o prueba con otro subtítulo.",
+      "subsourceTimeoutTitle": "Error de descarga en SubSource (timeout)",
+      "subsourceTimeoutBody": "La API de SubSource no respondió a tiempo. Intenta de nuevo en unos minutos o elige otro subtítulo.",
+      "invalidSubtitleTooSmall": "El archivo de subtítulos es demasiado pequeño y parece dañado."
     },
     "subtitleMenu": {
       "eyebrow": "Subtítulos del stream",
@@ -116,8 +132,7 @@
       }
     },
     "config": {
-      "uiLanguageLabel": "Idioma de la interfaz",
-      "uiLanguageDescription": "Aplica a todas las páginas y subtítulos de SubMaker",
+      "uiLanguageLabel": "Interfaz",
       "heroTitle": "SubMaker",
       "heroSubtitle": "Traducción de subtítulos con IA",
       "quickStatsStatus": "Estado",
@@ -183,19 +198,39 @@
         "generalTitle": "Comportamiento global",
         "autoSync": "Sincronización automática",
         "autoSyncHint": "Mantén la sincronización automática activa cuando se detecte SubMaker.",
-        "statusRefresh": "Actualización de estado",
-        "statusRefreshHint": "Cada cuánto el popup actualiza las estadísticas.",
-        "themePreference": "Preferencia de tema",
-        "linksEyebrow": "Captura de enlaces",
-        "linksTitle": "URLs de configuración y Toolbox",
-        "linksHint": "Abre las páginas de configuración y toolbox una vez y recordaremos las URLs.",
-        "configureUrl": "URL de configuración",
-        "toolboxUrl": "URL de Toolbox",
-        "syncUrl": "URL de la página de Sync",
-        "saveButton": "Guardar ajustes",
-        "saveSuccess": "Ajustes guardados",
-        "saveError": "No se pudieron guardar los ajustes"
-      }
+      "statusRefresh": "Actualización de estado",
+      "statusRefreshHint": "Cada cuánto el popup actualiza las estadísticas.",
+      "themePreference": "Preferencia de tema",
+      "linksEyebrow": "Captura de enlaces",
+      "linksTitle": "URLs de configuración y Toolbox",
+      "linksHint": "Abre las páginas de configuración y toolbox una vez y recordaremos las URLs.",
+      "configureUrl": "URL de configuración",
+      "toolboxUrl": "URL de Toolbox",
+      "syncUrl": "URL de la página de Sync",
+      "saveButton": "Guardar ajustes",
+      "saveSuccess": "Ajustes guardados",
+      "saveError": "No se pudieron guardar los ajustes",
+      "saving": "Guardando",
+      "statusReady": "Listo",
+      "statusLoadingError": "Error al cargar",
+      "statusIdle": "En espera",
+      "statusOffline": "Desconectado",
+      "statusImported": "Importado",
+      "statusResetting": "Restableciendo...",
+      "statusResetFailed": "Falló el restablecimiento",
+      "statusImportFailed": "Falló la importación",
+      "loadError": "No se pudieron cargar los ajustes",
+      "exported": "Ajustes exportados",
+      "exportFailed": "La exportación falló",
+      "imported": "Ajustes importados",
+      "importFailed": "La importación falló",
+      "resetConfirm": "¿Seguro que quieres restablecer la extensión? Esto borrará todos los ajustes y datos.",
+      "resetSuccess": "Extensión restablecida; recargando...",
+      "resetFailed": "Falló el restablecimiento",
+      "statsReset": "Estadísticas reiniciadas",
+      "statsResetFailed": "No se pudieron reiniciar las estadísticas",
+      "lastSavedUnknown": "Desconocido"
+    }
     }
   }
 }

@@ -1,4 +1,20 @@
 <div class="container">
+    <div class="ui-language-orb" id="uiLanguageDock">
+        <div class="ui-language-glow"></div>
+        <div class="ui-language-flag" id="uiLanguageFlag" aria-hidden="true">🇬🇧</div>
+        <div class="ui-language-copy">
+            <span class="ui-language-pill" id="uiLanguageLabel">Interface</span>
+            <span class="ui-language-value" id="uiLanguageValue">English</span>
+        </div>
+        <div class="ui-language-chevron" aria-hidden="true">
+            <svg viewBox="0 0 16 16" role="presentation" focusable="false">
+                <path d="M3 6l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round" />
+            </svg>
+        </div>
+        <select id="uiLanguageSelect" class="ui-language-select" aria-label="UI language" title="UI language"></select>
+    </div>
+
     <div class="header">
         <div class="logo">
             <img src="logo.png" alt="SubMaker Logo" style="width: 80px; height: 80px; border-radius: 20px;">
@@ -12,16 +28,6 @@
 
 
     <div id="alertContainer"></div>
-    <div class="language-picker" style="display:flex; align-items:flex-end; gap:0.75rem; margin: 0 0 1rem;">
-        <label for="uiLanguageSelect" style="display:flex; flex-direction:column; gap:0.25rem; font-weight:600; color:var(--text-primary);">
-            <span id="uiLanguageLabel">UI Language</span>
-            <span class="label-description" id="uiLanguageDescription">Applies to all SubMaker pages and subtitles</span>
-        </label>
-        <select id="uiLanguageSelect" style="min-width: 160px; max-width: 220px; padding:0.5rem 0.65rem; border:1px solid var(--border); border-radius:10px; background: var(--surface-light);">
-            <option value="en">English</option>
-            <option value="es">Español</option>
-        </select>
-    </div>
 
     <!-- Floating Help Button (Config page) -->
     <button class="help-button toolbox-button" id="subToolboxLauncher" title="Open Sub Toolbox"

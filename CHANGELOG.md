@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 
 **Bug Fixes:**
 
+- **Stremio install popup formatting:** Fixed manifest description strings that were double-escaped, so `\n` now render as actual line breaks in the install dialog.
 - **Batch context in single-batch splits:** When single-batch translations exceed token limits and auto-split, surrounding/previous-entry context is now passed through so coherence is preserved in this edge mode.
 - **Embedded studio UX gaps:** Instructions modal now respects the “don’t show again” preference, extraction no longer hangs if the xSync extension goes silent (60s watchdog with reset/re-ping), the extension badge reflects active extraction vs ready state, and single-track extractions auto-select to unlock Step 2 immediately.
 - **Mobile quick-nav toggle:** Restored the hamburger bars on tool pages for screens under 1100px width.

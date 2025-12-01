@@ -1005,7 +1005,7 @@ function buildManifest(config, baseUrl = '') {
       provider: `${providerLabel} AI`,
       sources: sourceLanguageNames || 'N/A',
       targets: targetLanguageNames || 'N/A'
-    }, `Fetches subtitles from OpenSubtitles and translates them using ${providerLabel} AI.\n\nSource languages: ${sourceLanguageNames}\nTarget languages: ${targetLanguageNames}`);
+    }, `All-in-one Stremio subtitles: pull from multiple providers, translate with ${providerLabel} (or your chosen provider), and deliver smooth, localized subs in your chosen languages.\n\nSource languages: ${sourceLanguageNames}\nTarget languages: ${targetLanguageNames}`);
   }
 
   const geminiConfigured = config.geminiApiKey && config.geminiApiKey.trim() !== '' &&

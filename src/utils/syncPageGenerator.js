@@ -1791,14 +1791,14 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                         <input type="text" id="streamUrl" placeholder="Paste your stream URL here (e.g., http://... or magnet:...)" value="">
                     </div>
                     <div class="status-message info" style="display: block;">
-                        <strong>ℹ️ Subtitles Sync:</strong> Ensure the linked stream is the intended one (same as the Stream URL) and that the extension is detected before continuing.
+                        <strong>ℹ️ Subtitles Sync:</strong> Autosync needs the stream URL and the xSync extension; manual offsets work without them.
                     </div>
                     <button id="continueBtn" class="btn btn-primary">
                         <span>➡️</span> Continue to Subtitle Selection
                     </button>
                 </div>
 
-                <div class="step-card" id="step2Section" style="opacity: 0.5; pointer-events: none;">
+                <div class="step-card" id="step2Section">
                     <div class="step-title">
                         <span class="step-chip">Step 2</span>
                         <span>Select Subtitle to Sync</span>
@@ -1845,8 +1845,8 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                     <div class="form-group">
                         <label for="primarySyncMode">Primary Mode:</label>
                         <select id="primarySyncMode">
-                            <option value="manual">📝 Manual Offset Adjustment</option>
-                            <option value="alass" selected disabled>🎯 ALASS (audio ➜ subtitle)</option>
+                            <option value="manual" selected>📝 Manual Offset Adjustment</option>
+                            <option value="alass" disabled>🎯 ALASS (audio ➜ subtitle)</option>
                             <option value="ffsubsync" disabled>🎛️ FFSubSync (audio ➜ subtitle)</option>
                             <option value="vosk-ctc" disabled>🧭 Vosk CTC/DTW (text ➜ audio)</option>
                             <option value="whisper-alass" disabled>🗣️ Whisper + ALASS (subtitle ➜ subtitle)</option>
@@ -2594,7 +2594,22 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             if (fingerprintPrepassCheckbox) {
                 fingerprintPrepassCheckbox.disabled = !enabled;
             }
+            if (!enabled) {
+                if (primaryModeSelect && primaryModeSelect.value !== 'manual') {
+                    primaryModeSelect.value = 'manual';
+                }
+                populateSecondaryOptions('manual');
+                if (fingerprintPrepassGroup) {
+                    fingerprintPrepassGroup.style.display = 'none';
+                }
+                STATE.activeSyncPlan = null;
+            } else {
+                populateSecondaryOptions(primaryModeSelect?.value || 'alass');
+            }
         }
+
+        // Default: manual-only until the extension unlocks autosync engines
+        setAutoSyncAvailability(false);
 
         function formatOffsetLabel(ms) {
             if (!Number.isFinite(ms)) return 'On time';
@@ -2734,7 +2749,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         setTimeout(pingExtension, 150);
 
         // Request sync from Chrome extension
-        function requestExtensionSync(streamUrl, subtitleContent, plan = null, preferAlass = false, preferFfsubsync = false, preferCtc = false, useFingerprintPrepass = true) {
+        function requestExtensionSync(streamUrl, subtitleContent, primaryMode, plan = null, preferAlass = false, preferFfsubsync = false, preferCtc = false, useFingerprintPrepass = true) {
             return new Promise((resolve, reject) => {
                 const messageId = 'sync_' + Date.now();
                 const modeToSend = (plan && plan.legacyMode) ? plan.legacyMode : (plan && plan.preset) ? plan.preset : 'smart';
@@ -2751,8 +2766,8 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                     maxWindows: plan.maxWindows,
                     fullScan: plan.fullScan,
                     durationAdjusted: plan.durationAdjusted,
-                    modeGroup: plan.modeGroup || primaryMode,
-                    primaryMode: primaryMode,
+                    modeGroup: plan.modeGroup || plan.primaryMode || primaryMode || null,
+                    primaryMode: plan.primaryMode || primaryMode || null,
                     useFingerprintPrepass: !!useFingerprintPrepass
                 } : null;
                 let timeoutId;
@@ -2840,14 +2855,33 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             }
 
             const preset = resolveSecondaryPreset(primaryMode, secondaryModeSelect?.value);
-            const plan = buildSyncPlan(primaryMode, preset ? preset.value : null, STATE.estimatedDurationMs, { useFingerprintPrepass: STATE.useFingerprintPrepass !== false });
+            const prefs = resolveEnginePrefs(primaryMode, preset ? preset.value : null);
+            const fingerprintAllowed = !prefs.preferFfsubsync;
+            const useFingerprintPrepass = fingerprintAllowed && STATE.useFingerprintPrepass !== false;
+            if (fingerprintPrepassCheckbox) {
+                fingerprintPrepassCheckbox.disabled = !fingerprintAllowed;
+                fingerprintPrepassCheckbox.checked = useFingerprintPrepass;
+            }
+            if (fingerprintAllowed === false) {
+                STATE.useFingerprintPrepass = false;
+            }
+
+            const plan = buildSyncPlan(
+                primaryMode,
+                preset ? preset.value : null,
+                STATE.estimatedDurationMs,
+                { useFingerprintPrepass }
+            );
             STATE.activeSyncPlan = plan || null;
 
             const summary = describeSyncPlan(plan);
             const primaryDesc = PRIMARY_DESCRIPTIONS[primaryMode] || '';
             const presetDesc = (preset && PRESET_DESCRIPTIONS[preset.value]) || (preset ? preset.description : '');
             const combinedDesc = [primaryDesc, presetDesc].filter(Boolean).join(' ');
-            syncMethodDesc.innerHTML = combinedDesc + (summary ? '<div class="plan-summary">Plan: ' + summary + '</div>' : '');
+            const fingerprintNote = fingerprintAllowed ? '' : '<div class="plan-summary" style="color: var(--text-secondary);">Fingerprint pre-pass is skipped when FFSubSync is the primary engine.</div>';
+            syncMethodDesc.innerHTML = combinedDesc +
+                (summary ? '<div class="plan-summary">Plan: ' + summary + '</div>' : '') +
+                fingerprintNote;
         }
 
         primaryModeSelect?.addEventListener('change', (e) => {
@@ -2909,16 +2943,20 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         document.getElementById('continueBtn').addEventListener('click', async () => {
             const streamUrl = document.getElementById('streamUrl').value.trim();
 
+            if (!streamUrl) {
+                STATE.streamUrl = null;
+                showStatus('syncStatus', 'No stream linked. Manual offsets are fine, but autosync will need an http(s) stream URL.', 'info');
+                return;
+            }
+
             if (!isHttpUrl(streamUrl)) {
-                showStatus('syncStatus', 'Please provide a valid http(s) stream URL (required for autosync).', 'error');
+                showStatus('syncStatus', 'Autosync requires a valid http(s) stream URL. Manual offsets can run without it.', 'error');
                 return;
             }
 
             // Store stream URL for extension
             STATE.streamUrl = streamUrl;
-
-            // Enable next step
-            enableSection('step2Section');
+            showStatus('syncStatus', 'Stream URL linked for autosync.', 'success');
         });
 
         // Step 2: Select Subtitle
@@ -3021,6 +3059,11 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
 
             const primaryMode = primaryModeSelect ? primaryModeSelect.value : 'manual';
             const secondaryMode = secondaryModeSelect ? secondaryModeSelect.value : null;
+            const streamInputEl = document.getElementById('streamUrl');
+            if (streamInputEl) {
+                const latestStream = (streamInputEl.value || '').trim();
+                STATE.streamUrl = latestStream || STATE.streamUrl || null;
+            }
 
             try {
                 setSyncInFlight(true);
@@ -3055,7 +3098,8 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                     const modeName = preset.label || (secondaryMode || 'Autosync');
                     const primaryLabel = primaryModeSelect?.selectedOptions?.[0]?.textContent || primaryMode;
                     const prefs = resolveEnginePrefs(primaryMode, preset.value);
-                    const syncPlan = buildSyncPlan(primaryMode, preset.value, STATE.estimatedDurationMs, { useFingerprintPrepass: STATE.useFingerprintPrepass !== false });
+                    const useFingerprintPrepass = (!prefs.preferFfsubsync) && STATE.useFingerprintPrepass !== false;
+                    const syncPlan = buildSyncPlan(primaryMode, preset.value, STATE.estimatedDurationMs, { useFingerprintPrepass });
                     STATE.activeSyncPlan = syncPlan;
                     const planSummary = describeSyncPlan(syncPlan);
 
@@ -3070,11 +3114,12 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                     const syncResult = await requestExtensionSync(
                         STATE.streamUrl,
                         STATE.subtitleContent,
+                        primaryMode,
                         syncPlan,
                         prefs.preferAlass,
                         prefs.preferFfsubsync,
                         prefs.preferCtc,
-                        STATE.useFingerprintPrepass !== false
+                        useFingerprintPrepass
                     );
 
                     if (!syncResult.success) {

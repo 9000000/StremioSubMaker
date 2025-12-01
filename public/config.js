@@ -85,6 +85,8 @@
 
     // Popular languages for quick selection
     const POPULAR_LANGUAGES = ['eng', 'spa', 'fre', 'ger', 'por', 'pob', 'ita', 'rus', 'jpn', 'kor', 'chi', 'ara'];
+    let translationModeBackup = null;
+    let noTranslationBackup = null;
 
     // Language selection limits (defaults, can be overridden by server-provided env values)
     const DEFAULT_LIMITS = {
@@ -93,8 +95,8 @@
         maxNoTranslationLanguages: 9
     };
     const SUPPORTED_UI_LANGUAGES = [
-        { value: 'en', label: 'English' },
-        { value: 'es', label: 'Español' }
+        { value: 'en', label: 'English', flag: '🇬🇧' },
+        { value: 'es', label: 'Español', flag: '🇪🇸' }
     ];
     const UI_LANGUAGE_STORAGE_KEY = 'submaker_ui_language';
     const KEY_OPTIONAL_PROVIDERS = new Set(['googletranslate']);
@@ -113,6 +115,30 @@
             if (stored) return stored.toLowerCase();
         } catch (_) {}
         return (navigator.language || 'en').toLowerCase();
+    }
+
+    function getUiLanguageMeta(lang) {
+        const normalized = (lang || '').toString().toLowerCase();
+        const exact = SUPPORTED_UI_LANGUAGES.find(l => l.value === normalized);
+        if (exact) return exact;
+        const base = normalized.split('-')[0];
+        return SUPPORTED_UI_LANGUAGES.find(l => l.value === base) || SUPPORTED_UI_LANGUAGES[0];
+    }
+
+    function updateUiLanguageBadge(lang) {
+        const meta = getUiLanguageMeta(lang);
+        const valueEl = document.getElementById('uiLanguageValue');
+        if (valueEl) {
+            valueEl.textContent = meta.label || meta.value.toUpperCase();
+        }
+        const flagEl = document.getElementById('uiLanguageFlag');
+        if (flagEl) {
+            flagEl.textContent = meta.flag || '🏳️';
+        }
+        const dock = document.getElementById('uiLanguageDock');
+        if (dock) {
+            dock.setAttribute('data-lang', meta.value);
+        }
     }
 
     const SERVER_LIMITS = (typeof window !== 'undefined' && window.__CONFIG_LIMITS__) ? window.__CONFIG_LIMITS__ : {};
@@ -541,10 +567,9 @@ Translate to {target_language}.`;
             opt.textContent = label;
             select.appendChild(opt);
         });
-        const normalized = (selectedLang || '').toString().toLowerCase();
-        if (normalized && SUPPORTED_UI_LANGUAGES.find(l => l.value === normalized)) {
-            select.value = normalized;
-        }
+        const meta = getUiLanguageMeta(selectedLang || select.value);
+        select.value = meta.value;
+        updateUiLanguageBadge(meta.value);
     }
 
     function setUiLanguage(lang) {
@@ -553,6 +578,7 @@ Translate to {target_language}.`;
             currentConfig = getDefaultConfig();
         }
         currentConfig.uiLanguage = normalized;
+        updateUiLanguageBadge(normalized);
         try { localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, normalized); } catch (_) {}
         initLocale(normalized);
     }
@@ -566,11 +592,18 @@ Translate to {target_language}.`;
         };
         const label = document.getElementById('uiLanguageLabel');
         if (label) {
-            label.textContent = translate('config.uiLanguageLabel', 'UI Language');
+            label.textContent = translate('config.uiLanguageLabel', 'Interface');
         }
-        const desc = document.getElementById('uiLanguageDescription');
-        if (desc) {
-            desc.textContent = translate('config.uiLanguageDescription', 'Applies to all SubMaker pages and subtitles');
+        updateUiLanguageBadge((currentConfig && currentConfig.uiLanguage) || (locale && locale.lang) || 'en');
+        const dock = document.getElementById('uiLanguageDock');
+        if (dock) {
+            dock.title = translate('config.uiLanguageLabel', 'Interface language');
+        }
+        const uiLangSelect = document.getElementById('uiLanguageSelect');
+        if (uiLangSelect) {
+            const labelText = translate('config.uiLanguageLabel', 'Interface language');
+            uiLangSelect.setAttribute('aria-label', labelText);
+            uiLangSelect.setAttribute('title', labelText);
         }
         const heroTitle = document.getElementById('heroTitle');
         if (heroTitle) {
@@ -1562,6 +1595,19 @@ Translate to {target_language}.`;
                 <span class="remove">×</span>
             `;
             container.appendChild(chip);
+        });
+    }
+
+    function syncGridSelection(gridId, selectedList) {
+        const grid = document.getElementById(gridId);
+        if (!grid) return;
+        const selected = new Set(selectedList || []);
+        grid.querySelectorAll('.language-item').forEach(item => {
+            if (selected.has(item.dataset.code)) {
+                item.classList.add('selected');
+            } else {
+                item.classList.remove('selected');
+            }
         });
     }
 
@@ -3032,6 +3078,16 @@ Translate to {target_language}.`;
         toggleOtherSettingsVisibilityForNoTranslation(enabled);
 
         if (enabled) {
+            translationModeBackup = {
+                sourceLanguages: Array.isArray(currentConfig.sourceLanguages) ? [...currentConfig.sourceLanguages] : [],
+                targetLanguages: Array.isArray(currentConfig.targetLanguages) ? [...currentConfig.targetLanguages] : [],
+                learnTargetLanguages: Array.isArray(currentConfig.learnTargetLanguages) ? [...currentConfig.learnTargetLanguages] : [],
+                learnMode: currentConfig.learnMode === true,
+                learnOrder: currentConfig.learnOrder || 'source-top'
+            };
+            if ((!currentConfig.noTranslationLanguages || currentConfig.noTranslationLanguages.length === 0) && Array.isArray(noTranslationBackup) && noTranslationBackup.length > 0) {
+                currentConfig.noTranslationLanguages = [...noTranslationBackup];
+            }
             betaModeLastState = {
                 betaEnabled: isBetaModeEnabled(),
                 multiEnabled: currentConfig.multiProviderEnabled === true,
@@ -3121,7 +3177,12 @@ Translate to {target_language}.`;
             updateSelectedChips('source', []);
             updateSelectedChips('target', []);
             updateSelectedChips('learn', []);
+            updateSelectedChips('notranslation', currentConfig.noTranslationLanguages || []);
+            syncGridSelection('noTranslationLanguages', currentConfig.noTranslationLanguages || []);
         } else {
+            if (Array.isArray(currentConfig.noTranslationLanguages) && currentConfig.noTranslationLanguages.length > 0) {
+                noTranslationBackup = [...currentConfig.noTranslationLanguages];
+            }
             if (betaToggle) {
                 betaToggle.disabled = false;
             }
@@ -3181,6 +3242,35 @@ Translate to {target_language}.`;
             }
 
             updateSelectedChips('notranslation', []);
+
+            const restored = translationModeBackup || {};
+            currentConfig.sourceLanguages = normalizeLanguageCodes(restored.sourceLanguages || currentConfig.sourceLanguages || []);
+            currentConfig.targetLanguages = normalizeLanguageCodes(restored.targetLanguages || currentConfig.targetLanguages || []);
+            currentConfig.learnTargetLanguages = normalizeLanguageCodes(restored.learnTargetLanguages || currentConfig.learnTargetLanguages || []);
+            currentConfig.learnMode = restored.learnMode === true && currentConfig.learnTargetLanguages.length > 0;
+            currentConfig.learnOrder = restored.learnOrder || currentConfig.learnOrder || 'source-top';
+            enforceLanguageLimits();
+
+            syncGridSelection('sourceLanguages', currentConfig.sourceLanguages);
+            syncGridSelection('targetLanguages', currentConfig.targetLanguages);
+            syncGridSelection('learnLanguages', currentConfig.learnTargetLanguages);
+            updateSelectedChips('source', currentConfig.sourceLanguages);
+            updateSelectedChips('target', currentConfig.targetLanguages);
+            updateSelectedChips('learn', currentConfig.learnTargetLanguages);
+
+            if (learnModeCheckbox) {
+                learnModeCheckbox.checked = currentConfig.learnMode === true;
+            }
+            const showLearn = learnModeCheckbox ? learnModeCheckbox.checked : currentConfig.learnMode === true;
+            if (learnTargetsCard) {
+                learnTargetsCard.style.display = showLearn ? '' : 'none';
+            }
+            if (learnOrderGroup) {
+                learnOrderGroup.style.display = showLearn ? '' : 'none';
+            }
+            if (learnPlacementGroup) {
+                learnPlacementGroup.style.display = showLearn ? '' : 'none';
+            }
         }
 
         validateNoTranslationSelection();
@@ -3717,6 +3807,7 @@ Translate to {target_language}.`;
         const uiLangSelect = document.getElementById('uiLanguageSelect');
         if (uiLangSelect) {
             uiLangSelect.value = (currentConfig.uiLanguage || locale.lang || 'en').toString().toLowerCase();
+            updateUiLanguageBadge(uiLangSelect.value);
         }
 
         // Load Gemini API key
