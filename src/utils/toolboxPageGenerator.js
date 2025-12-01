@@ -83,9 +83,10 @@ function buildQuery(params) {
   return defined.length === 0 ? '' : `?${defined.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&')}`;
 }
 
-function themeToggleMarkup() {
+function themeToggleMarkup(label) {
+  const aria = escapeHtml(label || 'Toggle theme');
   return `
-  <button class="theme-toggle mario" id="themeToggle" aria-label="Toggle theme">
+  <button class="theme-toggle mario" id="themeToggle" aria-label="${aria}">
     <span class="theme-toggle-icon sun" aria-hidden="true">
         <svg viewBox="0 0 64 64" width="28" height="28" role="img">
             <defs>
@@ -441,6 +442,7 @@ function getProviderSummary(config, translator) {
 function generateSubToolboxPage(configStr, videoId, filename, config) {
   const links = buildToolLinks(configStr, videoId, filename);
   const t = getTranslator(config?.uiLanguage || 'en');
+  const themeToggleLabel = t('fileUpload.themeToggle', {}, 'Toggle theme');
   const languageSummary = getLanguageSummary(config || {}, t);
   const providerSummary = getProviderSummary(config || {}, t);
   const streamHint = filename ? escapeHtml(filename) : t('toolbox.streamUnknown', {}, 'Stream filename not detected (still works)');
@@ -1105,7 +1107,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
 </head>
 <body>
   <!-- Theme Toggle Button -->
-  ${themeToggleMarkup()}
+  ${themeToggleMarkup(themeToggleLabel)}
 
   <div id="episodeToast" class="episode-toast" role="status" aria-live="polite">
     <div class="icon">!</div>
@@ -1607,6 +1609,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
   const devMode = config.devMode === true;
   const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
   const t = getTranslator(config?.uiLanguage || 'en');
+  const themeToggleLabel = t('fileUpload.themeToggle', {}, 'Toggle theme');
   const providerOptions = (() => {
     const options = [];
     const providers = config.providers || {};
@@ -2515,7 +2518,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
   <script src="/js/theme-toggle.js" defer></script>
 </head>
 <body>
-  ${themeToggleMarkup()}
+  ${themeToggleMarkup(themeToggleLabel)}
   <button class="help-button mario" id="embeddedHelp" title="Show instructions">?</button>
   <div class="modal-overlay" id="embeddedInstructionsModal" role="dialog" aria-modal="true" aria-labelledby="embeddedInstructionsTitle">
     <div class="modal">
@@ -4082,6 +4085,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     streamFilename: filename || ''
   };
 
+  const themeToggleLabel = t('fileUpload.themeToggle', {}, 'Toggle theme');
   const copy = {
     meta: {
       title: t('toolbox.autoSubs.documentTitle', {}, 'Automatic Subtitles - SubMaker')
@@ -4704,7 +4708,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
   <script src="/js/theme-toggle.js" defer></script>
 </head>
 <body>
-  ${themeToggleMarkup()}
+  ${themeToggleMarkup(themeToggleLabel)}
   <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="${t('nav.mobileMenu', {}, 'Open menu')}" title="${t('nav.mobileMenu', {}, 'Open menu')}">
     <span></span><span></span><span></span>
   </button>

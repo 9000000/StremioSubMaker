@@ -48,9 +48,10 @@ function safeJsonSerialize(obj) {
     return `JSON.parse(${doubleEncoded})`;
 }
 
-function themeToggleMarkup() {
+function themeToggleMarkup(label) {
+    const aria = escapeHtml(label || 'Toggle theme');
     return `
-    <button class="theme-toggle mario" id="themeToggle" aria-label="Toggle theme">
+    <button class="theme-toggle mario" id="themeToggle" aria-label="${aria}">
         <span class="theme-toggle-icon sun" aria-hidden="true">
             <svg viewBox="0 0 64 64" width="28" height="28" role="img">
                 <defs>
@@ -409,6 +410,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
     const languageMaps = buildLanguageLookupMaps();
     const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
     const t = getTranslator(config?.uiLanguage || 'en');
+    const themeToggleLabel = t('fileUpload.themeToggle', {}, 'Toggle theme');
     const copy = {
         documentTitle: t('sync.documentTitle', {}, 'Subtitles Sync Studio - SubMaker'),
         title: t('sync.title', {}, 'Subtitles Sync Studio'),
@@ -1805,7 +1807,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
     <script src="/js/theme-toggle.js" defer></script>
 </head>
 <body>
-    ${themeToggleMarkup()}
+    ${themeToggleMarkup(themeToggleLabel)}
     <button class="help-button mario" id="syncHelp" title="${escapeHtml(copy.instructions.help)}">?</button>
     <div class="modal-overlay" id="syncInstructionsModal" role="dialog" aria-modal="true" aria-labelledby="syncInstructionsTitle">
         <div class="modal">

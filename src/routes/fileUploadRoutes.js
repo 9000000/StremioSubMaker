@@ -30,7 +30,11 @@ function registerFileUploadRoutes(app, { log, resolveConfigGuarded, computeConfi
         } catch (error) {
             if (respondStorageUnavailable && respondStorageUnavailable(res, error, '[File Translation]')) return;
             log.error(() => '[File Translation] Error:', error);
-            res.status(500).send('Failed to load file translation page');
+            const uiLang = (() => {
+                try { return loadLocale(req.query.lang || req.query.uiLang || DEFAULT_LANG).lang || DEFAULT_LANG; } catch (_) { return DEFAULT_LANG; }
+            })();
+            const tx = getTranslator(uiLang);
+            res.status(500).send(tx('api.fileUpload.loadFailed', {}, 'Failed to load file translation page'));
         }
     });
 

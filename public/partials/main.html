@@ -1,26 +1,20 @@
 <div class="container">
     <div class="ui-language-dock" id="uiLanguageDock">
+        <div class="ui-language-glow" aria-hidden="true"></div>
         <div class="ui-language-inner">
-            <div class="ui-language-icon" aria-hidden="true">
-                <div class="ui-language-icon-glow"></div>
-                <svg viewBox="0 0 28 28" role="presentation" focusable="false" aria-hidden="true">
-                    <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="14" cy="14" r="9"></circle>
-                        <path d="M5.5 11.5h17M7 8.5c2 .7 4.7 1 7 1s5-.3 7-1M9 15.5c1.5.5 3.3.7 5 .7 1.7 0 3.5-.2 5-.7M11.5 6.5c-.9 1.2-1.5 3.7-1.5 7 0 3.3.6 5.8 1.5 7M16.5 6.5c.9 1.2 1.5 3.7 1.5 7 0 3.3-.6 5.8-1.5 7"></path>
-                    </g>
-                </svg>
-                <span class="ui-language-flag" id="uiLanguageFlag" aria-hidden="true">🇬🇧</span>
-            </div>
+            <span class="ui-language-flag-badge" aria-hidden="true">
+                <span class="ui-language-flag" id="uiLanguageFlag">🇬🇧</span>
+            </span>
             <div class="ui-language-copy">
                 <span class="ui-language-pill" id="uiLanguageLabel" data-i18n="config.uiLanguageLabel">Interface</span>
                 <span class="ui-language-value" id="uiLanguageValue">English</span>
             </div>
-            <div class="ui-language-chevron" aria-hidden="true">
+            <span class="ui-language-chevron" aria-hidden="true">
                 <svg viewBox="0 0 16 16" role="presentation" focusable="false">
                     <path d="M3 6l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                         stroke-linejoin="round" />
                 </svg>
-            </div>
+            </span>
         </div>
         <select id="uiLanguageSelect" class="ui-language-select" aria-label="UI language" title="UI language"></select>
     </div>

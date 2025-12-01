@@ -131,6 +131,19 @@
         "empty": "No {sources} subtitles available"
       }
     },
+    "apiErrors": {
+      "rateLimit": "{service} rate limit exceeded. Please wait a few minutes and try again.",
+      "serviceUnavailable": "{service} temporarily unavailable. Please try again in a few minutes.",
+      "databaseUnavailable": "Subtitle server database temporarily unavailable. Trying next subtitle...",
+      "authFailed": "Authentication failed. Please check your API credentials.",
+      "notFound": "Resource not found. The requested content may have been removed.",
+      "serverError": "{service} returned a server error. Please try again later.",
+      "opensubsQuota": "OpenSubtitles daily download limit reached (20 per 24h). Try again after the next UTC midnight.",
+      "invalidRequest": "Invalid request. Please check your configuration.",
+      "timeout": "Request timed out. Please try again.",
+      "network": "Network connection failed. Please check your internet connection.",
+      "dns": "Cannot reach service. DNS lookup failed."
+    },
     "toolbox": {
       "documentTitle": "Sub Toolbox - SubMaker",
       "streamUnknown": "Stream filename not detected (still works)",
@@ -479,6 +492,10 @@
       "quickStatsToolbox": "Toolbox",
       "quickStatsLastSave": "Last Save",
       "quickActionHelp": "Help",
+      "partials": {
+        "loadError": "Failed to load {src} ({status})",
+        "loadFallback": "Failed to load {src}"
+      },
       "footer": {
         "love": "Made with <span class=\"footer-heart\">\u2764\ufe0f</span> for Stremio users everywhere",
         "thanks": "Thank you for using SubMaker! Your support helps make content accessible to everyone."
@@ -1435,7 +1452,12 @@
         "resetFailed": "Failed to reset extension. Please try removing and reinstalling it.",
         "engineBusy": "Syncing now",
         "engineIdle": "Standing by",
-        "themeAria": "Theme: {theme}"
+        "themeAria": "Theme: {theme}",
+        "iconAlt": "SubMaker xSync icon",
+        "logoAlt": "SubMaker xSync logo"
+      },
+      "offscreen": {
+        "title": "SubMaker xSync Offscreen"
       },
       "options": {
         "title": "SubMaker xSync Settings",
@@ -1453,6 +1475,11 @@
         "statusRefresh": "Status Refresh",
         "statusRefreshHint": "How often the popup refreshes job stats.",
         "themePreference": "Theme Preference",
+        "themeLight": "Light",
+        "themeDark": "Dark",
+        "themeTrueDark": "True Dark",
+        "themeToggleAria": "Toggle theme",
+        "refreshUnitSeconds": "s",
         "linksEyebrow": "Link Capture",
         "linksTitle": "Configure and Toolbox links",
         "linksHint": "Open the configure and toolbox pages once and we’ll remember the URLs.",
@@ -1532,6 +1559,9 @@
         "supportHint": "Exports are JSON. Stats reset only clears popup metrics (active/total).",
         "saveEyebrow": "Save",
         "saveSubline": "Applies instantly across the extension."
+      },
+      "content": {
+        "extractFailed": "Extraction failed"
       }
     }
   }

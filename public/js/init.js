@@ -1,6 +1,15 @@
 (function() {
     'use strict';
 
+    function translate(key, vars, fallback) {
+        try {
+            if (typeof window.t === 'function') {
+                return window.t(key, vars || {}, fallback || key);
+            }
+        } catch (_) {}
+        return fallback || key;
+    }
+
     /**
      * Load HTML partials declared via data-include attributes.
      * Exposes window.partialsReady so other scripts can wait before wiring UI.
@@ -16,13 +25,15 @@
         return fetch(src, { cache: 'no-store', signal: controller.signal })
             .then(function(res) {
                 if (!res.ok) {
-                    throw new Error('Failed to load partial: ' + src + ' (' + res.status + ')');
+                    const message = translate('config.partials.loadError', { src: src, status: res.status }, 'Failed to load partial: ' + src + ' (' + res.status + ')');
+                    throw new Error(message);
                 }
                 return res.text();
             })
             .catch(function(err) {
                 console.error(err);
-                return '<div style="padding:1rem; color:#ef4444;">Failed to load ' + src + '</div>';
+                const fallback = translate('config.partials.loadFallback', { src: src }, 'Failed to load ' + src);
+                return '<div style="padding:1rem; color:#ef4444;">' + fallback + '</div>';
             })
             .finally(function() {
                 clearTimeout(timeout);

@@ -131,6 +131,19 @@
         "empty": "No hay subtítulos en {sources}"
       }
     },
+    "apiErrors": {
+      "rateLimit": "Limite de {service} excedido. Espera unos minutos y vuelve a intentar.",
+      "serviceUnavailable": "{service} no disponible temporalmente. Intenta de nuevo en unos minutos.",
+      "databaseUnavailable": "La base de datos de subtヴtulos no estケ disponible temporalmente. Probando el siguiente subtヴtulo...",
+      "authFailed": "Autenticaciケn fallida. Revisa tus credenciales de API.",
+      "notFound": "Recurso no encontrado. Es posible que el contenido se haya eliminado.",
+      "serverError": "{service} devolviケ un error del servidor. Intenta mケs tarde.",
+      "opensubsQuota": "Limite diario de OpenSubtitles alcanzado (20 cada 24h). Intenta de nuevo despuケs de la medianoche UTC.",
+      "invalidRequest": "Solicitud invケlida. Revisa tu configuraciケn.",
+      "timeout": "La solicitud excediケ el tiempo de espera. Intenta de nuevo.",
+      "network": "Fallo de conexiケn de red. Verifica tu conexiケn a internet.",
+      "dns": "No se puede alcanzar el servicio. Error de DNS."
+    },
     "toolbox": {
       "documentTitle": "Sub Toolbox - SubMaker",
       "streamUnknown": "Nombre de archivo de la emisión no detectado (sigue funcionando)",
@@ -479,6 +492,10 @@
       "quickStatsToolbox": "Toolbox",
       "quickStatsLastSave": "Último guardado",
       "quickActionHelp": "Ayuda",
+      "partials": {
+        "loadError": "Error al cargar {src} ({status})",
+        "loadFallback": "Error al cargar {src}"
+      },
       "footer": {
         "love": "Hecho con <span class=\"footer-heart\">❤️</span> para usuarios de Stremio en todas partes",
         "thanks": "¡Gracias por usar SubMaker! Tu apoyo ayuda a que el contenido sea accesible para todos."
@@ -1453,6 +1470,9 @@
         "statusRefresh": "Actualización de estado",
         "statusRefreshHint": "Cada cuánto el popup actualiza las estadísticas.",
         "themePreference": "Preferencia de tema",
+        "themeLight": "Claro",
+        "themeDark": "Oscuro",
+        "themeTrueDark": "Oscuro total",
         "linksEyebrow": "Captura de enlaces",
         "linksTitle": "URLs de configuración y Toolbox",
         "linksHint": "Abre las páginas de configuración y toolbox una vez y recordaremos las URLs.",
@@ -1532,6 +1552,9 @@
         "supportHint": "Las exportaciones son JSON. Reset de estadísticas solo limpia métricas del popup (activos/total).",
         "saveEyebrow": "Guardar",
         "saveSubline": "Aplica al instante en toda la extensión."
+      },
+      "content": {
+        "extractFailed": "Falló la extracción"
       }
     }
   }

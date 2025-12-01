@@ -8,6 +8,26 @@
  */
 
 const log = require('./logger');
+const { getTranslator, DEFAULT_LANG } = require('./i18n');
+
+const defaultTranslate = (key, vars, fallback) => fallback || key;
+
+function resolveTranslator(options, error) {
+  if (typeof options === 'function') return options;
+  const candidate = options?.t || options?.translate;
+  if (typeof candidate === 'function') return candidate;
+  const lang = options?.lang || options?.uiLanguage || options?.uiLang || error?.uiLanguage || error?.uiLang;
+  if (lang) {
+    try {
+      return getTranslator(lang);
+    } catch (_) { /* ignore translator errors */ }
+  }
+  try {
+    return getTranslator(DEFAULT_LANG);
+  } catch (_) {
+    return defaultTranslate;
+  }
+}
 
 /**
  * Parse and classify an API error
@@ -15,7 +35,7 @@ const log = require('./logger');
  * @param {string} serviceName - Name of the service (e.g., 'OpenSubtitles', 'Gemini')
  * @returns {Object} - Parsed error information
  */
-function parseApiError(error, serviceName = 'API') {
+function parseApiError(error, serviceName = 'API', options = {}) {
   const parsed = {
     serviceName,
     message: error.message || 'Unknown error',
@@ -24,6 +44,8 @@ function parseApiError(error, serviceName = 'API') {
     isRetryable: false,
     userMessage: null
   };
+  const translate = resolveTranslator(options, error);
+  const serviceLabel = serviceName || 'API';
 
   // Check for response errors (HTTP errors)
   if (error.response) {
@@ -33,38 +55,38 @@ function parseApiError(error, serviceName = 'API') {
     if (parsed.statusCode === 429) {
       parsed.type = 'rate_limit';
       parsed.isRetryable = true;
-      parsed.userMessage = 'API rate limit exceeded. Please wait a few minutes and try again.';
+      parsed.userMessage = translate('apiErrors.rateLimit', { service: serviceLabel }, 'API rate limit exceeded. Please wait a few minutes and try again.');
     }
     // Service unavailable (503)
     else if (parsed.statusCode === 503) {
       parsed.type = 'service_unavailable';
       parsed.isRetryable = true;
-      parsed.userMessage = 'Service temporarily unavailable. Please try again in a few minutes.';
+      parsed.userMessage = translate('apiErrors.serviceUnavailable', { service: serviceLabel }, 'Service temporarily unavailable. Please try again in a few minutes.');
     }
     // OpenSubtitles 469 (Database connection error - custom status code)
     // This is a server-side error that should be retried
     else if (parsed.statusCode === 469) {
       parsed.type = 'database_error';
       parsed.isRetryable = true;
-      parsed.userMessage = 'Subtitle server database temporarily unavailable. Trying next subtitle...';
+      parsed.userMessage = translate('apiErrors.databaseUnavailable', {}, 'Subtitle server database temporarily unavailable. Trying next subtitle...');
     }
     // Authentication errors (401, 403)
     else if (parsed.statusCode === 401 || parsed.statusCode === 403) {
       parsed.type = 'authentication';
       parsed.isRetryable = false;
-      parsed.userMessage = 'Authentication failed. Please check your API credentials.';
+      parsed.userMessage = translate('apiErrors.authFailed', {}, 'Authentication failed. Please check your API credentials.');
     }
     // Not found (404)
     else if (parsed.statusCode === 404) {
       parsed.type = 'not_found';
       parsed.isRetryable = false;
-      parsed.userMessage = 'Resource not found. The requested content may have been removed.';
+      parsed.userMessage = translate('apiErrors.notFound', {}, 'Resource not found. The requested content may have been removed.');
     }
     // Server errors (500-599)
     else if (parsed.statusCode >= 500) {
       parsed.type = 'server_error';
       parsed.isRetryable = true;
-      parsed.userMessage = 'Server error. Please try again later.';
+      parsed.userMessage = translate('apiErrors.serverError', { service: serviceLabel }, 'Server error. Please try again later.');
     }
     // OpenSubtitles daily quota exceeded (406 Not Acceptable used for 20/24h quota)
     else if (parsed.statusCode === 406 && serviceName === 'OpenSubtitles') {
@@ -73,19 +95,19 @@ function parseApiError(error, serviceName = 'API') {
       if (looksLikeQuota) {
         parsed.type = 'quota_exceeded';
         parsed.isRetryable = false;
-        parsed.userMessage = 'OpenSubtitles daily download limit reached (20 per 24h). Try again after the next UTC midnight.';
+        parsed.userMessage = translate('apiErrors.opensubsQuota', {}, 'OpenSubtitles daily download limit reached (20 per 24h). Try again after the next UTC midnight.');
       } else {
         // Fallback to generic client error if not quota text
         parsed.type = 'client_error';
         parsed.isRetryable = false;
-        parsed.userMessage = 'Invalid request. Please check your configuration.';
+        parsed.userMessage = translate('apiErrors.invalidRequest', {}, 'Invalid request. Please check your configuration.');
       }
     }
     // Client errors (400-499)
     else if (parsed.statusCode >= 400) {
       parsed.type = 'client_error';
       parsed.isRetryable = false;
-      parsed.userMessage = 'Invalid request. Please check your configuration.';
+      parsed.userMessage = translate('apiErrors.invalidRequest', {}, 'Invalid request. Please check your configuration.');
     }
   }
   // Network errors (no response)
@@ -93,15 +115,15 @@ function parseApiError(error, serviceName = 'API') {
     if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
       parsed.type = 'timeout';
       parsed.isRetryable = true;
-      parsed.userMessage = 'Request timed out. Please try again.';
+      parsed.userMessage = translate('apiErrors.timeout', {}, 'Request timed out. Please try again.');
     } else if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED') {
       parsed.type = 'network';
       parsed.isRetryable = true;
-      parsed.userMessage = 'Network connection failed. Please check your internet connection.';
+      parsed.userMessage = translate('apiErrors.network', {}, 'Network connection failed. Please check your internet connection.');
     } else if (error.code === 'ENOTFOUND') {
       parsed.type = 'dns';
       parsed.isRetryable = false;
-      parsed.userMessage = 'Cannot reach service. DNS lookup failed.';
+      parsed.userMessage = translate('apiErrors.dns', {}, 'Cannot reach service. DNS lookup failed.');
     }
   }
 
@@ -116,7 +138,7 @@ function parseApiError(error, serviceName = 'API') {
  * @param {Object} options - Additional logging options
  */
 function logApiError(error, serviceName, operation, options = {}) {
-  const parsed = parseApiError(error, serviceName);
+  const parsed = parseApiError(error, serviceName, options);
 
   // Only log once per error to avoid spam
   const logPrefix = `[${serviceName}]`;
@@ -208,7 +230,7 @@ function handleSearchError(error, serviceName, options = {}) {
 function handleDownloadError(error, serviceName, options = {}) {
   logApiError(error, serviceName, 'Download', options);
 
-  const parsed = parseApiError(error, serviceName);
+  const parsed = parseApiError(error, serviceName, options);
 
   // Throw a custom error with user-friendly message
   const customError = new Error(parsed.userMessage || parsed.message);
@@ -244,7 +266,7 @@ function handleAuthError(error, serviceName, options = {}) {
 function handleTranslationError(error, serviceName, options = {}) {
   logApiError(error, serviceName, 'Translation', { ...options, skipResponseData: true });
 
-  const parsed = parseApiError(error, serviceName);
+  const parsed = parseApiError(error, serviceName, options);
 
   // Create a custom error with specific properties for translation errors
   const customError = new Error(parsed.userMessage || parsed.message);
@@ -290,7 +312,7 @@ function handleTranslationError(error, serviceName, options = {}) {
  * @returns {boolean} - True if rate limit error
  */
 function isRateLimitError(error) {
-  const parsed = parseApiError(error);
+  const parsed = parseApiError(error, 'API', {});
   return parsed.type === 'rate_limit';
 }
 
@@ -300,7 +322,7 @@ function isRateLimitError(error) {
  * @returns {boolean} - True if error is retryable
  */
 function isRetryableError(error) {
-  const parsed = parseApiError(error);
+  const parsed = parseApiError(error, 'API', {});
   return parsed.isRetryable;
 }
 

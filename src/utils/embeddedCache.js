@@ -51,13 +51,14 @@ async function loadIndex(adapter, videoHash, type) {
   return { indexKey, keys: index.keys };
 }
 
-async function persistIndex(adapter, indexKey, keys, previousKeys = [], scanPattern = null) {
+async function persistIndex(adapter, indexKey, keys, previousKeys = [], scanPattern = null, options = {}) {
+  const { skipRescan = false } = options || {};
   const unique = Array.from(new Set(keys)).slice(-MAX_INDEX_ENTRIES);
   const trimmed = Array.isArray(keys) ? keys.filter(k => k && !unique.includes(k)) : [];
   const removed = Array.isArray(previousKeys) ? previousKeys.filter(k => k && !unique.includes(k)) : [];
   const stray = [];
 
-  if (scanPattern) {
+  if (scanPattern && !skipRescan) {
     try {
       const listed = await adapter.list(StorageAdapter.CACHE_TYPES.EMBEDDED, scanPattern);
       if (Array.isArray(listed)) {
@@ -117,7 +118,14 @@ async function removeFromIndex(adapter, videoHash, type, cacheKey) {
 async function rebuildIndexFromStorage(adapter, videoHash, type, pattern) {
   const keys = await adapter.list(StorageAdapter.CACHE_TYPES.EMBEDDED, pattern);
   const { indexKey, keys: previousKeys } = await loadIndex(adapter, videoHash, type);
-  const saved = await persistIndex(adapter, indexKey, keys || [], previousKeys, pattern);
+  const saved = await persistIndex(
+    adapter,
+    indexKey,
+    keys || [],
+    previousKeys,
+    pattern,
+    { skipRescan: true } // Avoid double SCAN when we already listed keys above
+  );
   return saved;
 }
 
