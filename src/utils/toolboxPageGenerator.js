@@ -4,6 +4,7 @@ const { deriveVideoHash } = require('./videoHash');
 const { parseStremioId } = require('./subtitle');
 const { version: appVersion } = require('../../package.json');
 const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = require('./quickNav');
+const { buildClientBootstrap, loadLocale } = require('./i18n');
 
 function escapeHtml(value) {
   if (value === undefined || value === null) return '';
@@ -13,6 +14,11 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function resolveUiLang(config) {
+  const lang = (config && config.uiLanguage) ? String(config.uiLanguage).toLowerCase() : 'en';
+  return escapeHtml(lang || 'en');
 }
 
 /**
@@ -438,6 +444,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
   const devMode = (config || {}).devMode === true;
   const devDisabledClass = devMode ? '' : ' dev-disabled';
   const languageMaps = buildLanguageLookupMaps();
+  const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
   const subtitleMenuTargets = (config?.targetLanguages || []).map(code => ({
     code,
     name: getLanguageName(code) || code
@@ -445,11 +452,12 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
 
   return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${resolveUiLang(config)}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sub Toolbox - SubMaker</title>
+  ${localeBootstrap}
   <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
   <link rel="shortcut icon" href="/favicon-toolbox.svg">
   <link rel="apple-touch-icon" href="/favicon-toolbox.svg">
@@ -1585,6 +1593,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
   const targetLanguageCodes = Array.isArray(config.targetLanguages) ? config.targetLanguages : [];
   const languageMaps = buildLanguageLookupMaps();
   const devMode = config.devMode === true;
+  const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
   const providerOptions = (() => {
     const options = [];
     const providers = config.providers || {};
@@ -1637,11 +1646,12 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 
   return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${resolveUiLang(config)}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Translate Embedded Subtitles - SubMaker</title>
+  ${localeBootstrap}
   <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
   <link rel="shortcut icon" href="/favicon-toolbox.svg">
   <link rel="apple-touch-icon" href="/favicon-toolbox.svg">
@@ -2668,6 +2678,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
                 </select>
               </div>
             </div>
+            <div id="model-status" class="model-status" role="status" aria-live="polite"></div>
 
             <div class="flex" style="flex-direction:column; gap:12px; align-items:center; width:100%;">
               <div style="display:flex; flex-direction:column; gap:6px; align-items:center; width:100%; max-width:300px;">
@@ -2771,8 +2782,12 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       dontShow: document.getElementById('dontShowEmbeddedInstructions')
     };
     const INSTRUCTIONS_KEY = 'submaker_embedded_instructions_visited';
+    const INSTRUCTIONS_ACK = 'ack';
+    const INSTRUCTIONS_HIDE = 'hide';
     const EXTRACT_MODE_KEY = 'submaker_embedded_extract_mode';
     let subtitleMenuInstance = null;
+    let extractWatchdogTimer = null;
+    let lastExtensionLabel = '';
 
     function requestExtensionReset(reason) {
       try {
@@ -2795,14 +2810,19 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       setInstructionLock(true);
     }
 
-    function closeInstructions() {
+    function closeInstructions(acknowledge = false) {
       if (instructionsEls.overlay) {
         instructionsEls.overlay.classList.remove('show');
         instructionsEls.overlay.style.display = 'none';
       }
       setInstructionLock(false);
-      // Mark as visited so it doesn't auto-show on subsequent visits
-      try { localStorage.setItem(INSTRUCTIONS_KEY, 'true'); } catch (_) {}
+      // Persist preference: honor explicit opt-out, otherwise mark as seen
+      const shouldHide = !!instructionsEls.dontShow?.checked;
+      if (shouldHide) {
+        setInstructionPref(INSTRUCTIONS_HIDE);
+      } else if (acknowledge) {
+        setInstructionPref(INSTRUCTIONS_ACK);
+      }
     }
 
     function loadExtractMode() {
@@ -2818,31 +2838,64 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       try { localStorage.setItem(EXTRACT_MODE_KEY, mode); } catch (_) {}
     }
 
+    function computeLocalVideoHash(payload = {}) {
+      const base = [normalizeStreamValue(payload.filename), normalizeStreamValue(payload.videoId)].filter(Boolean).join('::');
+      if (!base) return '';
+      let hash = 0;
+      for (let i = 0; i < base.length; i++) {
+        hash = (hash * 31 + base.charCodeAt(i)) >>> 0;
+      }
+      return Math.abs(hash).toString(16).padStart(8, '0');
+    }
+
+    function syncVideoHash(payload = {}) {
+      const next = normalizeStreamValue(payload.videoHash) || computeLocalVideoHash(payload) || BOOTSTRAP.videoHash || '';
+      if (next) {
+        PAGE.videoHash = next;
+        BOOTSTRAP.videoHash = next;
+      }
+      return PAGE.videoHash || '';
+    }
+
+    function getInstructionPref() {
+      try { return localStorage.getItem(INSTRUCTIONS_KEY) || ''; } catch (_) { return ''; }
+    }
+
+    function setInstructionPref(value) {
+      try { localStorage.setItem(INSTRUCTIONS_KEY, value); } catch (_) {}
+    }
+
     function initInstructions() {
-      const hasVisited = (() => {
-        try { return localStorage.getItem(INSTRUCTIONS_KEY) === 'true'; } catch (_) { return false; }
-      })();
+      const pref = getInstructionPref();
+      const hasVisited = pref === INSTRUCTIONS_ACK || pref === INSTRUCTIONS_HIDE;
+      const skipAuto = pref === INSTRUCTIONS_HIDE;
 
       // Always show the help button
       if (instructionsEls.help) {
         instructionsEls.help.addEventListener('click', () => openInstructions(false));
         instructionsEls.help.style.display = 'flex';
       }
-      if (instructionsEls.close) instructionsEls.close.addEventListener('click', closeInstructions);
-      if (instructionsEls.gotIt) instructionsEls.gotIt.addEventListener('click', closeInstructions);
+      if (instructionsEls.close) instructionsEls.close.addEventListener('click', () => closeInstructions(true));
+      if (instructionsEls.gotIt) instructionsEls.gotIt.addEventListener('click', () => closeInstructions(true));
+      if (instructionsEls.dontShow) {
+        instructionsEls.dontShow.checked = pref === INSTRUCTIONS_HIDE;
+        instructionsEls.dontShow.addEventListener('change', (ev) => {
+          if (ev.target?.checked) setInstructionPref(INSTRUCTIONS_HIDE);
+        });
+      }
       if (instructionsEls.overlay) {
         instructionsEls.overlay.addEventListener('click', (ev) => {
-          if (ev.target === instructionsEls.overlay) closeInstructions();
+          if (ev.target === instructionsEls.overlay) closeInstructions(true);
         });
       }
       document.addEventListener('keydown', (ev) => {
         if (ev.key === 'Escape' && instructionsEls.overlay && instructionsEls.overlay.classList.contains('show')) {
-          closeInstructions();
+          closeInstructions(true);
         }
       });
 
       // Only auto-show on first visit
-      if (!hasVisited) {
+      if (!hasVisited && !skipAuto) {
         setTimeout(() => openInstructions(true), 250);
       }
     }
@@ -2890,10 +2943,19 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 
       PAGE.videoId = normalizeStreamValue(payload.videoId) || PAGE.videoId;
       PAGE.filename = normalizeStreamValue(payload.filename) || PAGE.filename;
-      PAGE.videoHash = normalizeStreamValue(payload.videoHash) || PAGE.videoHash;
+      syncVideoHash({
+        videoHash: normalizeStreamValue(payload.videoHash),
+        filename: PAGE.filename,
+        videoId: PAGE.videoId
+      });
 
       setTargetOptions(baseTargetOptions, true);
       updateVideoMeta(PAGE);
+      resetExtractionState(true);
+      if (els.extractLog) {
+        els.extractLog.innerHTML = '';
+        logExtract('Linked stream changed. Outputs cleared; run extraction again for the new stream.');
+      }
       if (subtitleMenuInstance && typeof subtitleMenuInstance.updateStream === 'function') {
         subtitleMenuInstance.updateStream({
           videoId: PAGE.videoId,
@@ -2932,14 +2994,18 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     });
 
     function getVideoHash() {
-      if (BOOTSTRAP.videoHash && BOOTSTRAP.videoHash.length) return BOOTSTRAP.videoHash;
-      const base = (BOOTSTRAP.filename || BOOTSTRAP.videoId || 'unknown').toString();
-      let hash = 0;
-      for (let i = 0; i < base.length; i++) {
-        hash = (hash * 31 + base.charCodeAt(i)) >>> 0;
+      if (PAGE.videoHash && PAGE.videoHash.length) return PAGE.videoHash;
+      if (BOOTSTRAP.videoHash && BOOTSTRAP.videoHash.length) {
+        PAGE.videoHash = BOOTSTRAP.videoHash;
+        return PAGE.videoHash;
       }
-      BOOTSTRAP.videoHash = Math.abs(hash).toString(16).padStart(8, '0');
-      return BOOTSTRAP.videoHash;
+      const fallback = computeLocalVideoHash({
+        filename: PAGE.filename || BOOTSTRAP.filename,
+        videoId: PAGE.videoId || BOOTSTRAP.videoId
+      });
+      PAGE.videoHash = fallback;
+      BOOTSTRAP.videoHash = fallback;
+      return PAGE.videoHash;
     }
 
     const els = {
@@ -3134,8 +3200,32 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       els.translateLog.insertBefore(logEntry, els.translateLog.firstChild);
     }
 
+    function resetExtractionState(clearLogs = false) {
+      state.tracks = [];
+      state.targets = {};
+      state.queue = [];
+      state.activeTranslations = 0;
+      state.selectedTrackId = null;
+      state.lastProgressStatus = null;
+      renderSelectedTrackSummary();
+      renderDownloads();
+      renderTargets();
+      setStep2Enabled(false);
+      setTranslationInFlight(false);
+      if (clearLogs && els.translateLog) {
+        els.translateLog.innerHTML = '';
+      }
+    }
+
     function setExtractionInFlight(active) {
       state.extractionInFlight = !!active;
+      if (extractWatchdogTimer) {
+        clearTimeout(extractWatchdogTimer);
+        extractWatchdogTimer = null;
+      }
+      if (state.extractionInFlight) {
+        extractWatchdogTimer = setTimeout(handleExtractionTimeout, 60000);
+      }
       if (els.extractBtn) {
         els.extractBtn.disabled = !!active;
         els.extractBtn.textContent = active ? 'Extracting...' : buttonLabels.extract;
@@ -3143,6 +3233,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       if (els.modeSelect) {
         els.modeSelect.disabled = !!active;
       }
+      updateExtensionStatus(state.extensionReady, lastExtensionLabel || (state.extensionReady ? 'Ready' : ''), state.extensionReady ? 'ok' : 'warn');
     }
 
     function applyTranslateDisabled() {
@@ -3157,6 +3248,19 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         els.translateBtn.textContent = active ? 'Translating...' : buttonLabels.translate;
       }
       applyTranslateDisabled();
+    }
+
+    function handleExtractionTimeout() {
+      extractWatchdogTimer = null;
+      if (!state.extractionInFlight) return;
+      logExtract('Extension did not respond in time. Resetting extraction; please retry.');
+      state.extractMessageId = null;
+      state.lastProgressStatus = null;
+      resetExtractionState(false);
+      setExtractionInFlight(false);
+      requestExtensionReset('extract-timeout');
+      // Re-ping in case the extension went idle
+      setTimeout(sendPing, 500);
     }
 
     function refreshTranslationInFlight() {
@@ -3175,10 +3279,18 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 
     function updateExtensionStatus(ready, text, tone) {
       state.extensionReady = ready;
-      const dotTone = ready ? 'ok' : (tone || 'bad');
+      if (ready && text) {
+        lastExtensionLabel = text;
+      }
+      const dotTone = ready
+        ? (state.extractionInFlight ? 'warn' : 'ok')
+        : (tone || 'bad');
       els.extDot.className = 'status-dot ' + dotTone;
       if (els.extLabel) {
-        els.extLabel.textContent = ready ? (text || 'Ready') : (text || 'Extension not detected');
+        const label = ready
+          ? (state.extractionInFlight ? 'Extracting via xSync…' : (text || lastExtensionLabel || 'Ready'))
+          : (text || 'Extension not detected');
+        els.extLabel.textContent = label;
         if (ready) {
           els.extLabel.classList.add('ready');
           els.extLabel.removeAttribute('href');
@@ -3401,6 +3513,18 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       renderSelectedTrackSummary();
       renderExtractedDownloads();
       setStep2Enabled(true);
+    }
+
+    function autoSelectDefaultTrack() {
+      if (!state.tracks.length) {
+        setStep2Enabled(false);
+        return;
+      }
+      if (state.tracks.length === 1) {
+        selectTrack(state.tracks[0].id);
+        return;
+      }
+      setStep2Enabled(false);
     }
 
     function renderDownloadCards(container, emptyEl, items) {
@@ -3659,10 +3783,11 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     window.addEventListener('message', (event) => {
       const msg = event.data || {};
       if (msg.source !== 'extension') return;
-      const isExtractEvent = msg.type === 'SUBMAKER_EXTRACT_PROGRESS' || msg.type === 'SUBMAKER_EXTRACT_RESPONSE';
+      const trackedTypes = ['SUBMAKER_EXTRACT_PROGRESS', 'SUBMAKER_EXTRACT_RESPONSE', 'SUBMAKER_DEBUG_LOG'];
+      const isExtractEvent = trackedTypes.includes(msg.type);
       if (isExtractEvent) {
         if (!state.extractMessageId) return;
-        if (msg.messageId !== state.extractMessageId) return;
+        if (msg.messageId && msg.messageId !== state.extractMessageId) return;
       }
       if (msg.type === 'SUBMAKER_PONG') {
         pingRetries = 0; // Reset retry counter
@@ -3671,6 +3796,9 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
           pingTimer = null;
         }
         updateExtensionStatus(true, 'Ready (v' + (msg.version || '-') + ')');
+      } else if (msg.type === 'SUBMAKER_DEBUG_LOG') {
+        const level = (msg.level || 'info').toUpperCase();
+        logExtract('[' + level + '] ' + (msg.text || 'Log event'));
       } else if (msg.type === 'SUBMAKER_EXTRACT_PROGRESS') {
         // Deduplicate consecutive identical progress messages to prevent spam
         const currentStatus = msg.status || ('Progress ' + msg.progress + '%');
@@ -3684,12 +3812,8 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         state.lastProgressStatus = null; // Reset for next extraction
         state.extractMessageId = null;
         if (msg.success && Array.isArray(msg.tracks)) {
-          state.targets = {};
-          state.queue = [];
-          state.activeTranslations = 0;
+          resetExtractionState(true);
           state.selectedTargetLang = getTargetOptions()[0]?.code || null;
-          state.selectedTrackId = null;
-          if (els.translateLog) els.translateLog.innerHTML = '';
           state.tracks = msg.tracks.map((t, idx) => ({
             id: t.id || idx,
             label: t.label || ('Track ' + (idx + 1)),
@@ -3703,14 +3827,14 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
             mime: t.mime || (t.binary ? 'application/octet-stream' : 'text/plain'),
             extractedAt: Date.now()
           }));
-          renderSelectedTrackSummary();
           renderTargets();
+          autoSelectDefaultTrack();
           renderDownloads();
           const batchId = Date.now();
           persistOriginals(batchId);
-          setStep2Enabled(false);
           logExtract('Extracted ' + state.tracks.length + ' track(s).');
         } else {
+          resetExtractionState(true);
           logExtract('Extraction failed: ' + (msg.error || 'unknown error'));
           setStep2Enabled(false);
         }
@@ -3757,13 +3881,14 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         logExtract('Invalid stream URL. Paste a full http/https link.');
         return;
       }
+      resetExtractionState(true);
+      if (els.extractLog) els.extractLog.innerHTML = '';
       const mode = state.extractMode === 'complete' ? 'complete' : 'smart';
       const messageId = 'extract_' + Date.now();
       setStep2Enabled(false);
       setExtractionInFlight(true);
       state.extractMessageId = messageId;
       state.lastProgressStatus = null; // Reset progress tracking for new extraction
-      if (els.extractLog) els.extractLog.innerHTML = '';
       window.postMessage({
         type: 'SUBMAKER_EXTRACT_REQUEST',
         source: 'webpage',
@@ -3771,7 +3896,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         data: {
           streamUrl,
           mode,
-          filename: BOOTSTRAP.filename || '',
+          filename: PAGE.filename || BOOTSTRAP.filename || '',
           videoHash: getVideoHash()
         }
       }, '*');
@@ -3869,6 +3994,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     : `<option value="">Add target languages in Configure</option>`;
   const videoHash = deriveVideoHash(filename, videoId);
   const languageMaps = buildLanguageLookupMaps();
+  const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
   const subtitleMenuTargets = targetLanguages.map(code => ({
     code,
     name: getLanguageName(code) || code
@@ -3883,11 +4009,12 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
 
   return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${resolveUiLang(config)}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Automatic Subtitles - SubMaker</title>
+    ${localeBootstrap}
     <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
     <link rel="shortcut icon" href="/favicon-toolbox.svg">
     <link rel="apple-touch-icon" href="/favicon-toolbox.svg">

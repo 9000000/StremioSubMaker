@@ -15,7 +15,6 @@ const { deriveVideoHash } = require('./videoHash');
 const { parseStremioId } = require('./subtitle');
 const { version: appVersion } = require('../../package.json');
 const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = require('./quickNav');
-const { buildClientBootstrap, loadLocale } = require('./i18n');
 
 function escapeHtml(text) {
     if (!text) return '';
@@ -25,11 +24,6 @@ function escapeHtml(text) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
-}
-
-function resolveUiLang(config) {
-    const lang = (config && config.uiLanguage) ? String(config.uiLanguage).toLowerCase() : 'en';
-    return escapeHtml(lang || 'en');
 }
 
 /**
@@ -406,7 +400,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
     };
     const devMode = (config || {}).devMode === true;
     const languageMaps = buildLanguageLookupMaps();
-    const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
 
     // Filter out action buttons and xSync entries to show only fetchable subtitles
     // Filter out action buttons (legacy and new Sub Toolbox) so only real subtitles are selectable
@@ -474,11 +467,10 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
 
     return `
 <!DOCTYPE html>
-<html lang="${resolveUiLang(config)}">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    ${localeBootstrap}
     <title>Subtitles Sync Studio - SubMaker</title>
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
@@ -1711,7 +1703,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                 <h3>Sync Methods</h3>
                 <ol>
                     <li><strong>Manual Offset:</strong> Adjust subtitle timing manually with positive/negative milliseconds when you don't want to run autosync.</li>
-                    <li><strong>Fast Fingerprint Pre-pass:</strong> Coarse audio fingerprint pass to lock the big offset before deeper scans (on by default).</li>
                     <li><strong>ALASS (audio ➜ subtitle):</strong> Fast wasm anchors against the audio; pick Rapid/Balanced/Deep/Complete profiles for coverage.</li>
                     <li><strong>FFSubSync (audio ➜ subtitle):</strong> Drift-aware audio alignment via ffsubsync-wasm; choose a light, balanced, deep, or complete scan.</li>
                     <li><strong>Vosk CTC/DTW (text ➜ audio):</strong> Force-align your subtitle text directly to audio with Vosk logits + DTW, great for broken timings or big offsets.</li>
@@ -1889,21 +1880,12 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
 
                     <!-- Auto Sync Info -->
                     <div id="autoSyncInfo" style="display: none;">
-                    <div class="info-box auto-sync-box">
-                        <p id="syncMethodDescription" class="sync-method-description"></p>
+                        <div class="info-box auto-sync-box">
+                            <p id="syncMethodDescription" class="sync-method-description"></p>
+                        </div>
                     </div>
-                </div>
-                <div class="form-group" id="fingerprintPrepassGroup" style="display: none;">
-                    <label class="modal-checkbox" style="display: flex; align-items: flex-start; gap: 0.5rem;">
-                        <input type="checkbox" id="useFingerprintPrepass" checked>
-                        <span>
-                            <strong>Fast fingerprint pre-pass (recommended)</strong><br>
-                            Locks the coarse offset quickly using short audio fingerprints before running the chosen engine. Disable only if the audio is muted, heavily trimmed, or you want to skip the extra hop.
-                        </span>
-                    </label>
-                </div>
 
-                <button id="startSyncBtn" class="btn btn-primary">
+                    <button id="startSyncBtn" class="btn btn-primary">
                         <span>⚡</span> Apply Sync
                     </button>
                     <div class="progress-container" id="syncProgress">
@@ -1966,8 +1948,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             estimatedDurationMs: null,
             syncedSubtitle: null,
             translatedSubtitle: null,
-            activeSyncPlan: null,
-            useFingerprintPrepass: true
+            activeSyncPlan: null
         };
         const startSyncBtn = document.getElementById('startSyncBtn');
         const startSyncLabel = startSyncBtn ? startSyncBtn.innerHTML : 'Apply Sync';
@@ -2447,7 +2428,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             return options.find(opt => opt.value === secondaryPresetValue) || options[0];
         }
 
-        function buildSyncPlan(primaryMode, secondaryPresetValue, estimatedDurationMs = null, options = {}) {
+        function buildSyncPlan(primaryMode, secondaryPresetValue, estimatedDurationMs = null) {
             const preset = resolveSecondaryPreset(primaryMode, secondaryPresetValue);
             if (!preset) return null;
             const durationSeconds = estimatedDurationMs ? Math.max(0, estimatedDurationMs / 1000) : null;
@@ -2490,9 +2471,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             }
 
             let coverageSeconds = fullScan ? (durationSeconds || null) : ((windowCount && windowSeconds) ? windowCount * windowSeconds : null);
-            const useFingerprintPrepass = options.useFingerprintPrepass !== undefined
-                ? !!options.useFingerprintPrepass
-                : !!(STATE?.useFingerprintPrepass ?? true);
 
             const plan = {
                 preset: preset.value,
@@ -2511,8 +2489,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                 fullScan,
                 durationAdjusted,
                 modeGroup: primaryMode,
-                primaryMode,
-                useFingerprintPrepass
+                primaryMode
             };
 
             if (durationSeconds && plan.windowSeconds && plan.windowSeconds > durationSeconds) {
@@ -2525,23 +2502,20 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         function describeSyncPlan(plan) {
             if (!plan) return '';
             if (plan.fullScan) {
-                if (plan.windowSeconds) return `Full runtime (${Math.round(plan.windowSeconds)}s) scan`;
+                if (plan.windowSeconds) return \`Full runtime (\${Math.round(plan.windowSeconds)}s) scan\`;
                 return 'Full runtime scan';
             }
             const parts = [];
             if (plan.windowCount && plan.windowSeconds) {
-                parts.push(`${plan.windowCount} x ${Math.round(plan.windowSeconds)}s`);
+                parts.push(\`\${plan.windowCount} x \${Math.round(plan.windowSeconds)}s\`);
             } else if (plan.windowCount) {
-                parts.push(`${plan.windowCount} windows`);
+                parts.push(\`\${plan.windowCount} windows\`);
             }
             if (plan.durationSeconds && plan.coverageSeconds) {
                 const pct = Math.min(100, Math.round((plan.coverageSeconds / plan.durationSeconds) * 100));
-                parts.push(`~${pct}% of detected runtime`);
+                parts.push(\`~\${pct}% of detected runtime\`);
             } else if (plan.coverageTargetPct) {
-                parts.push(`~${Math.round(plan.coverageTargetPct * 100)}% target coverage`);
-            }
-            if (plan.useFingerprintPrepass) {
-                parts.push('fingerprint pre-pass');
+                parts.push(\`~\${Math.round(plan.coverageTargetPct * 100)}% target coverage\`);
             }
             return parts.join(' • ');
         }
@@ -2578,8 +2552,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         const manualOffsetInput = document.getElementById('offsetMs');
         const manualOffsetSlider = document.getElementById('offsetSlider');
         const manualOffsetSummary = document.getElementById('offsetSummary');
-        const fingerprintPrepassGroup = document.getElementById('fingerprintPrepassGroup');
-        const fingerprintPrepassCheckbox = document.getElementById('useFingerprintPrepass');
 
         function setAutoSyncAvailability(enabled) {
             const primaryOptions = ['alass', 'ffsubsync', 'vosk-ctc', 'whisper-alass'];
@@ -2590,9 +2562,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             if (secondaryModeSelect) {
                 secondaryModeSelect.disabled = !enabled;
             }
-            if (fingerprintPrepassCheckbox) {
-                fingerprintPrepassCheckbox.disabled = !enabled;
-            }
         }
 
         function formatOffsetLabel(ms) {
@@ -2601,7 +2570,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             const dir = ms > 0 ? 'later' : 'earlier';
             const abs = Math.abs(ms);
             const pretty = abs >= 1000 ? (abs / 1000).toFixed(abs % 1000 === 0 ? 0 : 1) + 's' : abs + 'ms';
-            return \`\${pretty} \${dir}\`;
+            return pretty + " " + dir;
         }
 
         function setManualOffset(ms) {
@@ -2733,7 +2702,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         setTimeout(pingExtension, 150);
 
         // Request sync from Chrome extension
-        function requestExtensionSync(streamUrl, subtitleContent, plan = null, preferAlass = false, preferFfsubsync = false, preferCtc = false, useFingerprintPrepass = true) {
+        function requestExtensionSync(streamUrl, subtitleContent, plan = null, preferAlass = false, preferFfsubsync = false, preferCtc = false) {
             return new Promise((resolve, reject) => {
                 const messageId = 'sync_' + Date.now();
                 const modeToSend = (plan && plan.legacyMode) ? plan.legacyMode : (plan && plan.preset) ? plan.preset : 'smart';
@@ -2751,8 +2720,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                     fullScan: plan.fullScan,
                     durationAdjusted: plan.durationAdjusted,
                     modeGroup: plan.modeGroup || primaryMode,
-                    primaryMode: primaryMode,
-                    useFingerprintPrepass: !!useFingerprintPrepass
+                    primaryMode: primaryMode
                 } : null;
                 let timeoutId;
                 STATE.activeMessageId = messageId;
@@ -2794,12 +2762,11 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                         subtitleContent,
                         mode: modeToSend,  // Pass mode to extension
                         preset: plan?.preset || modeToSend,
-                        plan: planPayload,
-                        preferAlass: !!preferAlass,
-                        preferFfsubsync: !!preferFfsubsync,
-                        preferCtc: !!preferCtc,
-                        useFingerprintPrepass: !!useFingerprintPrepass
-                    }
+                    plan: planPayload,
+                    preferAlass: !!preferAlass,
+                    preferFfsubsync: !!preferFfsubsync,
+                    preferCtc: !!preferCtc
+                }
                 }, '*');
                 const summary = describeSyncPlan(plan);
                 logSync('Sent sync request (' + modeToSend + ')' + (summary ? ' [' + summary + ']' : '') + ' to extension.', 'info');
@@ -2824,7 +2791,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             if (primaryMode === 'manual') {
                 manualControls.style.display = 'block';
                 autoSyncInfo.style.display = 'none';
-                if (fingerprintPrepassGroup) fingerprintPrepassGroup.style.display = 'none';
                 syncMethodDesc.innerHTML = '';
                 STATE.activeSyncPlan = null;
                 setManualOffset(parseInt(manualOffsetInput?.value || '0', 10) || 0);
@@ -2833,13 +2799,9 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
 
             manualControls.style.display = 'none';
             autoSyncInfo.style.display = 'block';
-            if (fingerprintPrepassGroup) fingerprintPrepassGroup.style.display = 'block';
-            if (fingerprintPrepassCheckbox) {
-                fingerprintPrepassCheckbox.checked = STATE.useFingerprintPrepass !== false;
-            }
 
             const preset = resolveSecondaryPreset(primaryMode, secondaryModeSelect?.value);
-            const plan = buildSyncPlan(primaryMode, preset ? preset.value : null, STATE.estimatedDurationMs, { useFingerprintPrepass: STATE.useFingerprintPrepass !== false });
+            const plan = buildSyncPlan(primaryMode, preset ? preset.value : null, STATE.estimatedDurationMs);
             STATE.activeSyncPlan = plan || null;
 
             const summary = describeSyncPlan(plan);
@@ -2866,13 +2828,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             manualOffsetSlider.addEventListener('input', (e) => {
                 const ms = parseInt(e.target.value || '0', 10);
                 setManualOffset(ms);
-            });
-        }
-        if (fingerprintPrepassCheckbox) {
-            STATE.useFingerprintPrepass = fingerprintPrepassCheckbox.checked;
-            fingerprintPrepassCheckbox.addEventListener('change', (e) => {
-                STATE.useFingerprintPrepass = !!e.target.checked;
-                refreshSyncPlanPreview();
             });
         }
         document.querySelectorAll('.offset-btn').forEach((btn) => {
@@ -3054,7 +3009,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                     const modeName = preset.label || (secondaryMode || 'Autosync');
                     const primaryLabel = primaryModeSelect?.selectedOptions?.[0]?.textContent || primaryMode;
                     const prefs = resolveEnginePrefs(primaryMode, preset.value);
-                    const syncPlan = buildSyncPlan(primaryMode, preset.value, STATE.estimatedDurationMs, { useFingerprintPrepass: STATE.useFingerprintPrepass !== false });
+                    const syncPlan = buildSyncPlan(primaryMode, preset.value, STATE.estimatedDurationMs);
                     STATE.activeSyncPlan = syncPlan;
                     const planSummary = describeSyncPlan(syncPlan);
 
@@ -3072,8 +3027,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                         syncPlan,
                         prefs.preferAlass,
                         prefs.preferFfsubsync,
-                        prefs.preferCtc,
-                        STATE.useFingerprintPrepass !== false
+                        prefs.preferCtc
                     );
 
                     if (!syncResult.success) {

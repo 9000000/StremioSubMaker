@@ -2,6 +2,7 @@ const { getDefaultProviderParameters, mergeProviderParameters } = require('./con
 const { getLanguageName, buildLanguageLookupMaps } = require('./languages');
 const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = require('./quickNav');
 const { version: appVersion } = require('../../package.json');
+const { buildClientBootstrap, loadLocale } = require('./i18n');
 
 function safeLanguageMaps() {
     try {
@@ -38,6 +39,11 @@ function escapeHtml(text) {
     });
 
     return text;
+}
+
+function resolveUiLang(config) {
+    const lang = (config && config.uiLanguage) ? String(config.uiLanguage).toLowerCase() : 'en';
+    return escapeHtml(lang || 'en');
 }
 
 // Sanitize config for client-side usage on the file translation page
@@ -120,6 +126,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         automaticSubs: autoSubtitlesLink,
         configure: configureLink
     };
+    const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
     const maxBatchFiles = Math.max(1, Math.min(parseInt(process.env.FILE_UPLOAD_MAX_BATCH_FILES, 10) || 10, 50));
     const maxConcurrency = Math.max(1, Math.min(parseInt(process.env.FILE_UPLOAD_MAX_CONCURRENCY, 10) || 1, 5));
     const uploadQueueDefaults = { maxFiles: maxBatchFiles, maxConcurrent: maxConcurrency };
@@ -328,10 +335,11 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
 
     return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${resolveUiLang(config)}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    ${localeBootstrap}
     <title>File Translation - SubMaker</title>
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">

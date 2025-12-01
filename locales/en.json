@@ -1,0 +1,123 @@
+{
+  "lang": "en",
+  "messages": {
+    "manifest": {
+      "name": "SubMaker - Subtitle Translator",
+      "description": "Fetches subtitles from OpenSubtitles and translates them using {provider}.\\n\\nSource languages: {sources}\\nTarget languages: {targets}"
+    },
+    "validation": {
+      "configRequired": "Configuration is required",
+      "mainProviderMissing": "Main provider must be selected",
+      "mainProviderGeminiMissing": "Gemini API key and model are required for the main provider",
+      "mainProviderConfigured": "API key, model, and enabled status are required for main provider '{provider}'",
+      "secondaryMissing": "Secondary provider must be selected when enabled",
+      "secondaryDifferent": "Secondary provider must be different from main provider",
+      "secondaryGemini": "Gemini API key and model are required for the secondary provider",
+      "secondaryConfigured": "API key, model, and enabled status are required for secondary provider '{provider}'",
+      "atLeastOneProvider": "At least one AI provider must be enabled with an API key and model",
+      "secondaryTwoProviders": "Secondary Provider requires two configured AI providers with API keys",
+      "noTranslationMissing": "At least one no-translation language must be selected",
+      "noTranslationLimit": "Maximum of {limit} no-translation languages allowed",
+      "sourceMissing": "At least one source language must be selected",
+      "sourceLimit": "Maximum of {limit} source languages allowed",
+      "targetMissing": "At least one target language must be selected",
+      "targetLimit": "Maximum of {limit} total target languages allowed (including Learn Mode)",
+      "learnTargetMissing": "Learn Mode requires at least one target language",
+      "sessionTokenError": "Configuration Error: Session token not found or expired. Please reconfigure the addon to continue using it."
+    },
+    "subtitle": {
+      "loadingTitle": "TRANSLATION IN PROGRESS",
+      "loadingBody": "Click to reload. Partial results will appear as they are ready.",
+      "loadingTail": "Reload this subtitle later to get more",
+      "sessionErrorTitle": "Configuration Error",
+      "sessionErrorBody": "Your session token was not found or has expired.",
+      "sessionErrorAdvice": "Please reconfig and reinstall the addon.",
+      "sessionErrorQuickFix": "Quick fix: Open this link to reinstall with fresh config:",
+      "sessionErrorToken": "A fresh config was created. Use this token to reinstall:",
+      "sessionErrorFooter": "Something is wrong or an update broke your SubMaker config. Sorry! Please reconfig and reinstall the addon.",
+      "osAuthFailTitle": "OpenSubtitles login failed",
+      "osAuthFailBody": "Please fix your username/password in addon config",
+      "osQuotaTitle": "OpenSubtitles daily download limit reached",
+      "osQuotaBody": "You have downloaded the allowed 20 subtitles in the last 24 hours. Wait until UTC midnight (00:00) or change to V3 on config page.",
+      "osAuthMissingTitle": "OpenSubtitles credentials required",
+      "osAuthMissingBody": "Add your OpenSubtitles username/password in the addon config or switch to V3 (no login needed).",
+      "osV3RateTitle": "OpenSubtitles V3 download error (429)",
+      "osV3RateBody": "Too many requests to the V3 service. Please wait a few minutes and try again.",
+      "osV3UnavailableTitle": "OpenSubtitles V3 download error (503)",
+      "osV3UnavailableBody": "Service temporarily unavailable. Try again in a few minutes.",
+      "invalidSubtitleTitle": "Subtitle Problem Detected",
+      "providerDownloadFailTitle": "{service} download failed",
+      "providerDownloadFailBody": "{reason}\\nTry a different subtitle or provider.",
+      "concurrencyLimitTitle": "Too many concurrent translations for this user (limit: {limit}).",
+      "concurrencyLimitBody": "Please wait for one to finish, then try again.",
+      "translationFailed": "Translation Failed",
+      "translationUnexpected": "An unexpected error occurred during translation.",
+      "translationRetry": "An unexpected error occurred.\\nClick this subtitle again to retry translation.",
+      "translationAuth": "Translation Failed: Authentication Error (403)",
+      "translationAuthBody": "Your Gemini API key is invalid or rejected.\\nPlease check that your API key is correct.",
+      "translationAuthRetry": "Update your Gemini API key in the addon configuration,\\nthen reinstall the addon and try again.",
+      "translationOverload": "Translation Failed: Service Overloaded (503)",
+      "translationOverloadBody": "The Gemini API is temporarily overloaded with requests.\\nThis is usually temporary and resolves within minutes.",
+      "translationOverloadRetry": "(503) Service Unavailable - Wait a moment for Gemini to recover,\\nthen click this subtitle again to retry translation.",
+      "translationRateLimit": "Translation Failed: Usage Limit Reached (429)",
+      "translationRateLimitBody": "Your Gemini API usage limit has been exceeded.\\nThis may be a rate limit or quota limit.",
+      "translationRateLimitRetry": "(429) API Rate/Quota Limit - Gemini API is limiting your API key requests.\\nWait a few minutes, then click again to retry.",
+      "translationTooLarge": "Translation Failed: Content Too Large",
+      "translationTooLargeBody": "The subtitle file is too large for a single translation.\\nThe system attempted chunking but still exceeded limits.",
+      "translationTooLargeRetry": "(MAX_TOKENS) Try translating a different subtitle file.\\nAnother model may help. Please let us know if this persists.",
+      "translationFiltered": "Translation Failed: Content Filtered",
+      "translationFilteredBody": "The subtitle content was blocked by safety filters.\\nThis is rare and usually a false positive.",
+      "translationFilteredRetry": "(PROHIBITED_CONTENT) Subtitle content was filtered by Gemini.\\nPlease retry, or try a different subtitle from the list.",
+      "translationInvalidSource": "Translation Failed: Invalid Source File",
+      "translationInvalidSourceBody": "The source subtitle file appears corrupted or invalid.\\nIt may be too small or have formatting issues.",
+      "translationInvalidSourceRetry": "(CORRUPT_SOURCE) Please retry or try a different subtitle from the list.",
+      "translationMultiProvider": "Both the main and secondary providers failed to translate this batch."
+    },
+    "subtitleMenu": {
+      "eyebrow": "Stream subtitles",
+      "title": "Sources & Targets",
+      "waiting": "Waiting for first fetch",
+      "toggleTitle": "Stream subtitles",
+      "refreshTitle": "Refresh subtitle list",
+      "closeTitle": "Close subtitle list",
+      "makeLanguage": "Make {language}",
+      "learnLanguage": "Learn {language}",
+      "group": {
+        "source": "Source Languages",
+        "target": "Target Languages",
+        "translation": "Translation",
+        "other": "Other Entries"
+      },
+      "actions": {
+        "translate": "Translate",
+        "translateThis": "Translate this subtitle",
+        "download": "Download translated subtitle",
+        "downloadShort": "Download",
+        "translating": "Translating...",
+        "retry": "Retry"
+      },
+      "status": {
+        "waitingStream": "Waiting for a linked stream before loading subtitles.",
+        "loading": "Loading subtitles...",
+        "none": "No subtitles available for this stream yet.",
+        "loaded": "Loaded {count} subtitle entries.",
+        "translationReady": "Translation ready for {label}.",
+        "translationInProgress": "Translation in progress for {label}.",
+        "translationFailed": "Translation failed: {reason}",
+        "translationFailedShort": "Translation failed. Retry?",
+        "downloadFailed": "Download failed: {reason}",
+        "stillProcessing": "Still processing. Please retry shortly."
+      },
+      "meta": {
+        "refreshing": "Refreshing...",
+        "updated": "Updated {time}",
+        "justNow": "just now",
+        "secondsAgo": "{seconds}s ago"
+      }
+    },
+    "config": {
+      "uiLanguageLabel": "UI Language",
+      "uiLanguageDescription": "Applies to all SubMaker pages and subtitles"
+    }
+  }
+}

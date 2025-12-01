@@ -45,6 +45,7 @@ const {
 const { getSessionManager } = require('./src/utils/sessionManager');
 const { runStartupValidation } = require('./src/utils/startupValidation');
 const { StorageUnavailableError } = require('./src/storage/errors');
+const { loadLocale } = require('./src/utils/i18n');
 
 // Cache-buster path segment for temporary HA cache invalidation
 // Default to current package version so it auto-advances on releases
@@ -1416,6 +1417,28 @@ app.get('/api/languages', (req, res) => {
     }
 });
 
+// API endpoint to fetch UI locale messages
+app.get('/api/locale', async (req, res) => {
+    try {
+        setNoStore(res);
+        let lang = (req.query.lang || '').toString().trim().toLowerCase() || 'en';
+        const configStr = req.query.config;
+
+        // If config token is provided, use user-selected uiLanguage
+        if (configStr) {
+            const resolved = await resolveConfigGuarded(configStr, req, res, '[Locale] config');
+            if (!resolved) return;
+            lang = (resolved.uiLanguage || lang || 'en').toString().trim().toLowerCase() || 'en';
+        }
+
+        const locale = loadLocale(lang);
+        res.json(locale);
+    } catch (error) {
+        log.error(() => ['[API] Error getting locale:', error]);
+        res.status(500).json({ error: 'Failed to load locale' });
+    }
+});
+
 // Stream activity updates (SSE + snapshot)
 app.get('/api/stream-activity', async (req, res) => {
     // Prevent caching to avoid leaking stream info across users
@@ -2687,7 +2710,7 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
         const config = await resolveConfigGuarded(configStr, req, res, '[Download] config');
         if (isInvalidSessionConfig(config)) {
             log.warn(() => `[Download] Blocked subtitle download due to invalid session token ${redactToken(configStr)}`);
-            const errorSubtitle = createSessionTokenErrorSubtitle();
+            const errorSubtitle = createSessionTokenErrorSubtitle(null, null, config?.uiLanguage || 'en');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', 'attachment; filename=\"session-token-not-found.srt\"');
             return res.status(401).send(errorSubtitle);
@@ -2710,7 +2733,7 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
             if (cachedContent.length < minSize) {
                 log.warn(() => `[Download Cache] Cached content too small (${cachedContent.length} bytes < ${minSize}). Serving corruption warning.`);
                 const { createInvalidSubtitleMessage } = require('./src/handlers/subtitles');
-                const errorMessage = createInvalidSubtitleMessage('The subtitle file is too small and seems corrupted.');
+                const errorMessage = createInvalidSubtitleMessage('The subtitle file is too small and seems corrupted.', config?.uiLanguage || 'en');
                 res.setHeader('Content-Type', 'text/plain; charset=utf-8');
                 res.setHeader('Content-Disposition', `attachment; filename="${fileId}.srt"`);
                 res.send(errorMessage);
@@ -2798,16 +2821,16 @@ app.get('/addon/:config/error-subtitle/:errorType.srt', async (req, res) => {
         let content;
         switch (errorType) {
             case 'session-token-not-found':
-                content = createSessionTokenErrorSubtitle(regeneratedToken, baseUrl);
+                content = createSessionTokenErrorSubtitle(regeneratedToken, baseUrl, config?.uiLanguage || 'en');
                 break;
             case 'opensubtitles-auth':
-                content = createOpenSubtitlesAuthErrorSubtitle();
+                content = createOpenSubtitlesAuthErrorSubtitle(config?.uiLanguage || 'en');
                 break;
             case 'opensubtitles-quota':
-                content = createOpenSubtitlesQuotaExceededSubtitle();
+                content = createOpenSubtitlesQuotaExceededSubtitle(config?.uiLanguage || 'en');
                 break;
             default:
-                content = createSessionTokenErrorSubtitle(regeneratedToken, baseUrl); // Default to session token error
+                content = createSessionTokenErrorSubtitle(regeneratedToken, baseUrl, config?.uiLanguage || 'en'); // Default to session token error
                 break;
         }
 
@@ -2873,7 +2896,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleF
         const config = await resolveConfigGuarded(configStr, req, res, '[Translation] config');
         if (isInvalidSessionConfig(config)) {
             log.warn(() => `[Translation] Blocked translation due to invalid session token ${redactToken(configStr)}`);
-            const errorSubtitle = createSessionTokenErrorSubtitle();
+            const errorSubtitle = createSessionTokenErrorSubtitle(null, null, config?.uiLanguage || 'en');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', 'attachment; filename=\"session-token-not-found.srt\"');
             setSubtitleCacheHeaders(res, 'loading');
@@ -2981,7 +3004,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleF
 
             // No partial yet, serve loading message
             log.debug(() => `[Translation] No partial found yet, serving loading message to duplicate request for ${sourceFileId}`);
-            const loadingMsg = createLoadingSubtitle();
+            const loadingMsg = createLoadingSubtitle(config?.uiLanguage || 'en');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', `attachment; filename="translating_${targetLang}.srt"`);
             setSubtitleCacheHeaders(res, 'loading');
@@ -3043,7 +3066,7 @@ app.get('/addon/:config/learn/:sourceFileId/:targetLang', normalizeSubtitleForma
         const baseConfig = await resolveConfigGuarded(configStr, req, res, '[Learn] config');
         if (isInvalidSessionConfig(baseConfig)) {
             log.warn(() => `[Learn] Blocked request due to invalid session token ${redactToken(configStr)}`);
-            const errorSubtitle = createSessionTokenErrorSubtitle();
+            const errorSubtitle = createSessionTokenErrorSubtitle(null, null, baseConfig?.uiLanguage || 'en');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', 'attachment; filename=\"session-token-not-found.srt\"');
             setSubtitleCacheHeaders(res, 'loading');
@@ -3155,7 +3178,7 @@ app.get('/addon/:config/learn/:sourceFileId/:targetLang', normalizeSubtitleForma
         // Start translation in background and serve a loading VTT (source on top, status on bottom)
         handleTranslation(sourceFileId, targetLang, config).catch(() => {});
 
-        const loadingSrt = createLoadingSubtitle();
+        const loadingSrt = createLoadingSubtitle(config?.uiLanguage || baseConfig?.uiLanguage || 'en');
         const vtt = srtPairToWebVTT(sourceContent, loadingSrt, (config.learnOrder || 'source-top'), (config.learnPlacement || 'stacked'));
         res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="learn_${targetLang}.vtt"`);

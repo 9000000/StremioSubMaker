@@ -3,6 +3,7 @@ const DEFAULT_API_KEYS = require('../config/defaultApiKeys');
 const { getSessionManager } = require('./sessionManager');
 const { StorageUnavailableError } = require('../storage/errors');
 const log = require('./logger');
+const { getTranslator } = require('./i18n');
 
 // Language selection limits (configurable via environment)
 const DEFAULT_SOURCE_LANGUAGE_LIMIT = 3;
@@ -391,6 +392,10 @@ function normalizeConfig(config) {
   mergedConfig.targetLanguages = sanitizeLanguages(mergedConfig.targetLanguages);
   mergedConfig.noTranslationLanguages = sanitizeLanguages(mergedConfig.noTranslationLanguages);
   mergedConfig.learnTargetLanguages = sanitizeLanguages(mergedConfig.learnTargetLanguages);
+  mergedConfig.uiLanguage = (() => {
+    const lang = (config.uiLanguage || defaults.uiLanguage || 'en').toString().trim().toLowerCase();
+    return lang || 'en';
+  })();
 
   // Enforce language selection limits (configurable via env)
   const { maxSourceLanguages, maxTargetLanguages, maxNoTranslationLanguages } = getLanguageSelectionLimits();
@@ -752,6 +757,8 @@ function getDefaultConfig(modelName = null) {
     noTranslationLanguages: [], // Languages to fetch when in no-translation mode
     sourceLanguages: [],
     targetLanguages: [],
+    // UI language for all addon pages/subtitles
+    uiLanguage: process.env.UI_LANGUAGE_DEFAULT || 'en',
     // Learn Mode: create dual-language WebVTT entries
     learnMode: false,
     learnTargetLanguages: [],
@@ -828,9 +835,10 @@ function getDefaultConfig(modelName = null) {
  */
 function validateConfig(config) {
   const errors = [];
+  const t = getTranslator(config?.uiLanguage || 'en');
 
   if (!config) {
-    errors.push('Configuration is required');
+    errors.push(t('validation.configRequired', {}, 'Configuration is required'));
     return { valid: false, errors };
   }
 
@@ -864,14 +872,14 @@ function validateConfig(config) {
 
   // Main provider must always be fully configured so we have at least one AI provider available
   if (!mainProvider) {
-    errors.push('Main provider must be selected');
+    errors.push(t('validation.mainProviderMissing', {}, 'Main provider must be selected'));
   } else if (mainProvider === 'gemini') {
     if (!geminiConfigured) {
-      errors.push('Gemini API key and model are required for the main provider');
+      errors.push(t('validation.mainProviderGeminiMissing', {}, 'Gemini API key and model are required for the main provider'));
     }
   } else {
     if (!providerIsConfigured(mainProvider)) {
-      errors.push(`API key, model, and enabled status are required for main provider '${mainProvider}'`);
+      errors.push(t('validation.mainProviderConfigured', { provider: mainProvider }, `API key, model, and enabled status are required for main provider '${mainProvider}'`));
     }
   }
 
@@ -879,34 +887,34 @@ function validateConfig(config) {
   if (multiEnabled && config.secondaryProviderEnabled === true) {
     const secondaryKey = String(config.secondaryProvider || '').toLowerCase();
     if (!secondaryKey) {
-      errors.push('Secondary provider must be selected when enabled');
+      errors.push(t('validation.secondaryMissing', {}, 'Secondary provider must be selected when enabled'));
     } else if (secondaryKey === mainProvider) {
-      errors.push('Secondary provider must be different from main provider');
+      errors.push(t('validation.secondaryDifferent', {}, 'Secondary provider must be different from main provider'));
     } else if (secondaryKey === 'gemini') {
       if (!geminiConfigured) {
-        errors.push('Gemini API key and model are required for the secondary provider');
+        errors.push(t('validation.secondaryGemini', {}, 'Gemini API key and model are required for the secondary provider'));
       }
     } else if (!providerIsConfigured(secondaryKey)) {
-      errors.push(`API key, model, and enabled status are required for secondary provider '${secondaryKey}'`);
+      errors.push(t('validation.secondaryConfigured', { provider: secondaryKey }, `API key, model, and enabled status are required for secondary provider '${secondaryKey}'`));
     }
   }
 
   // Require at least one configured AI provider overall
   if (configuredProviders.size === 0) {
-    errors.push('At least one AI provider must be enabled with an API key and model');
+    errors.push(t('validation.atLeastOneProvider', {}, 'At least one AI provider must be enabled with an API key and model'));
   }
 
   // When secondary is enabled, ensure we truly have two configured providers (main + fallback)
   if (multiEnabled && config.secondaryProviderEnabled === true && configuredProviders.size < 2) {
-    errors.push('Secondary Provider requires two configured AI providers with API keys');
+    errors.push(t('validation.secondaryTwoProviders', {}, 'Secondary Provider requires two configured AI providers with API keys'));
   }
 
   if (config.noTranslationMode) {
     if (!config.noTranslationLanguages || config.noTranslationLanguages.length === 0) {
-      errors.push('At least one no-translation language must be selected');
+      errors.push(t('validation.noTranslationMissing', {}, 'At least one no-translation language must be selected'));
     }
     if (config.noTranslationLanguages && config.noTranslationLanguages.length > maxNoTranslationLanguages) {
-      errors.push(`Maximum of ${maxNoTranslationLanguages} no-translation languages allowed`);
+      errors.push(t('validation.noTranslationLimit', { limit: maxNoTranslationLanguages }, `Maximum of ${maxNoTranslationLanguages} no-translation languages allowed`));
     }
 
     return {
@@ -916,15 +924,15 @@ function validateConfig(config) {
   }
 
   if (!config.sourceLanguages || config.sourceLanguages.length === 0) {
-    errors.push('At least one source language must be selected');
+    errors.push(t('validation.sourceMissing', {}, 'At least one source language must be selected'));
   }
 
   if (config.sourceLanguages && config.sourceLanguages.length > maxSourceLanguages) {
-    errors.push(`Maximum of ${maxSourceLanguages} source languages allowed`);
+    errors.push(t('validation.sourceLimit', { limit: maxSourceLanguages }, `Maximum of ${maxSourceLanguages} source languages allowed`));
   }
 
   if (!config.targetLanguages || config.targetLanguages.length === 0) {
-    errors.push('At least one target language must be selected');
+    errors.push(t('validation.targetMissing', {}, 'At least one target language must be selected'));
   }
 
   const combinedTargets = new Set([
@@ -932,11 +940,11 @@ function validateConfig(config) {
     ...(config.learnTargetLanguages || [])
   ]);
   if (combinedTargets.size > maxTargetLanguages) {
-    errors.push(`Maximum of ${maxTargetLanguages} total target languages allowed (including Learn Mode)`);
+    errors.push(t('validation.targetLimit', { limit: maxTargetLanguages }, `Maximum of ${maxTargetLanguages} total target languages allowed (including Learn Mode)`));
   }
 
   if (config.noTranslationLanguages && config.noTranslationLanguages.length > maxNoTranslationLanguages) {
-    errors.push(`Maximum of ${maxNoTranslationLanguages} no-translation languages allowed`);
+    errors.push(t('validation.noTranslationLimit', { limit: maxNoTranslationLanguages }, `Maximum of ${maxNoTranslationLanguages} no-translation languages allowed`));
   }
 
   return {
@@ -954,23 +962,23 @@ function validateConfig(config) {
 const { version } = require('./version');
 
 function buildManifest(config, baseUrl = '') {
-  // Check if this is a session token error
   const hasSessionTokenError = config.__sessionTokenError === true;
+  const t = getTranslator((config && config.uiLanguage) || 'en');
 
-  // For session token errors, use placeholder languages to ensure Stremio calls the subtitle handler
-  // This allows the handler to display error subtitles to the user
-  let sourceLanguageNames, targetLanguageNames, description;
+  let sourceLanguageNames;
+  let targetLanguageNames;
+  let description;
 
   if (hasSessionTokenError) {
     sourceLanguageNames = 'ERROR';
     targetLanguageNames = 'ERROR';
-    description = '⚠️ Configuration Error: Session token not found or expired.\n\nPlease reconfigure the addon to continue using it.';
+    description = t('validation.sessionTokenError', {}, 'Configuration Error: Session token not found or expired.\n\nPlease reconfigure the addon to continue using it.');
   } else {
-    sourceLanguageNames = config.sourceLanguages
+    sourceLanguageNames = (config.sourceLanguages || [])
       .map(code => code.toUpperCase())
       .join(', ');
 
-    targetLanguageNames = config.targetLanguages
+    targetLanguageNames = (config.targetLanguages || [])
       .map(code => code.toUpperCase())
       .join(', ');
 
@@ -993,10 +1001,13 @@ function buildManifest(config, baseUrl = '') {
       return 'Gemini';
     })();
 
-    description = `Fetches subtitles from OpenSubtitles and translates them using ${providerLabel} AI.\n\nSource languages: ${sourceLanguageNames}\nTarget languages: ${targetLanguageNames}`;
+    description = t('manifest.description', {
+      provider: `${providerLabel} AI`,
+      sources: sourceLanguageNames || 'N/A',
+      targets: targetLanguageNames || 'N/A'
+    }, `Fetches subtitles from OpenSubtitles and translates them using ${providerLabel} AI.\n\nSource languages: ${sourceLanguageNames}\nTarget languages: ${targetLanguageNames}`);
   }
 
-  // Check if this is a configured instance (has API key)
   const geminiConfigured = config.geminiApiKey && config.geminiApiKey.trim() !== '' &&
     config.geminiModel && String(config.geminiModel).trim() !== '';
   const providerIsConfigured = (key) => {
@@ -1024,13 +1035,13 @@ function buildManifest(config, baseUrl = '') {
     : providerIsConfigured(mainProviderKey);
   let isConfigured = mainConfigured || configuredProviders.size > 0;
 
-  // Use local assets when baseUrl is provided
   const logo = baseUrl ? `${baseUrl}/logo.png` : 'https://i.imgur.com/5qJc5Y5.png';
   const background = baseUrl ? `${baseUrl}/background.svg` : 'https://i.imgur.com/5qJc5Y5.png';
 
-  // ElfHosted branding support
   const isElfHosted = process.env.ELFHOSTED === 'true';
-  const addonName = isElfHosted ? 'SubMaker | ElfHosted' : 'SubMaker - Subtitle Translator';
+  const addonName = isElfHosted
+    ? 'SubMaker | ElfHosted'
+    : t('manifest.name', {}, 'SubMaker - Subtitle Translator');
 
   return {
     id: 'com.stremio.submaker',
@@ -1050,7 +1061,6 @@ function buildManifest(config, baseUrl = '') {
     },
 
     logo: logo,
-    // Some Stremio clients look for `icon`; keep it in sync with `logo`
     icon: logo,
     background: background,
 
@@ -1071,3 +1081,4 @@ module.exports = {
   getDefaultProviderParameters,
   mergeProviderParameters
 };
+

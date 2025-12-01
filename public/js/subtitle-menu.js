@@ -2,13 +2,37 @@
   if (global.SubtitleMenu) return;
 
   const STYLE_ID = 'subtitle-menu-styles';
+  const translate = (key, vars, fallback) => {
+    try {
+      if (typeof global.t === 'function') return global.t(key, vars, fallback);
+    } catch (_) {}
+    return fallback || key;
+  };
   const DEFAULT_LABELS = {
-    eyebrow: 'Stream subtitles',
-    title: 'Sources & Targets',
-    waiting: 'Waiting for first fetch',
-    toggleTitle: 'Stream subtitles',
-    refreshTitle: 'Refresh subtitle list',
-    closeTitle: 'Close subtitle list'
+    eyebrow: translate('subtitleMenu.eyebrow', {}, 'Stream subtitles'),
+    title: translate('subtitleMenu.title', {}, 'Sources & Targets'),
+    waiting: translate('subtitleMenu.waiting', {}, 'Waiting for first fetch'),
+    toggleTitle: translate('subtitleMenu.toggleTitle', {}, 'Stream subtitles'),
+    refreshTitle: translate('subtitleMenu.refreshTitle', {}, 'Refresh subtitle list'),
+    closeTitle: translate('subtitleMenu.closeTitle', {}, 'Close subtitle list')
+  };
+  const tMenu = (key, vars, fallback) => translate(`subtitleMenu.${key}`, vars, fallback);
+  const GROUP_LABELS = {
+    source: tMenu('group.source', {}, 'Source Languages'),
+    target: tMenu('group.target', {}, 'Target Languages'),
+    translation: tMenu('group.translation', {}, 'Translation'),
+    other: tMenu('group.other', {}, 'Other Entries')
+  };
+  const STATUS_LABELS = {
+    waitingStream: tMenu('status.waitingStream', {}, 'Waiting for a linked stream before loading subtitles.'),
+    loading: tMenu('status.loading', {}, 'Loading subtitles...'),
+    none: tMenu('status.none', {}, 'No subtitles available for this stream yet.'),
+    loaded: (count) => tMenu('status.loaded', { count }, `Loaded ${count} subtitle entr${count === 1 ? 'y' : 'ies'}.`),
+    ready: (label) => tMenu('status.translationReady', { label: label || 'subtitle' }, `Translation ready for ${label || 'subtitle'}.`),
+    inProgress: (label) => tMenu('status.translationInProgress', { label: label || 'subtitle' }, `Translation in progress for ${label || 'subtitle'}.`),
+    failed: (reason) => tMenu('status.translationFailed', { reason }, `Translation failed: ${reason}`),
+    downloadFailed: (reason) => tMenu('status.downloadFailed', { reason }, `Download failed: ${reason}`),
+    translationFailedShort: tMenu('status.translationFailedShort', {}, 'Translation failed. Retry?')
   };
 
   // Guard: ensure a global config object exists to avoid ReferenceError on hosts that
@@ -649,28 +673,28 @@
         <div class="subtitle-menu-group subtitle-menu-group-source">
           <div class="subtitle-menu-group-title">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-            Source Languages
+            ${GROUP_LABELS.source}
           </div>
           <div class="subtitle-menu-list" id="subtitleMenuSource"></div>
         </div>
         <div class="subtitle-menu-group subtitle-menu-group-target">
           <div class="subtitle-menu-group-title">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-            Target Languages
+            ${GROUP_LABELS.target}
           </div>
           <div class="subtitle-menu-list" id="subtitleMenuTarget"></div>
         </div>
         <div class="subtitle-menu-group subtitle-menu-group-translation">
           <div class="subtitle-menu-group-title">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 8l6 6"></path><path d="M4 14h6"></path><path d="M2 5h12"></path><path d="M7 2h1"></path><path d="M22 22l-5-10-5 10"></path><path d="M14 18h6"></path></svg>
-            Translation
+            ${GROUP_LABELS.translation}
           </div>
           <div class="subtitle-menu-list" id="subtitleMenuTranslation"></div>
         </div>
         <div class="subtitle-menu-group subtitle-menu-group-other">
           <div class="subtitle-menu-group-title">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-            Other Entries
+            ${GROUP_LABELS.other}
           </div>
           <div class="subtitle-menu-list" id="subtitleMenuOther"></div>
         </div>
@@ -769,7 +793,7 @@
   }
 
   function subtitleChipForType(type, item) {
-    if (item?.isTranslation) return { label: 'Translate', cls: 'target' };
+    if (item?.isTranslation) return { label: tMenu('actions.translate', {}, 'Translate'), cls: 'target' };
     switch (type) {
       case 'target': return { label: 'Target', cls: 'target' };
       case 'cached': return { label: 'xEmbed', cls: 'cached' };
@@ -931,6 +955,13 @@
         const raw = (labelValue || '').toString();
         const stripped = raw.replace(new RegExp('^' + prefix + '\\s*', 'i'), '').trim().replace(/^\((.*)\)$/, '$1').trim();
         if (!stripped) return prefix;
+        const lowerPrefix = prefix.toLowerCase();
+        if (lowerPrefix === 'make') {
+          return translate('subtitleMenu.makeLanguage', { language: stripped }, `Make ${stripped}`);
+        }
+        if (lowerPrefix === 'learn') {
+          return translate('subtitleMenu.learnLanguage', { language: stripped }, `Learn ${stripped}`);
+        }
         if (options.wrapInParens) return `${prefix} (${stripped})`;
         return `${prefix} ${stripped}`;
       };
@@ -1033,18 +1064,18 @@
       const status = action.status || 'idle';
       button.disabled = status === 'translating';
       if (status === 'ready') {
-        button.textContent = 'Download';
-        button.title = 'Download translated subtitle';
+        button.textContent = tMenu('actions.downloadShort', {}, 'Download');
+        button.title = tMenu('actions.download', {}, 'Download translated subtitle');
       } else if (status === 'translating') {
-        button.textContent = 'Translating...';
-        button.title = 'Translation in progress';
+        button.textContent = tMenu('actions.translating', {}, 'Translating...');
+        button.title = STATUS_LABELS.inProgress(action.label);
       } else if (status === 'error') {
-        button.textContent = 'Retry';
-        button.title = action.lastError || 'Translation failed. Retry?';
+        button.textContent = tMenu('actions.retry', {}, 'Retry');
+        button.title = action.lastError || STATUS_LABELS.translationFailedShort;
         button.disabled = false;
       } else {
-        button.textContent = 'Translate';
-        button.title = 'Translate this subtitle';
+        button.textContent = tMenu('actions.translate', {}, 'Translate');
+        button.title = tMenu('actions.translateThis', {}, 'Translate this subtitle');
       }
     }
 
@@ -1215,7 +1246,7 @@
           action.button = button;
           applyTranslationActionState(action);
         } else {
-          button.textContent = 'Translate';
+          button.textContent = tMenu('actions.translate', {}, 'Translate');
         }
         button.addEventListener('click', () => handleTranslationButtonClick(item));
         actionEl = button;
@@ -1225,7 +1256,7 @@
         link.href = item.url;
         link.target = '_blank';
         link.rel = 'noopener';
-        link.textContent = 'Download';
+        link.textContent = tMenu('actions.downloadShort', {}, 'Download');
         actionEl = link;
       }
 
@@ -1381,13 +1412,15 @@
     function updateSubtitleMenuMeta(els) {
       if (!els.substatus) return;
       if (subtitleMenuState.loading) {
-        els.substatus.textContent = 'Refreshing...';
+        els.substatus.textContent = tMenu('meta.refreshing', {}, 'Refreshing...');
         return;
       }
       if (subtitleMenuState.lastFetched) {
         const elapsed = Math.max(0, Math.floor((Date.now() - subtitleMenuState.lastFetched) / 1000));
-        const recency = elapsed < 5 ? 'just now' : (elapsed + 's ago');
-        els.substatus.textContent = 'Updated ' + recency;
+        const recency = elapsed < 5
+          ? tMenu('meta.justNow', {}, 'just now')
+          : tMenu('meta.secondsAgo', { seconds: elapsed }, elapsed + 's ago');
+        els.substatus.textContent = tMenu('meta.updated', { time: recency }, 'Updated ' + recency);
       } else {
         els.substatus.textContent = config.labels.waiting;
       }
@@ -1473,11 +1506,15 @@
 
     function isTranslationLoadingMessage(text) {
       const sample = (text || '').toLowerCase();
+      const marker = translate('subtitle.loadingTitle', {}, '').toLowerCase();
+      const tail = translate('subtitle.loadingTail', {}, '').toLowerCase();
       return sample.includes('translation in progress')
         || sample.includes('translation is happening in the background')
         || sample.includes('please wait while the selected subtitle is being translated')
         || sample.includes('click this subtitle again to confirm translation')
-        || sample.includes('reload this subtitle');
+        || sample.includes('reload this subtitle')
+        || (marker && sample.includes(marker))
+        || (tail && sample.includes(tail));
     }
 
     function parseDownloadFilename(resp, langKey) {
@@ -1523,7 +1560,7 @@
         action.filename = parseDownloadFilename(resp, action.langKey) || filename;
         triggerSubtitleDownload(text, action.filename);
       } catch (error) {
-        setSubtitleMenuStatus(elements, 'Download failed: ' + error.message, 'error', { persist: true });
+        setSubtitleMenuStatus(elements, STATUS_LABELS.downloadFailed(error.message), 'error', { persist: true });
       }
     }
 
@@ -1549,10 +1586,10 @@
 
         if (loading) {
           action.pollAttempts = (action.pollAttempts || 0) + 1;
-          setSubtitleMenuStatus(els, 'Translation in progress for ' + (action.label || 'subtitle') + '.', 'muted');
+          setSubtitleMenuStatus(els, STATUS_LABELS.inProgress(action.label), 'muted');
           if (action.pollAttempts >= 24) {
             action.status = 'error';
-            action.lastError = 'Still processing. Please retry shortly.';
+            action.lastError = tMenu('status.stillProcessing', {}, 'Still processing. Please retry shortly.');
             stopTranslationPoll(action);
             applyTranslationActionState(action);
             return;
@@ -1572,13 +1609,13 @@
           filename: action.filename
         });
         queueSubtitleMenuRefresh(els);
-        setSubtitleMenuStatus(els, 'Translation ready for ' + (action.label || 'subtitle') + '.', 'muted');
+        setSubtitleMenuStatus(els, STATUS_LABELS.ready(action.label), 'muted');
       } catch (error) {
         action.status = 'error';
-        action.lastError = error.message || 'Translation failed';
+        action.lastError = error.message || STATUS_LABELS.translationFailedShort;
         stopTranslationPoll(action);
         applyTranslationActionState(action);
-        setSubtitleMenuStatus(els, 'Translation failed: ' + action.lastError, 'error', { persist: true });
+        setSubtitleMenuStatus(els, STATUS_LABELS.failed(action.lastError), 'error', { persist: true });
       }
     }
 
@@ -1605,13 +1642,13 @@
       const silent = opts.silent === true;
       const force = opts.force === true;
       if (!hasValidStream()) {
-        setSubtitleMenuStatus(els, 'Waiting for a linked stream before loading subtitles.', 'muted', { persist: true });
+        setSubtitleMenuStatus(els, STATUS_LABELS.waitingStream, 'muted', { persist: true });
         return;
       }
       subtitleMenuState.loading = true;
       els.toggle?.classList.add('is-loading');
       updateSubtitleMenuMeta(els);
-      if (!silent) setSubtitleMenuStatus(els, 'Loading subtitles...', 'muted');
+      if (!silent) setSubtitleMenuStatus(els, STATUS_LABELS.loading, 'muted');
       const panelOpen = subtitleMenuState.open && els.panel?.classList.contains('show');
       const shouldShowInitialNotice = panelOpen && !subtitleMenuState.hasShownInitialNotice;
       const shouldShowActiveNotice = panelOpen && !silent;
@@ -1625,13 +1662,13 @@
         const canShow = shouldShowInitialNotice || shouldShowActiveNotice || !subtitleMenuState.hasFetchedOnce;
         if (visibleCount) {
           if (canShow && (!fromCache || !subtitleMenuState.hasFetchedOnce || force)) {
-            setSubtitleMenuStatus(els, 'Loaded ' + visibleCount + ' subtitle entr' + (visibleCount === 1 ? 'y' : 'ies') + '.');
+            setSubtitleMenuStatus(els, STATUS_LABELS.loaded(visibleCount));
             if (shouldShowInitialNotice) subtitleMenuState.hasShownInitialNotice = true;
           } else {
             setSubtitleMenuStatus(els, '', 'muted');
           }
         } else if (canShow && (!fromCache || !subtitleMenuState.hasFetchedOnce || force)) {
-          setSubtitleMenuStatus(els, 'No subtitles available for this stream yet.');
+          setSubtitleMenuStatus(els, STATUS_LABELS.none);
           if (shouldShowInitialNotice) subtitleMenuState.hasShownInitialNotice = true;
         } else {
           setSubtitleMenuStatus(els, '', 'muted');
@@ -1639,7 +1676,7 @@
         renderMenuFromState(els);
         subtitleMenuState.hasFetchedOnce = true;
       } catch (err) {
-        setSubtitleMenuStatus(els, 'Could not load subtitles: ' + err.message, 'error', { persist: true });
+        setSubtitleMenuStatus(els, tMenu('status.loadError', { reason: err.message }, 'Could not load subtitles: ' + err.message), 'error', { persist: true });
         subtitleMenuState.items = [];
         translationActions.forEach(action => stopTranslationPoll(action));
         translationActions.clear();
@@ -1666,10 +1703,10 @@
         if (!subtitleMenuState.hasShownInitialNotice && subtitleMenuState.items.length) {
           const visibleCount = subtitleMenuState.items.filter(shouldDisplaySubtitle).length;
           if (visibleCount) {
-            setSubtitleMenuStatus(els, 'Loaded ' + visibleCount + ' subtitle entr' + (visibleCount === 1 ? 'y' : 'ies') + '.');
+            setSubtitleMenuStatus(els, STATUS_LABELS.loaded(visibleCount));
             subtitleMenuState.hasShownInitialNotice = true;
           } else if (subtitleMenuState.hasFetchedOnce) {
-            setSubtitleMenuStatus(els, 'No subtitles available for this stream yet.');
+            setSubtitleMenuStatus(els, STATUS_LABELS.none);
             subtitleMenuState.hasShownInitialNotice = true;
           }
         }

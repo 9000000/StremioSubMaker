@@ -12,6 +12,16 @@
 
 
     <div id="alertContainer"></div>
+    <div class="language-picker" style="display:flex; align-items:flex-end; gap:0.75rem; margin: 0 0 1rem;">
+        <label for="uiLanguageSelect" style="display:flex; flex-direction:column; gap:0.25rem; font-weight:600; color:var(--text-primary);">
+            <span id="uiLanguageLabel">UI Language</span>
+            <span class="label-description" id="uiLanguageDescription">Applies to all SubMaker pages and subtitles</span>
+        </label>
+        <select id="uiLanguageSelect" style="min-width: 160px; max-width: 220px; padding:0.5rem 0.65rem; border:1px solid var(--border); border-radius:10px; background: var(--surface-light);">
+            <option value="en">English</option>
+            <option value="es">Español</option>
+        </select>
+    </div>
 
     <!-- Floating Help Button (Config page) -->
     <button class="help-button toolbox-button" id="subToolboxLauncher" title="Open Sub Toolbox"

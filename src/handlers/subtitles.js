@@ -8,6 +8,7 @@ const AniDBService = require('../services/anidb');
 const KitsuService = require('../services/kitsu');
 const { parseSRT, toSRT, parseStremioId, appendHiddenInformationalNote, normalizeImdbId } = require('../utils/subtitle');
 const { getLanguageName, getDisplayName } = require('../utils/languages');
+const { getTranslator } = require('../utils/i18n');
 const { deriveVideoHash, deriveLegacyVideoHash } = require('../utils/videoHash');
 const { LRUCache } = require('lru-cache');
 const syncCache = require('../utils/syncCache');
@@ -261,11 +262,12 @@ function getVideoCacheIdComponent(videoInfo) {
  * Create a single-cue loading subtitle that explains partial loading
  * @returns {string} - SRT formatted loading subtitle
  */
-function createLoadingSubtitle() {
+function createLoadingSubtitle(uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   const srt = `1
 00:00:00,000 --> 04:00:00,000
-TRANSLATION IN PROGRESS
-Click to reload. Partial results will appear as they are ready.`;
+${t('subtitle.loadingTitle', {}, 'TRANSLATION IN PROGRESS')}
+${t('subtitle.loadingBody', {}, 'Click to reload. Partial results will appear as they are ready.')}`;
 
   // Log the loading subtitle for debugging
   log.debug(() => ['[Subtitles] Created loading subtitle with', srt.split('\n\n').length, 'entries']);
@@ -293,7 +295,8 @@ function msToSrtTime(ms) {
   return `${pad(hh)}:${pad(mm)}:${pad(ss)},${String(mmm).padStart(3, '0')}`;
 }
 
-function buildPartialSrtWithTail(mergedSrt) {
+function buildPartialSrtWithTail(mergedSrt, uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   try {
     if (!mergedSrt || typeof mergedSrt !== 'string' || mergedSrt.trim().length === 0) {
       return null; // Nothing to work with
@@ -305,7 +308,7 @@ function buildPartialSrtWithTail(mergedSrt) {
       // so users see progress instead of a loading screen
       // Append a loading indicator
       const lineCount = mergedSrt.split('\n').length + 10;
-      return `${mergedSrt}\n\n${lineCount}\n00:00:00,000 --> 04:00:00,000\nTRANSLATION IN PROGRESS\nReload this subtitle to get more`;
+      return `${mergedSrt}\n\n${lineCount}\n00:00:00,000 --> 04:00:00,000\n${t('subtitle.loadingTitle', {}, 'TRANSLATION IN PROGRESS')}\n${t('subtitle.loadingTail', {}, 'Reload this subtitle later to get more')}`;
     }
 
     const reindexed = entries.map((e, idx) => ({ id: idx + 1, timecode: e.timecode, text: (e.text || '').trim() }))
@@ -314,7 +317,7 @@ function buildPartialSrtWithTail(mergedSrt) {
     if (reindexed.length === 0) {
       // No valid entries after filtering, but we have content - append loading tail
       const lineCount = mergedSrt.split('\n').length + 10;
-      return `${mergedSrt}\n\n${lineCount}\n00:00:00,000 --> 04:00:00,000\nTRANSLATION IN PROGRESS\nReload this subtitle to get more`;
+      return `${mergedSrt}\n\n${lineCount}\n00:00:00,000 --> 04:00:00,000\n${t('subtitle.loadingTitle', {}, 'TRANSLATION IN PROGRESS')}\n${t('subtitle.loadingTail', {}, 'Reload this subtitle later to get more')}`;
     }
 
     const last = reindexed[reindexed.length - 1];
@@ -329,7 +332,7 @@ function buildPartialSrtWithTail(mergedSrt) {
     const tail = {
       id: reindexed.length + 1,
       timecode: `${tailStart} --> 04:00:00,000`,
-      text: 'TRANSLATION IN PROGRESS\nReload this subtitle later to get more'
+      text: `${t('subtitle.loadingTitle', {}, 'TRANSLATION IN PROGRESS')}\n${t('subtitle.loadingTail', {}, 'Reload this subtitle later to get more')}`
     };
     const full = [...reindexed, tail];
     return toSRT(full);
@@ -338,7 +341,7 @@ function buildPartialSrtWithTail(mergedSrt) {
     // As fallback, if we have content, append a simple loading tail
     if (mergedSrt && typeof mergedSrt === 'string' && mergedSrt.trim().length > 0) {
       const lineCount = mergedSrt.split('\n').length + 10;
-      return `${mergedSrt}\n\n${lineCount}\n00:00:00,000 --> 04:00:00,000\nTRANSLATION IN PROGRESS\nReload this subtitle later to get more`;
+      return `${mergedSrt}\n\n${lineCount}\n00:00:00,000 --> 04:00:00,000\n${t('subtitle.loadingTitle', {}, 'TRANSLATION IN PROGRESS')}\n${t('subtitle.loadingTail', {}, 'Reload this subtitle later to get more')}`;
     }
     return null;
   }
@@ -350,21 +353,22 @@ function buildPartialSrtWithTail(mergedSrt) {
  * @param {string|null} baseUrl - Optional base URL for generating reinstall link
  * @returns {string} - SRT formatted error subtitle
  */
-function createSessionTokenErrorSubtitle(regeneratedToken = null, baseUrl = null) {
-  let reinstallInstruction = 'Please reconfig and reinstall the addon.';
+function createSessionTokenErrorSubtitle(regeneratedToken = null, baseUrl = null, uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
+  let reinstallInstruction = t('subtitle.sessionErrorAdvice', {}, 'Please reconfig and reinstall the addon.');
 
   // If we have a regenerated token, provide a direct reinstall link
   if (regeneratedToken && baseUrl) {
     const reinstallUrl = `${baseUrl}/configure/${regeneratedToken}`;
-    reinstallInstruction = `Quick fix: Open this link to reinstall with fresh config:\n${reinstallUrl}`;
+    reinstallInstruction = `${t('subtitle.sessionErrorQuickFix', {}, 'Quick fix: Open this link to reinstall with fresh config:')}\n${reinstallUrl}`;
   } else if (regeneratedToken) {
     // Token available but no base URL - just mention the token
-    reinstallInstruction = `A fresh config was created. Use this token to reinstall:\n${regeneratedToken}`;
+    reinstallInstruction = `${t('subtitle.sessionErrorToken', {}, 'A fresh config was created. Use this token to reinstall:')}\n${regeneratedToken}`;
   }
 
   const srt = `1
 00:00:00,000 --> 00:00:03,000
-Configuration Error\nYour session token was not found or has expired.
+${t('subtitle.sessionErrorTitle', {}, 'Configuration Error')}\n${t('subtitle.sessionErrorBody', {}, 'Your session token was not found or has expired.')}
 
 2
 00:00:03,001 --> 00:00:06,000
@@ -372,7 +376,7 @@ ${reinstallInstruction}
 
 3
 00:00:06,001 --> 04:00:00,000
-Session Token Error\nSomething is wrong or an update broke your SubMaker config.\nSorry! Please reconfig and reinstall the addon.
+${t('subtitle.sessionErrorTitle', {}, 'Session Token Error')}\n${t('subtitle.sessionErrorFooter', {}, 'Something is wrong or an update broke your SubMaker config.\nSorry! Please reconfig and reinstall the addon.')}
 `;
 
   return ensureInformationalSubtitleSize(srt);
@@ -383,11 +387,12 @@ Session Token Error\nSomething is wrong or an update broke your SubMaker config.
  * Single cue from 0 to 4h with 2 lines
  * @returns {string}
  */
-function createOpenSubtitlesAuthErrorSubtitle() {
+function createOpenSubtitlesAuthErrorSubtitle(uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   return ensureInformationalSubtitleSize(`1
 00:00:00,000 --> 04:00:00,000
-OpenSubtitles login failed
-Please fix your username/password in addon config`);
+${t('subtitle.osAuthFailTitle', {}, 'OpenSubtitles login failed')}
+${t('subtitle.osAuthFailBody', {}, 'Please fix your username/password in addon config')}`);
 }
 
 /**
@@ -395,12 +400,12 @@ Please fix your username/password in addon config`);
  * Single cue from 0 to 4h with concise guidance
  * @returns {string}
  */
-function createOpenSubtitlesQuotaExceededSubtitle() {
+function createOpenSubtitlesQuotaExceededSubtitle(uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   return ensureInformationalSubtitleSize(`1
 00:00:00,000 --> 04:00:00,000
-OpenSubtitles daily download limit reached
-You have downloaded the allowed 20 subtitles in the last 24 hours.
-Wait until UTC midnight (00:00) or change to V3 on config page.`);
+${t('subtitle.osQuotaTitle', {}, 'OpenSubtitles daily download limit reached')}
+${t('subtitle.osQuotaBody', {}, 'You have downloaded the allowed 20 subtitles in the last 24 hours.\nWait until UTC midnight (00:00) or change to V3 on config page.')}`);
 }
 
 /**
@@ -408,115 +413,122 @@ Wait until UTC midnight (00:00) or change to V3 on config page.`);
  * Single cue from 0 to 4h with concise guidance
  * @returns {string}
  */
-function createOpenSubtitlesAuthMissingSubtitle() {
+function createOpenSubtitlesAuthMissingSubtitle(uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   return ensureInformationalSubtitleSize(`1
 00:00:00,000 --> 04:00:00,000
-OpenSubtitles credentials required
-Add your OpenSubtitles username/password in the addon config or switch to V3 (no login needed).`);
+${t('subtitle.osAuthMissingTitle', {}, 'OpenSubtitles credentials required')}
+${t('subtitle.osAuthMissingBody', {}, 'Add your OpenSubtitles username/password in the addon config or switch to V3 (no login needed).')}`);
 }
 
 /**
  * Create a single-cue error subtitle for OpenSubtitles V3 rate limiting
  * @returns {string}
  */
-function createOpenSubtitlesV3RateLimitSubtitle() {
+function createOpenSubtitlesV3RateLimitSubtitle(uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   return ensureInformationalSubtitleSize(`1
 00:00:00,000 --> 04:00:00,000
-OpenSubtitles V3 download error (429)
-Too many requests to the V3 service. Please wait a few minutes and try again.`);
+${t('subtitle.osV3RateTitle', {}, 'OpenSubtitles V3 download error (429)')}
+${t('subtitle.osV3RateBody', {}, 'Too many requests to the V3 service. Please wait a few minutes and try again.')}`);
 }
 
 /**
  * Create a single-cue error subtitle for OpenSubtitles V3 temporary unavailability
  * @returns {string}
  */
-function createOpenSubtitlesV3ServiceUnavailableSubtitle() {
+function createOpenSubtitlesV3ServiceUnavailableSubtitle(uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   return ensureInformationalSubtitleSize(`1
 00:00:00,000 --> 04:00:00,000
-OpenSubtitles V3 download error (503)
-Service temporarily unavailable. Try again in a few minutes.`);
+${t('subtitle.osV3UnavailableTitle', {}, 'OpenSubtitles V3 download error (503)')}
+${t('subtitle.osV3UnavailableBody', {}, 'Service temporarily unavailable. Try again in a few minutes.')}`);
 }
 
 // Create a concise error subtitle when a source file looks invalid/corrupted
-function createInvalidSubtitleMessage(reason = 'The subtitle file appears to be invalid or incomplete.') {
+function createInvalidSubtitleMessage(reason = 'The subtitle file appears to be invalid or incomplete.', uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   const srt = `1
 00:00:00,000 --> 00:00:03,000
-Subtitle Problem Detected
+${t('subtitle.invalidSubtitleTitle', {}, 'Subtitle Problem Detected')}
 
 2
 00:00:03,001 --> 04:00:18,000
-${reason}\nAn error occurred.\nPlease try again.`;
+${reason}\n${t('subtitle.translationUnexpected', {}, 'An error occurred during translation.')}\n${t('subtitle.translationRetry', {}, 'Please try again.')}`;
   return ensureInformationalSubtitleSize(srt);
 }
 
 // Create a user-facing subtitle when a provider returns an unusable or missing file (e.g., HTML page, broken ZIP)
-function createProviderDownloadErrorSubtitle(serviceName, reason) {
+function createProviderDownloadErrorSubtitle(serviceName, reason, uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   let srt = `1
 00:00:00,000 --> 00:00:04,000
-${serviceName} download failed
+${t('subtitle.providerDownloadFailTitle', { service: serviceName }, `${serviceName} download failed`)}
 
 2
 00:00:04,001 --> 04:00:00,000
-${reason}
-Try a different subtitle or provider.`;
+${t('subtitle.providerDownloadFailBody', { reason }, `${reason}\nTry a different subtitle or provider.`)}`;
 
   return ensureInformationalSubtitleSize(srt, 'This informational subtitle was generated by the addon to explain the failure.');
 }
 
 // Create an SRT explaining concurrency limit reached, visible across the whole video timeline
-function createConcurrencyLimitSubtitle(limit = MAX_CONCURRENT_TRANSLATIONS_PER_USER) {
+function createConcurrencyLimitSubtitle(limit = MAX_CONCURRENT_TRANSLATIONS_PER_USER, uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   return ensureInformationalSubtitleSize(`1
 00:00:00,000 --> 04:00:00,000
-Too many concurrent translations for this user (limit: ${limit}).\nPlease wait for one to finish, then try again.`);
+${t('subtitle.concurrencyLimitTitle', { limit }, `Too many concurrent translations for this user (limit: ${limit}).`)}
+${t('subtitle.concurrencyLimitBody', {}, 'Please wait for one to finish, then try again.')}`);
 }
 
 // Create an SRT explaining a translation error, visible across the whole video timeline
 // User can click again to retry the translation
-function createTranslationErrorSubtitle(errorType, errorMessage) {
+function createTranslationErrorSubtitle(errorType, errorMessage, uiLanguage = 'en') {
+  const t = getTranslator(uiLanguage);
   // Determine error title based on type
-  let errorTitle = 'Translation Failed';
-  let errorExplanation = errorMessage || 'An unexpected error occurred during translation.';
-  let retryAdvice = 'An unexpected error occurred.\nClick this subtitle again to retry translation.';
+  let errorTitle = t('subtitle.translationFailed', {}, 'Translation Failed');
+  let errorExplanation = errorMessage || t('subtitle.translationUnexpected', {}, 'An unexpected error occurred during translation.');
+  let retryAdvice = t('subtitle.translationRetry', {}, 'An unexpected error occurred.\nClick this subtitle again to retry translation.');
 
   if (errorType === '403') {
-    errorTitle = 'Translation Failed: Authentication Error (403)';
-    errorExplanation = 'Your Gemini API key is invalid or rejected.\nPlease check that your API key is correct.';
-    retryAdvice = 'Update your Gemini API key in the addon configuration,\nthen reinstall the addon and try again.';
+    errorTitle = t('subtitle.translationAuth', {}, 'Translation Failed: Authentication Error (403)');
+    errorExplanation = t('subtitle.translationAuthBody', {}, 'Your Gemini API key is invalid or rejected.\nPlease check that your API key is correct.');
+    retryAdvice = t('subtitle.translationAuthRetry', {}, 'Update your Gemini API key in the addon configuration,\nthen reinstall the addon and try again.');
   } else if (errorType === '503') {
-    errorTitle = 'Translation Failed: Service Overloaded (503)';
-    errorExplanation = 'The Gemini API is temporarily overloaded with requests.\nThis is usually temporary and resolves within minutes.';
-    retryAdvice = '(503) Service Unavailable - Wait a moment for Gemini to recover,\nthen click this subtitle again to retry translation.';
+    errorTitle = t('subtitle.translationOverload', {}, 'Translation Failed: Service Overloaded (503)');
+    errorExplanation = t('subtitle.translationOverloadBody', {}, 'The Gemini API is temporarily overloaded with requests.\nThis is usually temporary and resolves within minutes.');
+    retryAdvice = t('subtitle.translationOverloadRetry', {}, '(503) Service Unavailable - Wait a moment for Gemini to recover,\nthen click this subtitle again to retry translation.');
   } else if (errorType === '429') {
-    errorTitle = 'Translation Failed: Usage Limit Reached (429)';
-    errorExplanation = 'Your Gemini API usage limit has been exceeded.\nThis may be a rate limit or quota limit.';
-    retryAdvice = '(429) API Rate/Quota Limit - Gemini API is limiting your API key requests.\nWait a few minutes, then click again to retry.';
+    errorTitle = t('subtitle.translationRateLimit', {}, 'Translation Failed: Usage Limit Reached (429)');
+    errorExplanation = t('subtitle.translationRateLimitBody', {}, 'Your Gemini API usage limit has been exceeded.\nThis may be a rate limit or quota limit.');
+    retryAdvice = t('subtitle.translationRateLimitRetry', {}, '(429) API Rate/Quota Limit - Gemini API is limiting your API key requests.\nWait a few minutes, then click again to retry.');
   } else if (errorType === 'MAX_TOKENS') {
-    errorTitle = 'Translation Failed: Content Too Large';
-    errorExplanation = 'The subtitle file is too large for a single translation.\nThe system attempted chunking but still exceeded limits.';
-    retryAdvice = '(MAX_TOKENS) Try translating a different subtitle file.\nAnother model may help. Please let us know if this persists.';
+    errorTitle = t('subtitle.translationTooLarge', {}, 'Translation Failed: Content Too Large');
+    errorExplanation = t('subtitle.translationTooLargeBody', {}, 'The subtitle file is too large for a single translation.\nThe system attempted chunking but still exceeded limits.');
+    retryAdvice = t('subtitle.translationTooLargeRetry', {}, '(MAX_TOKENS) Try translating a different subtitle file.\nAnother model may help. Please let us know if this persists.');
   } else if (errorType === 'SAFETY') {
-    errorTitle = 'Translation Failed: Content Filtered';
-    errorExplanation = 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.';
-    retryAdvice = '(PROHIBITED_CONTENT) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.';
+    errorTitle = t('subtitle.translationFiltered', {}, 'Translation Failed: Content Filtered');
+    errorExplanation = t('subtitle.translationFilteredBody', {}, 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.');
+    retryAdvice = t('subtitle.translationFilteredRetry', {}, '(PROHIBITED_CONTENT) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.');
   } else if (errorType === 'PROHIBITED_CONTENT') {
-    errorTitle = 'Translation Failed: Content Filtered';
-    errorExplanation = 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.';
-    retryAdvice = '(PROHIBITED_CONTENT) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.';
+    errorTitle = t('subtitle.translationFiltered', {}, 'Translation Failed: Content Filtered');
+    errorExplanation = t('subtitle.translationFilteredBody', {}, 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.');
+    retryAdvice = t('subtitle.translationFilteredRetry', {}, '(PROHIBITED_CONTENT) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.');
   } else if (errorType === 'INVALID_SOURCE') {
-    errorTitle = 'Translation Failed: Invalid Source File';
-    errorExplanation = 'The source subtitle file appears corrupted or invalid.\nIt may be too small or have formatting issues.';
-    retryAdvice = '(CORRUPT_SOURCE) Please retry or try a different subtitle from the list.';
+    errorTitle = t('subtitle.translationInvalidSource', {}, 'Translation Failed: Invalid Source File');
+    errorExplanation = t('subtitle.translationInvalidSourceBody', {}, 'The source subtitle file appears corrupted or invalid.\nIt may be too small or have formatting issues.');
+    retryAdvice = t('subtitle.translationInvalidSourceRetry', {}, '(CORRUPT_SOURCE) Please retry or try a different subtitle from the list.');
   } else if (errorType === 'MULTI_PROVIDER') {
     // Combined provider failure should be surfaced as a single-entry error for clarity
-    const explanation = errorMessage || 'Both the main and secondary providers failed to translate this batch.';
+    const explanation = errorMessage || t('subtitle.translationMultiProvider', {}, 'Both the main and secondary providers failed to translate this batch.');
     return ensureInformationalSubtitleSize(`1
 00:00:00,000 --> 04:00:00,000
 ${explanation}`);
   } else if (errorType === 'other') {
     // Generic error - still provide helpful message with actual error
-    errorTitle = 'Translation Failed: Unexpected Error';
-    errorExplanation = errorMessage ? `Error: ${errorMessage}` : 'An unexpected error occurred during translation.';
-    retryAdvice = 'Unexpected error.\nClick this subtitle again to retry.\nIf the problem persists, try a different subtitle, reinstall the addon or contact us.';
+    errorTitle = t('subtitle.translationFailed', {}, 'Translation Failed: Unexpected Error');
+    errorExplanation = errorMessage ? `Error: ${errorMessage}` : t('subtitle.translationUnexpected', {}, 'An unexpected error occurred during translation.');
+    retryAdvice = t('subtitle.translationRetry', {}, 'Unexpected error.\nClick this subtitle again to retry.\nIf the problem persists, try a different subtitle, reinstall the addon or contact us.');
   }
 
   return ensureInformationalSubtitleSize(`1
@@ -797,7 +809,8 @@ function getMobileWaitTimeoutMs(config) {
 }
 
 // Helper: fetch final translation/error from cache respecting bypass isolation
-async function getFinalCachedTranslation(storageKey, bypassKey, { bypass, bypassEnabled, userHash, allowPermanent }) {
+async function getFinalCachedTranslation(storageKey, bypassKey, { bypass, bypassEnabled, userHash, allowPermanent, uiLanguage }) {
+  const lang = uiLanguage || 'en';
   try {
     if (bypass && bypassEnabled) {
       const bypassCached = await readFromBypassStorage(bypassKey);
@@ -810,7 +823,7 @@ async function getFinalCachedTranslation(storageKey, bypassKey, { bypass, bypass
           return null;
         }
         if (bypassCached.isError === true) {
-          return createTranslationErrorSubtitle(bypassCached.errorType, bypassCached.errorMessage);
+          return createTranslationErrorSubtitle(bypassCached.errorType, bypassCached.errorMessage, lang);
         }
         return bypassCached.content || bypassCached;
       }
@@ -820,7 +833,7 @@ async function getFinalCachedTranslation(storageKey, bypassKey, { bypass, bypass
       const cached = await readFromStorage(storageKey);
       if (cached) {
         if (cached.isError === true) {
-          return createTranslationErrorSubtitle(cached.errorType, cached.errorMessage);
+          return createTranslationErrorSubtitle(cached.errorType, cached.errorMessage, lang);
         }
         return cached.content || cached;
       }
@@ -2532,7 +2545,7 @@ async function handleSubtitleDownload(fileId, language, config) {
         const missingCreds = wantsAuth && !openSubsHasCreds;
         if (missingCreds) {
           log.warn(() => '[Download] OpenSubtitles Auth selected without credentials; returning guidance subtitle instead of hitting basic quota');
-          return createOpenSubtitlesAuthMissingSubtitle();
+          return createOpenSubtitlesAuthMissingSubtitle(config.uiLanguage || 'en');
         }
 
         // OpenSubtitles subtitle (Auth implementation - default)
@@ -2562,7 +2575,7 @@ async function handleSubtitleDownload(fileId, language, config) {
         || /informational subtitle was generated by the addon/i.test(content);
       if (content.length < minSize && !looksLikeInfoSubtitle) {
         log.warn(() => `[Download] Subtitle content too small (${content.length} bytes < ${minSize}). Returning problem message.`);
-        return createInvalidSubtitleMessage('The subtitle file is too small and seems corrupted.');
+        return createInvalidSubtitleMessage('The subtitle file is too small and seems corrupted.', config.uiLanguage || 'en');
       }
     } catch (_) {}
 
@@ -2600,7 +2613,7 @@ ${hint}`);
 
       // Special-case OpenSubtitles V3: return a single-cue 0→4h error
       if (fileId.startsWith('v3_')) {
-        return createOpenSubtitlesV3RateLimitSubtitle();
+        return createOpenSubtitlesV3RateLimitSubtitle(config.uiLanguage || 'en');
       }
 
       // Determine which service based on fileId (generic two-cue fallback)
@@ -2669,7 +2682,7 @@ Subtitle Not Available (Error 404)\nThis often happens with subtitles that were 
     if (errorStatus === 503) {
       // Special-case OpenSubtitles V3: return a single-cue 0→4h error
       if (fileId.startsWith('v3_')) {
-        return createOpenSubtitlesV3ServiceUnavailableSubtitle();
+        return createOpenSubtitlesV3ServiceUnavailableSubtitle(config.uiLanguage || 'en');
       }
 
       return ensureInformationalSubtitleSize(`1
@@ -2685,7 +2698,7 @@ Please try again in a few minutes or try a different subtitle.`);
         lowerMsg.includes('allowed 20 subtitles') ||
         (lowerMsg.includes('quota') && lowerMsg.includes('renew'));
       if (isOsQuota) {
-        return createOpenSubtitlesQuotaExceededSubtitle();
+        return createOpenSubtitlesQuotaExceededSubtitle(config.uiLanguage || 'en');
       }
     }
 
@@ -2719,19 +2732,19 @@ SubSource API did not respond in time. Try again in a few minutes or pick a diff
     const looksLikeBadZip = combined.includes('invalid zip') || combined.includes('not a valid zip') || combined.includes('central directory');
 
     if (fileId.startsWith('subdl_') && (looksLikeHtmlError || looksLikeBadZip)) {
-      return createProviderDownloadErrorSubtitle('SubDL', 'SubDL returned an error page instead of the subtitle file. It may have been removed.');
+      return createProviderDownloadErrorSubtitle('SubDL', 'SubDL returned an error page instead of the subtitle file. It may have been removed.', config.uiLanguage || 'en');
     }
 
     if (fileId.startsWith('subsource_') && (looksLikeHtmlError || looksLikeBadZip)) {
-      return createProviderDownloadErrorSubtitle('SubSource', 'The SubSource file looked corrupted or missing. The subtitle might have been removed.');
+      return createProviderDownloadErrorSubtitle('SubSource', 'The SubSource file looked corrupted or missing. The subtitle might have been removed.', config.uiLanguage || 'en');
     }
 
     if (fileId.startsWith('v3_') && (looksLikeHtmlError || looksLikeBadZip)) {
-      return createProviderDownloadErrorSubtitle('OpenSubtitles V3', 'The download response was invalid. Please try another subtitle.');
+      return createProviderDownloadErrorSubtitle('OpenSubtitles V3', 'The download response was invalid. Please try another subtitle.', config.uiLanguage || 'en');
     }
 
     if (!fileId.startsWith('subdl_') && !fileId.startsWith('subsource_') && !fileId.startsWith('v3_') && (looksLikeHtmlError || looksLikeBadZip)) {
-      return createProviderDownloadErrorSubtitle('OpenSubtitles', 'The download response was invalid. Please try another subtitle.');
+      return createProviderDownloadErrorSubtitle('OpenSubtitles', 'The download response was invalid. Please try another subtitle.', config.uiLanguage || 'en');
     }
 
     throw error;
@@ -2795,7 +2808,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
             // Check if this is a cached error
             if (bypassCached.isError === true) {
               log.debug(() => ['[Translation] Cached error found (bypass) key=', cacheKey, 'â€” showing error and clearing cache']);
-              const errorSrt = createTranslationErrorSubtitle(bypassCached.errorType, bypassCached.errorMessage);
+              const errorSrt = createTranslationErrorSubtitle(bypassCached.errorType, bypassCached.errorMessage, config.uiLanguage || 'en');
 
               // Delete the error cache so next click retries translation
               const adapter = await getStorageAdapter();
@@ -2822,7 +2835,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
         // Check if this is a cached error
         if (cached.isError === true) {
           log.debug(() => ['[Translation] Cached error found (permanent) key=', cacheKey, ' - showing error and clearing cache']);
-          const errorSrt = createTranslationErrorSubtitle(cached.errorType, cached.errorMessage);
+          const errorSrt = createTranslationErrorSubtitle(cached.errorType, cached.errorMessage, config.uiLanguage || 'en');
 
           // Delete the error cache so next click retries translation
           const adapter = await getStorageAdapter();
@@ -2861,7 +2874,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
           const waitedResult = await waitForFinalCachedTranslation(
             baseKey,
             cacheKey,
-            { bypass, bypassEnabled, userHash, allowPermanent: allowPermanent && ENABLE_PERMANENT_TRANSLATIONS },
+            { bypass, bypassEnabled, userHash, allowPermanent: allowPermanent && ENABLE_PERMANENT_TRANSLATIONS, uiLanguage: config.uiLanguage || 'en' },
             mobileWaitTimeoutMs
           );
 
@@ -2871,7 +2884,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
           }
 
           log.warn(() => `[Translation] Mobile mode wait timed out without final result for key=${cacheKey}`);
-          return createTranslationErrorSubtitle('other', 'Translation did not finish in time. Please retry.');
+          return createTranslationErrorSubtitle('other', 'Translation did not finish in time. Please retry.', config.uiLanguage || 'en');
         } else {
           // DON'T WAIT for completion - immediately return available partials instead
           // Check storage first (in case it just completed)
@@ -2892,14 +2905,14 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
           }
 
           // No cached/partial result yet - return loading message and let user retry
-          const loadingMsg = createLoadingSubtitle();
+          const loadingMsg = createLoadingSubtitle(config.uiLanguage || 'en');
           log.debug(() => `[Translation] No partial result yet for duplicate request; returning loading message`);
           return loadingMsg;
         }
       } catch (err) {
         log.warn(() => [`[Translation] Error checking partials for duplicate request (${cacheKey}):`, err.message]);
         // Return loading message on any error
-        const loadingMsg = createLoadingSubtitle();
+        const loadingMsg = createLoadingSubtitle(config.uiLanguage || 'en');
         return loadingMsg;
       }
     }
@@ -2927,7 +2940,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
         const waitedResult = await waitForFinalCachedTranslation(
           baseKey,
           cacheKey,
-          { bypass, bypassEnabled, userHash, allowPermanent: allowPermanent && ENABLE_PERMANENT_TRANSLATIONS },
+          { bypass, bypassEnabled, userHash, allowPermanent: allowPermanent && ENABLE_PERMANENT_TRANSLATIONS, uiLanguage: config.uiLanguage || 'en' },
           mobileWaitTimeoutMs
         );
 
@@ -2937,7 +2950,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
         }
 
         log.warn(() => `[Translation] Mobile mode wait timed out on status-only path for key=${cacheKey}`);
-        return createTranslationErrorSubtitle('other', 'Translation did not finish in time. Please retry.');
+        return createTranslationErrorSubtitle('other', 'Translation did not finish in time. Please retry.', config.uiLanguage || 'en');
       } else {
         try {
           const partial = await readFromPartialCache(runtimeKey);
@@ -2946,7 +2959,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
             return partial.content;
           }
         } catch (_) {}
-        const loadingMsg = createLoadingSubtitle();
+        const loadingMsg = createLoadingSubtitle(config.uiLanguage || 'en');
         log.debug(() => `[Translation] No partial available, returning loading SRT (size=${loadingMsg.length})`);
         return loadingMsg;
       }
@@ -2957,7 +2970,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
     const currentCount = userTranslationCounts.get(effectiveUserHash) || 0;
     if (currentCount >= MAX_CONCURRENT_TRANSLATIONS_PER_USER) {
       log.warn(() => `[Translation] Concurrency limit reached for user=${effectiveUserHash}: ${currentCount} in progress (limit ${MAX_CONCURRENT_TRANSLATIONS_PER_USER}).`);
-      return createConcurrencyLimitSubtitle(MAX_CONCURRENT_TRANSLATIONS_PER_USER);
+      return createConcurrencyLimitSubtitle(MAX_CONCURRENT_TRANSLATIONS_PER_USER, config.uiLanguage || 'en');
     }
 
     // === PRE-FLIGHT VALIDATION ===
@@ -3013,7 +3026,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
       if (!sourceContent || sourceContent.length < minSize) {
         log.warn(() => `[Translation] Pre-flight validation failed: source too small (${sourceContent?.length || 0} bytes < ${minSize})`);
         // Return corruption error immediately instead of loading message
-        return createInvalidSubtitleMessage('Selected subtitle seems invalid (too small).');
+        return createInvalidSubtitleMessage('Selected subtitle seems invalid (too small).', config.uiLanguage || 'en');
       }
 
       log.debug(() => `[Translation] Pre-flight validation passed: ${sourceContent.length} bytes`);
@@ -3023,7 +3036,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
         log.error(() => ['[Translation] Pre-flight validation failed:', error?.message || String(error)]);
       }
       // Return error message instead of loading message
-      return createInvalidSubtitleMessage(`Download failed: ${error.message}`);
+      return createInvalidSubtitleMessage(`Download failed: ${error.message}`, config.uiLanguage || 'en');
     }
 
     // === START BACKGROUND TRANSLATION ===
@@ -3077,7 +3090,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
       const waitedResult = await waitForFinalCachedTranslation(
         baseKey,
         cacheKey,
-        { bypass, bypassEnabled, userHash, allowPermanent: allowPermanent && ENABLE_PERMANENT_TRANSLATIONS },
+        { bypass, bypassEnabled, userHash, allowPermanent: allowPermanent && ENABLE_PERMANENT_TRANSLATIONS, uiLanguage: config.uiLanguage || 'en' },
         mobileWaitTimeoutMs
       );
 
@@ -3087,11 +3100,11 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
       }
 
       log.warn(() => `[Translation] Mobile mode wait timed out for new translation key=${cacheKey}`);
-      return createTranslationErrorSubtitle('other', 'Translation did not finish in time. Please retry.');
+      return createTranslationErrorSubtitle('other', 'Translation did not finish in time. Please retry.', config.uiLanguage || 'en');
     }
 
     // Return loading message immediately (desktop/standard behavior)
-    const loadingMsg = createLoadingSubtitle();
+    const loadingMsg = createLoadingSubtitle(config.uiLanguage || 'en');
     log.debug(() => `[Translation] Returning initial loading message (${loadingMsg.length} characters)`);
     return loadingMsg;
   } catch (error) {
@@ -3175,7 +3188,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
       try {
         const minSize = Number(config.minSubtitleSizeBytes) || 200;
         if (!sourceContent || sourceContent.length < minSize) {
-          const msg = createInvalidSubtitleMessage('Selected subtitle seems invalid (too small).');
+          const msg = createInvalidSubtitleMessage('Selected subtitle seems invalid (too small).', config.uiLanguage || 'en');
           // Save short-lived cache to bypass storage so we never overwrite permanent translations
           await saveToBypassStorage(cacheKey, {
             content: msg,
@@ -3299,7 +3312,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
         config.translationPrompt,
         async (progress) => {
           const persistPartial = async (partialText, logThisProgress) => {
-            const partialSrt = buildPartialSrtWithTail(partialText);
+            const partialSrt = buildPartialSrtWithTail(partialText, config.uiLanguage || 'en');
             if (!partialSrt || partialSrt.length === 0) return false;
             await saveToPartialCacheAsync(runtimeKey, {
               content: partialSrt,

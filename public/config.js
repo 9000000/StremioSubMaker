@@ -2,6 +2,63 @@
 (function() {
     'use strict';
 
+    const DEFAULT_LOCALE = { lang: 'en', messages: {} };
+    let locale = DEFAULT_LOCALE;
+
+    function bootstrapTranslator(payload) {
+        try {
+            locale = payload || DEFAULT_LOCALE;
+            window.__LOCALE__ = locale;
+            window.t = function(key, vars, fallback) {
+                vars = vars || {};
+                if (!key) return fallback || key;
+                const parts = String(key).split('.');
+                let current = (locale && locale.messages) || {};
+                for (let i = 0; i < parts.length; i++) {
+                    if (current && Object.prototype.hasOwnProperty.call(current, parts[i])) {
+                        current = current[parts[i]];
+                    } else {
+                        current = null;
+                        break;
+                    }
+                }
+                const template = (typeof current === 'string' && current) || fallback || key;
+                return String(template).replace(/\{(\w+)\}/g, (match, k) => Object.prototype.hasOwnProperty.call(vars, k) ? vars[k] : match);
+            };
+            if (document && document.documentElement) {
+                document.documentElement.lang = locale.lang || 'en';
+            }
+        } catch (_) {
+            locale = DEFAULT_LOCALE;
+        }
+    }
+
+    async function initLocale(langOverride) {
+        try {
+            const url = new URL(window.location.href);
+            const configParam = url.searchParams.get('config');
+            let langParam = langOverride || url.searchParams.get('lang');
+            if (!langParam) {
+                try {
+                    const stored = localStorage.getItem(UI_LANGUAGE_STORAGE_KEY);
+                    if (stored) langParam = stored;
+                } catch (_) {}
+            }
+            const query = [];
+            if (configParam) query.push('config=' + encodeURIComponent(configParam));
+            if (langParam) query.push('lang=' + encodeURIComponent(langParam));
+            const resp = await fetch('/api/locale' + (query.length ? ('?' + query.join('&')) : ''), { cache: 'no-store' });
+            const data = await resp.json();
+            bootstrapTranslator(data || DEFAULT_LOCALE);
+            applyUiLanguageCopy();
+        } catch (err) {
+            console.warn('[i18n] Failed to load locale, falling back to English', err);
+            bootstrapTranslator(DEFAULT_LOCALE);
+            applyUiLanguageCopy();
+        }
+    }
+    initLocale();
+
     /**
      * Default API Keys Configuration
      *
@@ -28,6 +85,11 @@
         maxTargetLanguages: 6,
         maxNoTranslationLanguages: 9
     };
+    const SUPPORTED_UI_LANGUAGES = [
+        { value: 'en', label: 'English' },
+        { value: 'es', label: 'Español' }
+    ];
+    const UI_LANGUAGE_STORAGE_KEY = 'submaker_ui_language';
     const KEY_OPTIONAL_PROVIDERS = new Set(['googletranslate']);
 
     function parseLimit(value, fallback, min = 1, max = 50) {
@@ -36,6 +98,14 @@
             return Math.min(parsed, max);
         }
         return fallback;
+    }
+
+    function getPreferredUiLanguage() {
+        try {
+            const stored = localStorage.getItem(UI_LANGUAGE_STORAGE_KEY);
+            if (stored) return stored.toLowerCase();
+        } catch (_) {}
+        return (navigator.language || 'en').toLowerCase();
     }
 
     const SERVER_LIMITS = (typeof window !== 'undefined' && window.__CONFIG_LIMITS__) ? window.__CONFIG_LIMITS__ : {};
@@ -257,6 +327,7 @@ Translate to {target_language}.`;
         return {
             noTranslationMode: false, // If true, skip translation and just fetch subtitles
             noTranslationLanguages: [], // Languages to fetch when in no-translation mode
+            uiLanguage: getPreferredUiLanguage(),
             sourceLanguages: ['eng'], // Limited by MAX_SOURCE_LANGUAGES
             targetLanguages: [],
             // Learn mode (dual-language VTT output)
@@ -453,6 +524,49 @@ Translate to {target_language}.`;
         currentConfig.providerParameters = mergeProviderParameters(defaults, currentConfig.providerParameters);
     }
 
+    function populateUiLanguageSelect(selectedLang) {
+        const select = document.getElementById('uiLanguageSelect');
+        if (!select) return;
+        select.innerHTML = '';
+        SUPPORTED_UI_LANGUAGES.forEach(({ value, label }) => {
+            const opt = document.createElement('option');
+            opt.value = value;
+            opt.textContent = label;
+            select.appendChild(opt);
+        });
+        const normalized = (selectedLang || '').toString().toLowerCase();
+        if (normalized && SUPPORTED_UI_LANGUAGES.find(l => l.value === normalized)) {
+            select.value = normalized;
+        }
+    }
+
+    function setUiLanguage(lang) {
+        const normalized = (lang || '').toString().trim().toLowerCase() || 'en';
+        if (!currentConfig) {
+            currentConfig = getDefaultConfig();
+        }
+        currentConfig.uiLanguage = normalized;
+        try { localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, normalized); } catch (_) {}
+        initLocale(normalized);
+    }
+
+    function applyUiLanguageCopy() {
+        const translate = (key, fallback) => {
+            try {
+                if (typeof window.t === 'function') return window.t(key, {}, fallback);
+            } catch (_) {}
+            return fallback;
+        };
+        const label = document.getElementById('uiLanguageLabel');
+        if (label) {
+            label.textContent = translate('config.uiLanguageLabel', 'UI Language');
+        }
+        const desc = document.getElementById('uiLanguageDescription');
+        if (desc) {
+            desc.textContent = translate('config.uiLanguageDescription', 'Applies to all SubMaker pages and subtitles');
+        }
+    }
+
     function isBetaModeEnabled() {
         // Prefer the state stored in currentConfig (set during initial load) so we
         // don't accidentally read an unchecked toggle before the UI is populated.
@@ -600,6 +714,10 @@ Translate to {target_language}.`;
         // Show instructions ASAP (do not block on network/UI work)
         showInstructionsModalIfNeeded();
 
+        // Populate UI language selector before wiring events
+        populateUiLanguageSelect(currentConfig.uiLanguage || locale.lang || 'en');
+        try { localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, (currentConfig.uiLanguage || locale.lang || 'en')); } catch (_) {}
+
         // Kick off language loading without blocking UI/modals
         loadLanguages().catch(err => {
             try { showAlert('Failed to load languages: ' + err.message, 'error'); } catch (_) {}
@@ -607,6 +725,7 @@ Translate to {target_language}.`;
 
         setupEventListeners();
         loadConfigToForm();
+        initLocale(currentConfig.uiLanguage || locale.lang || 'en');
         updateToolboxLauncherVisibility();
         setupKeyboardShortcuts();
         showKeyboardHint();
@@ -1465,6 +1584,14 @@ Translate to {target_language}.`;
     function setupEventListeners() {
         // Form submission
         document.getElementById('configForm').addEventListener('submit', handleSubmit);
+
+        const uiLangSelect = document.getElementById('uiLanguageSelect');
+        if (uiLangSelect) {
+            uiLangSelect.addEventListener('change', (e) => {
+                const lang = e.target.value || 'en';
+                setUiLanguage(lang);
+            });
+        }
 
         // Delegate language grid item clicks to containers (reduces per-item listeners)
         const gridMap = [
@@ -3570,6 +3697,13 @@ Translate to {target_language}.`;
             toggleNoTranslationMode(noTranslationMode);
         }
 
+        // UI language selector
+        populateUiLanguageSelect(currentConfig.uiLanguage || locale.lang || 'en');
+        const uiLangSelect = document.getElementById('uiLanguageSelect');
+        if (uiLangSelect) {
+            uiLangSelect.value = (currentConfig.uiLanguage || locale.lang || 'en').toString().toLowerCase();
+        }
+
         // Load Gemini API key
         document.getElementById('geminiApiKey').value = currentConfig.geminiApiKey || '';
 
@@ -3817,6 +3951,7 @@ Translate to {target_language}.`;
         const config = {
             noTranslationMode: currentConfig.noTranslationMode,
             noTranslationLanguages: currentConfig.noTranslationLanguages,
+            uiLanguage: (currentConfig.uiLanguage || (navigator.language || 'en')).toString().toLowerCase(),
             geminiApiKey: document.getElementById('geminiApiKey').value.trim(),
             // Save the selected model from the dropdown
             // Advanced settings can override this if enabled

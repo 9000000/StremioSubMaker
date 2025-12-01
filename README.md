@@ -220,6 +220,12 @@ Languages to **translate subtitles to**
 - SubDL: Requires API key
 - SubSource: Requires API key
 
+## 🌐 Localization
+
+- UI strings live in `locales/<code>.json` with the same shape as `locales/en.json` (`lang` + `messages`).
+- To add a new language, copy `locales/en.json`, translate the values, and keep the keys/placeholder tokens (`{provider}`, `{count}`, etc.) intact.
+- The configuration page lets you pick a UI language; that selection flows through to addon pages, subtitles, and API responses via `/api/locale`.
+
 ---
 
 ## 🐛 Troubleshooting

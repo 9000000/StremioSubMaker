@@ -5,32 +5,43 @@ All notable changes to this project will be documented in this file.
 ## SubMaker v1.4.11
 
 **New Features:**
-- **Floating subtitle menu:** Exended Stream Subtitles widget to sync and file-upload pages with grouped source/translation/target lists, quick refresh/prefetch, and live stream updates from QuickNav.
+- **Shared translation cache reinstated:** Shared “Make (Language)” translations are re-enabled with a new namespaced storage prefix, automatic legacy purge, and hard bypass of reads/writes when a config hash is missing/invalid.
+- **Floating subtitle menu:** Extended Stream Subtitles widget to sync and file-upload pages with grouped source/translation/target lists, quick refresh/prefetch, and live stream updates from QuickNav.
+- **Localization groundwork:** Added shared i18n helper with locale bootstrap and UI-language plumbing through config/session so pages and subtitle messages can render per-user language for future addon translations.
+
+**Subtitles Toolbox:**
 - **Floating menu translation controls:** Translation entries now ship with Translate/Download buttons that poll background translations, cache finished files, and surface ready-to-download targets without page reloads.
+- **Autosync mode picker:** Subtitle Sync now offers ALASS, FFSubSync, Vosk CTC/DTW, or Whisper+ALASS as the primary engine with light/balanced/deep/complete scan profiles, plus a new manual-offset slider/hotkeys and inline CTA when the xSync helper is missing.
 
 **Security & Infrastructure:**
 
-- **Service Worker Cache:** API cache bumped to `v2` with stricter `Vary: *` checks and guarded cache writes to avoid storing non-cacheable responses.
+- **Service Worker Cache:** API cache bumped to `v2` with `Vary: *` safeguards, version-tagged/hourly registration, and automatic bypass/unregister on toolbox/addon pages so dynamic tools never reuse stale controllers.
 - **Origin allowlist:** Expanded trusted Stremio origins to include `*.stremio.one` and `*.stremio.com` alongside existing `*.strem.io`, covering official hosts while keeping addon API lockdown intact.
+- **Session-gated subtitle caches:** xSync/xEmbed reads and writes now require valid session tokens, respond with `no-store`, and keep embedded originals opt-in configurable (default on) to prevent cross-user cache leakage.
 
 **Bug Fixes:**
 
 - **Batch context in single-batch splits:** When single-batch translations exceed token limits and auto-split, surrounding/previous-entry context is now passed through so coherence is preserved in this edge mode.
-- **Mobile quick-nav toggle:** Restored the hamburger bars on tool pages for screens under 1100px with.
+- **Embedded studio UX gaps:** Instructions modal now respects the “don’t show again” preference, extraction no longer hangs if the xSync extension goes silent (60s watchdog with reset/re-ping), the extension badge reflects active extraction vs ready state, and single-track extractions auto-select to unlock Step 2 immediately.
+- **Mobile quick-nav toggle:** Restored the hamburger bars on tool pages for screens under 1100px width.
 - **Resilient language maps:** Subtitle menu now guards language-map bootstrapping and drops stale backups so missing/invalid maps can’t crash subtitle rendering.
+- **3-click cache reset:** Triple-click cache reset no longer consumes rate limits or leave partial purges when users retry quickly.
 - **Many other major and minor bug fixes.**
 
 **Improvements:**
 
-- **Subtitle intelligence:** Language lookup now normalizes ISO1/ISO2 codes and common aliases (e.g., LATAM Spanish, Brazilian Portuguese), improving grouping/labels across providers and cached translations.
-- **Stream context:** QuickNav toasts clean filenames, add episode tags, and fetch Cinemeta titles; owner leases fail over faster and duplicate SSE connections are avoided.
-- **Subtitle menu polish:** Status overlay now anchors to the footer with glassmorphism, the footer shows version/filename plus subtitle and language counts, and translation-ready targets stay visible while status messages display.
+- **Subtitle intelligence:** Language lookup now normalizes ISO1/ISO2 codes and common aliases (e.g., LATAM Spanish, Brazilian Portuguese), improving grouping/labels across providers and cached translations; labels normalize Make/Learn/xEmbed/xSync variants and keep language cards open across refreshes.
+- **Stream context:** QuickNav toasts clean filenames, add episode tags, fetch Cinemeta titles, refresh ownership faster, and avoid duplicate SSE connections.
+- **Subtitle menu polish:** Menu is reorganized into Source/Target/Translation/Other groups with better spacing, separators, accessibility labels, and notification handling; the footer shows version/filename plus subtitle/language counts and status overlays stay anchored without hiding ready-to-download translations.
+- **Subtitle sync UX:** Autosync options surface per-engine scan profiles with preserved plan metadata, language labels are corrected, manual offsets clamp to zero start times and include slider nudges/hotkeys, and plan summaries stay accurate.
+- **Fingerprint pre-pass:** Autosync adds an optional (default on) fast audio fingerprint pre-pass toggle to lock coarse offsets before deeper engines run; plan summaries include the pre-pass and the extension payload carries the flag.
+- **Autosync help copy:** Instructions now call out the fingerprint pre-pass alongside ALASS/FFSubSync/Vosk/Whisper options so users understand when to keep it enabled.
 - **Cache indexing:** Embedded and sync caches now keep per-video indexes to avoid storage scans, cap index size, and drop stale keys when reads fail.
-- **Session counting:** Redis sessions now maintain a set-based index for O(1) counts; the index is verified on startup and every 3 hours with automatic rebuild on drift, and session purges fetch metadata with bounded concurrency to reduce spikes.
+- **Embedded studio alignment:** Embedded-subtitles page now mirrors xSync behavior: model fetch status is visible, extension debug logs surface in the live log, stream changes clear stale outputs, and extraction requests send the latest filename/videoHash.
+- **Subtitle cache integrity:** Synced/embedded caches prune stray originals/translations per video, keep embedded originals, and xSync/xEmbed downloads serve with no-store headers to avoid cross-user leakage via shared cache.
 - **Cache maintenance:** Subtitle cache/bypass integrity checks, size calculation, and evictions now run asynchronously to avoid blocking the event loop during periodic cleanups.
-- **Subtitle labels:** Subtitle menu normalizes generated labels (Make/Learn/xEmbed/xSync) and hides empty groups from screen readers for clearer navigation.
-- **Permanent translation cache reinstated (scoped & namespaced):** Permanent “Make (Language)” translations are re-enabled with strict config-scoped keys, a new namespaced storage prefix, automatic legacy purge, and hard bypass of permanent writes when a config hash is missing—eliminating cross-user leakage while retaining LRU size-based eviction.
-- **xSync/xEmbed hardening:** Synced and embedded subtitle caches now require valid sessions for reads/writes and xEmbed downloads are served with no-store headers to avoid cross-user leakage via shared cache.
+- **Session counting:** Redis sessions now maintain a set-based index for O(1) counts; the index is verified on startup and every 3 hours with automatic rebuild on drift, and session purges fetch metadata with bounded concurrency to reduce spikes.
+- **Locale API + bootstrap:** Pages now embed locale JSON (and set `<html lang>`) via `/api/locale`, enabling toolbox/sync/file-upload/config UIs and subtitle menu to consume translated labels.
 
 ## SubMaker v1.4.10
 

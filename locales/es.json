@@ -1,0 +1,123 @@
+{
+  "lang": "es",
+  "messages": {
+    "manifest": {
+      "name": "SubMaker - Traductor de subtítulos",
+      "description": "Obtiene subtítulos de OpenSubtitles y los traduce con {provider}.\\n\\nIdiomas origen: {sources}\\nIdiomas destino: {targets}"
+    },
+    "validation": {
+      "configRequired": "Se requiere la configuración",
+      "mainProviderMissing": "Se debe seleccionar un proveedor principal",
+      "mainProviderGeminiMissing": "Se requieren la clave y el modelo de Gemini para el proveedor principal",
+      "mainProviderConfigured": "Se requieren clave, modelo y habilitación para el proveedor principal '{provider}'",
+      "secondaryMissing": "Debes elegir un proveedor secundario cuando esté habilitado",
+      "secondaryDifferent": "El proveedor secundario debe ser distinto del principal",
+      "secondaryGemini": "Se requieren la clave y el modelo de Gemini para el proveedor secundario",
+      "secondaryConfigured": "Se requieren clave, modelo y habilitación para el proveedor secundario '{provider}'",
+      "atLeastOneProvider": "Al menos un proveedor de IA debe estar habilitado con clave y modelo",
+      "secondaryTwoProviders": "El proveedor secundario requiere dos proveedores de IA configurados con claves",
+      "noTranslationMissing": "Debes elegir al menos un idioma en modo sin traducción",
+      "noTranslationLimit": "Máximo {limit} idiomas en modo sin traducción",
+      "sourceMissing": "Debes elegir al menos un idioma de origen",
+      "sourceLimit": "Máximo {limit} idiomas de origen",
+      "targetMissing": "Debes elegir al menos un idioma de destino",
+      "targetLimit": "Máximo {limit} idiomas de destino (incluye modo Learn)",
+      "learnTargetMissing": "Learn Mode requiere al menos un idioma de destino",
+      "sessionTokenError": "Error de configuración: token de sesión no encontrado o expirado. Reconfigura el addon."
+    },
+    "subtitle": {
+      "loadingTitle": "TRADUCCIÓN EN PROGRESO",
+      "loadingBody": "Haz clic para recargar. Los resultados parciales aparecerán a medida que estén listos.",
+      "loadingTail": "Recarga este subtítulo más tarde para obtener más",
+      "sessionErrorTitle": "Error de configuración",
+      "sessionErrorBody": "Tu token de sesión no se encontró o expiró.",
+      "sessionErrorAdvice": "Vuelve a configurar e instalar el addon.",
+      "sessionErrorQuickFix": "Solución rápida: abre este enlace para reinstalar con una configuración nueva:",
+      "sessionErrorToken": "Se creó una configuración nueva. Usa este token para reinstalar:",
+      "sessionErrorFooter": "Algo salió mal o una actualización rompió tu configuración. ¡Lo sentimos! Vuelve a configurar e instalar.",
+      "osAuthFailTitle": "Error de inicio de sesión en OpenSubtitles",
+      "osAuthFailBody": "Corrige tu usuario/contraseña en la configuración del addon",
+      "osQuotaTitle": "Límite diario de OpenSubtitles alcanzado",
+      "osQuotaBody": "Has descargado 20 subtítulos en las últimas 24h. Espera a medianoche UTC o cambia a V3 en la configuración.",
+      "osAuthMissingTitle": "Se requieren credenciales de OpenSubtitles",
+      "osAuthMissingBody": "Agrega usuario/contraseña de OpenSubtitles o cambia a V3 (sin login).",
+      "osV3RateTitle": "Error de descarga OpenSubtitles V3 (429)",
+      "osV3RateBody": "Demasiadas peticiones al servicio V3. Espera unos minutos e inténtalo de nuevo.",
+      "osV3UnavailableTitle": "Error de descarga OpenSubtitles V3 (503)",
+      "osV3UnavailableBody": "Servicio temporalmente no disponible. Inténtalo de nuevo en unos minutos.",
+      "invalidSubtitleTitle": "Problema con el subtítulo detectado",
+      "providerDownloadFailTitle": "Fallo al descargar desde {service}",
+      "providerDownloadFailBody": "{reason}\\nPrueba otro subtítulo o proveedor.",
+      "concurrencyLimitTitle": "Demasiadas traducciones simultáneas para este usuario (límite: {limit}).",
+      "concurrencyLimitBody": "Espera a que termine una y vuelve a intentar.",
+      "translationFailed": "La traducción falló",
+      "translationUnexpected": "Ocurrió un error inesperado durante la traducción.",
+      "translationRetry": "Error inesperado.\\nHaz clic en este subtítulo para reintentar.",
+      "translationAuth": "Traducción fallida: error de autenticación (403)",
+      "translationAuthBody": "Tu clave de Gemini es inválida o fue rechazada.\\nVerifica que sea correcta.",
+      "translationAuthRetry": "Actualiza tu clave de Gemini en la configuración,\\nluego reinstala el addon y vuelve a intentar.",
+      "translationOverload": "Traducción fallida: servicio sobrecargado (503)",
+      "translationOverloadBody": "La API de Gemini está temporalmente saturada.\\nNormalmente se resuelve en minutos.",
+      "translationOverloadRetry": "(503) Espera un momento y vuelve a intentar.",
+      "translationRateLimit": "Traducción fallida: límite de uso (429)",
+      "translationRateLimitBody": "Superaste el límite de uso de la API de Gemini.\\nPuede ser cuota o rate limit.",
+      "translationRateLimitRetry": "(429) Espera unos minutos y vuelve a intentar.",
+      "translationTooLarge": "Traducción fallida: contenido demasiado grande",
+      "translationTooLargeBody": "El archivo de subtítulos es demasiado grande para una sola traducción.\\nSe intentó dividirlo pero excedió los límites.",
+      "translationTooLargeRetry": "Prueba con otro subtítulo o modelo.",
+      "translationFiltered": "Traducción fallida: contenido filtrado",
+      "translationFilteredBody": "El contenido fue bloqueado por filtros de seguridad.\\nSuele ser un falso positivo.",
+      "translationFilteredRetry": "Vuelve a intentar o elige otro subtítulo de la lista.",
+      "translationInvalidSource": "Traducción fallida: archivo de origen inválido",
+      "translationInvalidSourceBody": "El archivo parece corrupto o con formato incorrecto.",
+      "translationInvalidSourceRetry": "Vuelve a intentar o selecciona otro subtítulo.",
+      "translationMultiProvider": "Fallaron el proveedor principal y el secundario."
+    },
+    "subtitleMenu": {
+      "eyebrow": "Subtítulos del stream",
+      "title": "Fuentes y destinos",
+      "waiting": "Esperando la primera búsqueda",
+      "toggleTitle": "Subtítulos del stream",
+      "refreshTitle": "Actualizar subtítulos",
+      "closeTitle": "Cerrar lista de subtítulos",
+      "makeLanguage": "Generar {language}",
+      "learnLanguage": "Aprender {language}",
+      "group": {
+        "source": "Idiomas de origen",
+        "target": "Idiomas destino",
+        "translation": "Traducción",
+        "other": "Otras entradas"
+      },
+      "actions": {
+        "translate": "Traducir",
+        "translateThis": "Traducir este subtítulo",
+        "download": "Descargar subtítulo traducido",
+        "downloadShort": "Descargar",
+        "translating": "Traduciendo...",
+        "retry": "Reintentar"
+      },
+      "status": {
+        "waitingStream": "Esperando un stream vinculado para cargar subtítulos.",
+        "loading": "Cargando subtítulos...",
+        "none": "No hay subtítulos disponibles para este stream.",
+        "loaded": "Se cargaron {count} subtítulos.",
+        "translationReady": "Traducción lista para {label}.",
+        "translationInProgress": "Traducción en progreso para {label}.",
+        "translationFailed": "La traducción falló: {reason}",
+        "translationFailedShort": "Traducción fallida. ¿Reintentar?",
+        "downloadFailed": "La descarga falló: {reason}",
+        "stillProcessing": "Aún procesando. Inténtalo de nuevo en breve."
+      },
+      "meta": {
+        "refreshing": "Actualizando...",
+        "updated": "Actualizado {time}",
+        "justNow": "justo ahora",
+        "secondsAgo": "hace {seconds}s"
+      }
+    },
+    "config": {
+      "uiLanguageLabel": "Idioma de la interfaz",
+      "uiLanguageDescription": "Aplica a todas las páginas y subtítulos de SubMaker"
+    }
+  }
+}
