@@ -10,6 +10,7 @@ const log = require('./logger');
 const { shutdownLogger } = require('./logger');
 const { encryptUserConfig, decryptUserConfig } = require('./encryption');
 const { redactToken } = require('./security');
+const { getRedisPassword } = require('./redisHelper');
 
 // Cache decrypted configs briefly to avoid redundant decryption on rapid navigation
 const DECRYPTED_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
