@@ -542,9 +542,8 @@ function normalizeConfig(config) {
         mergedConfig.secondaryProvider = '';
       }
     } else {
-      const fallbackKey = Object.keys(mergedConfig.providers || {}).find(k => k.toLowerCase() === mergedConfig.secondaryProvider) || mergedConfig.secondaryProvider;
-      const fallbackCfg = mergedConfig.providers?.[fallbackKey] || {};
-      const validFallback = fallbackCfg.enabled && fallbackCfg.apiKey && fallbackCfg.model;
+      const fallbackKey = resolveProviderKey(mergedConfig.secondaryProvider);
+      const validFallback = providerIsConfigured(fallbackKey);
       if (!validFallback) {
         log.warn(() => `[Config] Secondary provider '${mergedConfig.secondaryProvider}' is not fully configured; disabling fallback`);
         mergedConfig.secondaryProviderEnabled = false;

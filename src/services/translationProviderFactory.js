@@ -357,7 +357,7 @@ function createTranslationProvider(config) {
 
     if (secondaryEnabled && secondaryProviderKey && secondaryProviderKey !== 'gemini') {
       const secondaryConfig = findSecondaryConfig(secondaryProviderKey);
-      if (secondaryConfig && secondaryConfig.enabled !== false && secondaryConfig.apiKey && secondaryConfig.model) {
+      if (isConfigured(secondaryConfig, secondaryProviderKey)) {
         const secondaryParams = findProviderParams(secondaryProviderKey);
         fallbackProvider = createProviderInstance(secondaryProviderKey, secondaryConfig, secondaryParams);
         fallbackName = secondaryProviderKey;
