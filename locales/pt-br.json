@@ -442,12 +442,15 @@
       "refreshTitle": "Atualizar lista de legendas",
       "closeTitle": "Fechar lista de legendas",
       "makeLanguage": "Criar {language}",
-      "learnLanguage": "Learn {language}",
+      "learnLanguage": "Aprender {language}",
       "group": {
-        "source": "Idiomas de Origem",
+        "source": "Idiomas de Origem e Destino",
         "target": "Idiomas de Destino",
         "translation": "Tradução",
-        "other": "Outras Entradas"
+        "other": "Outras Entradas",
+        "sourceHint": "Legendas originais + destino",
+        "translationHint": "Disparar traduções",
+        "otherHint": "xEmbed, Learn, xSync e ferramentas"
       },
       "actions": {
         "translate": "Traduzir",

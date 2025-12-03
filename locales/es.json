@@ -442,12 +442,15 @@
       "refreshTitle": "Actualizar subtítulos",
       "closeTitle": "Cerrar lista de subtítulos",
       "makeLanguage": "Generar {language}",
-      "learnLanguage": "Learn {language}",
+      "learnLanguage": "Aprender {language}",
       "group": {
-        "source": "Idiomas de origen",
+        "source": "Idiomas de origen y destino",
         "target": "Idiomas destino",
         "translation": "Traducción",
-        "other": "Otras entradas"
+        "other": "Otras entradas",
+        "sourceHint": "Subtítulos originales + destino",
+        "translationHint": "Generar traducciones",
+        "otherHint": "xEmbed, Learn, xSync y herramientas"
       },
       "actions": {
         "translate": "Traducir",

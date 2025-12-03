@@ -442,12 +442,15 @@
       "refreshTitle": "تحديث قائمة الترجمات",
       "closeTitle": "إغلاق قائمة الترجمات",
       "makeLanguage": "إنشاء {language}",
-      "learnLanguage": "تعلم {language}",
+      "learnLanguage": "تعلّم {language}",
       "group": {
-        "source": "لغات المصدر",
+        "source": "لغات المصدر والهدف",
         "target": "لغات الهدف",
         "translation": "الترجمة",
-        "other": "إدخالات أخرى"
+        "other": "إدخالات أخرى",
+        "sourceHint": "ترجمات المصدر + الهدف",
+        "translationHint": "تشغيل الترجمات",
+        "otherHint": "xEmbed و Learn و xSync والأدوات"
       },
       "actions": {
         "translate": "ترجمة",
