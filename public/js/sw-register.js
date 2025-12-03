@@ -22,19 +22,23 @@
         if (!shouldBypassSw()) return;
         navigator.serviceWorker.getRegistrations()
             .then(function(regs) {
-                return Promise.all(regs.map(function(reg) { return reg.unregister().catch(function(){}); }));
-            })
-            .then(function() {
-                // Avoid reload loop: only reload once per tab/session
-                var reloadedKey = 'swBypassReloaded';
-                try {
-                    if (!sessionStorage.getItem(reloadedKey)) {
-                        sessionStorage.setItem(reloadedKey, '1');
-                        window.location.reload();
-                    }
-                } catch (_) {
-                    window.location.reload();
-                }
+                var hadRegs = Array.isArray(regs) && regs.length > 0;
+                var hadController = !!navigator.serviceWorker.controller;
+                return Promise.all((regs || []).map(function(reg) { return reg.unregister().catch(function(){}); }))
+                    .then(function() {
+                        // If nothing was registered or controlling, avoid a needless reload (common on first incognito load)
+                        if (!hadRegs && !hadController) return;
+                        // Avoid reload loop: only reload once per tab/session
+                        var reloadedKey = 'swBypassReloaded';
+                        try {
+                            if (!sessionStorage.getItem(reloadedKey)) {
+                                sessionStorage.setItem(reloadedKey, '1');
+                                window.location.reload();
+                            }
+                        } catch (_) {
+                            window.location.reload();
+                        }
+                    });
             })
             .catch(function(){});
     }
