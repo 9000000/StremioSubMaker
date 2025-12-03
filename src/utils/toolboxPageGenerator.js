@@ -1410,6 +1410,26 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       const SSE_PROBE_TIMEOUT_MS = 4000;
       const SSE_COOLDOWN_MS = 10 * 60 * 1000;
       let lastMetaRequestKey = '';
+      const configSig = (() => {
+        try {
+          let hash = 0;
+          const str = String(TOOLBOX.configStr || '');
+          for (let i = 0; i < str.length; i++) {
+            hash = ((hash << 5) - hash) + str.charCodeAt(i);
+            hash |= 0;
+          }
+          return Math.abs(hash).toString(36);
+        } catch (_) {
+          return 'default';
+        }
+      })();
+      const channelName = 'submaker-stream-' + configSig;
+      const ownerKey = 'submaker-stream-owner-' + configSig;
+      const tabId = Date.now() + '-' + Math.random().toString(16).slice(2);
+      const hasBroadcast = typeof BroadcastChannel === 'function';
+      const channel = hasBroadcast ? new BroadcastChannel(channelName) : null;
+      let isOwner = false;
+      let ownerLeaseTimer = null;
 
       function parseVideoId(raw) {
         const id = (raw || '').toString().trim();
@@ -1479,6 +1499,72 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
         } catch (_) { /* ignore */ }
       }
 
+      function readOwner() {
+        try {
+          const raw = localStorage.getItem(ownerKey);
+          return raw ? JSON.parse(raw) : null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function ownerIsFresh(rec) {
+        if (!rec) return false;
+        const ts = Number(rec.ts || 0);
+        return ts && (Date.now() - ts) < 45000;
+      }
+
+      function refreshOwnerLease() {
+        if (!isOwner) return;
+        try { localStorage.setItem(ownerKey, JSON.stringify({ id: tabId, ts: Date.now() })); } catch (_) {}
+        if (ownerLeaseTimer) return;
+        ownerLeaseTimer = setInterval(() => {
+          if (isOwner) {
+            try { localStorage.setItem(ownerKey, JSON.stringify({ id: tabId, ts: Date.now() })); } catch (_) {}
+          }
+        }, 20000);
+      }
+
+      function becomeOwner(force = false) {
+        if (isOwner) return true;
+        const rec = readOwner();
+        if (!force && rec && rec.id !== tabId && ownerIsFresh(rec)) {
+          return false;
+        }
+        isOwner = true;
+        try { localStorage.setItem(ownerKey, JSON.stringify({ id: tabId, ts: Date.now() })); } catch (_) {}
+        refreshOwnerLease();
+        startSse();
+        return true;
+      }
+
+      function ensureOwner() {
+        if (isOwner) return;
+        const rec = readOwner();
+        if (!ownerIsFresh(rec)) {
+          becomeOwner(true);
+        }
+      }
+
+      if (channel) {
+        channel.onmessage = (ev) => {
+          if (!ev || !ev.data) return;
+          if (ev.data.type === 'episode') {
+            handleEpisode(ev.data.payload, true);
+          }
+        };
+      }
+
+      window.addEventListener('storage', (e) => {
+        if (!e) return;
+        if (e.key === channelName + '-evt' && e.newValue) {
+          try {
+            const parsed = JSON.parse(e.newValue);
+            if (parsed && parsed.payload) handleEpisode(parsed.payload, true);
+          } catch (_) {}
+        }
+      });
+
       function showToast(payload) {
         titleEl.textContent = 'New stream detected';
         metaEl.textContent = describe(payload);
@@ -1486,7 +1572,17 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
         toast.classList.add('show');
       }
 
-      function handleEpisode(payload) {
+      function broadcastEpisode(payload) {
+        if (!payload) return;
+        if (channel) {
+          try { channel.postMessage({ type: 'episode', payload }); } catch (_) {}
+        }
+        try {
+          localStorage.setItem(channelName + '-evt', JSON.stringify({ payload, ts: Date.now() }));
+        } catch (_) { /* ignore */ }
+      }
+
+      function handleEpisode(payload, skipBroadcast) {
         if (!payload || !payload.videoId) return;
         const payloadSig = buildSignature(payload) || String(payload.updatedAt || '');
         if (!payloadSig) return;
@@ -1510,6 +1606,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
         lastSeenTs = ts || Date.now();
         lastSig = payloadSig;
         latest = payload;
+        if (!skipBroadcast) broadcastEpisode(payload);
         showToast(payload);
       }
 
@@ -1528,6 +1625,8 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       }
 
       async function pollOnce() {
+        const shouldOwnConnection = isOwner || !channel;
+        if (!shouldOwnConnection) return;
         try {
           const resp = await fetch('/api/stream-activity?config=' + encodeURIComponent(TOOLBOX.configStr), {
             cache: 'no-store'
@@ -1547,11 +1646,15 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
             POLL_BACKOFF_MAX_MS,
             POLL_INTERVAL_MS * Math.max(1, Math.pow(2, pollErrorStreak))
           );
-          pollTimer = setTimeout(pollOnce, delay);
+          if (shouldOwnConnection) {
+            pollTimer = setTimeout(pollOnce, delay);
+          }
         }
       }
 
       function startSse() {
+        const shouldOwnConnection = isOwner || !channel;
+        if (!shouldOwnConnection) return;
         const now = Date.now();
         if (now < sseCooldownUntil) return;
         if (es) return;
@@ -1638,9 +1741,17 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
         if (pollTimer) clearTimeout(pollTimer);
         if (sseRetryTimer) clearTimeout(sseRetryTimer);
         if (sseProbeTimer) clearTimeout(sseProbeTimer);
+        if (ownerLeaseTimer) clearInterval(ownerLeaseTimer);
+        if (isOwner) {
+          try { localStorage.removeItem(ownerKey); } catch (_) {}
+        }
       });
 
-      startSse();
+      becomeOwner(false);
+      setInterval(() => ensureOwner(), 20000);
+      if (!channel) {
+        startSse();
+      }
     })();
   </script>
 </body>
@@ -2689,12 +2800,12 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
           <div class="mode-controls">
             <label for="extract-mode">Mode</label>
             <select id="extract-mode" class="compact-select">
-              <option value="smart">Smart (multi-strategy)</option>
+              <option value="smart">Smart (fast, single-pass)</option>
               <option value="smart-v2">Smart V2 (fast, single-pass)</option>
               <option value="complete">Complete (full file)</option>
               <option value="complete-v2">Complete V2 (full file, single demux)</option>
             </select>
-            <p class="mode-helper">Smart uses the staged extraction flow (video element + targeted samples). Smart V2 performs one best-effort fast pass and fails if incomplete. Complete can fall back to a full fetch when needed. Complete V2 always downloads the entire stream and runs one FFmpeg demux with no retries.</p>
+            <p class="mode-helper">Smart and Smart V2 perform one best-effort fast pass and fail if incomplete. Complete can fall back to a full fetch when needed. Complete V2 always downloads the entire stream and runs one FFmpeg demux with no retries.</p>
             <button id="extract-btn" type="button" class="secondary">Extract Subtitles</button>
           </div>
           <div class="log-header" aria-hidden="true">
