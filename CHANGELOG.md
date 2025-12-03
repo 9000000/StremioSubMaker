@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - **data-i18n vars respected:** `data-i18n-vars` is parsed and applied for any element using `data-i18n`, so dynamic placeholders stay translated when copy is re-applied.
 - **Subtitle sync load:** Subtitle Sync page initializes translation/copy helpers before usage to avoid ReferenceErrors that previously broke `/subtitle-sync` loads.
 - **Tool pages extension detection:** Fixed inline script escapes and translation helper init on sync/embedded tool pages so scripts parse correctly and the xSync extension status can be detected (no more stuck "Waiting for extension..." badges when the extension is present).
+- **Inline script stability:** Escaped line breaks in the subtitle sync SRT helpers and initialized the embedded-subtitles `tt` helper to prevent inline script parse errors that blocked extension detection.
 
 ## SubMaker v1.4.11
 
