@@ -2414,6 +2414,40 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       border-color: var(--primary);
       box-shadow: 0 0 0 3px rgba(8,164,213,0.2);
     }
+    .form-group {
+      width: min(720px, 100%);
+      margin: 4px auto 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+    }
+    .form-group label {
+      margin: 0;
+      font-weight: 700;
+      font-size: 0.95rem;
+      color: var(--text-primary);
+      text-align: center;
+    }
+    .form-group input[type="text"],
+    .form-group input[type="url"] {
+      width: 100%;
+      padding: 0.875rem 1rem;
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      color: var(--text-primary);
+      font-size: 1rem;
+      font-family: inherit;
+      text-align: center;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .form-group input[type="text"]:focus,
+    .form-group input[type="url"]:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px var(--glow);
+    }
     /* Removed select option styling - let browser use native colors based on color-scheme */
     /* This prevents black flash when dropdown opens */
     button, .button {
@@ -2906,7 +2940,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
             <p class="video-meta-title" id="video-meta-title">${initialVideoTitle}</p>
             <p class="video-meta-subtitle" id="video-meta-subtitle">${initialVideoSubtitle}</p>
           </div>
-          <div class="field-block">
+          <div class="field-block form-group">
             <label for="stream-url">Stream URL</label>
             <input type="text" id="stream-url" placeholder="Paste the video/stream URL from Stremio or your browser">
           </div>
@@ -3147,19 +3181,33 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       }
     }
 
+    function normalizeExtractModeValue(mode) {
+      const cleaned = String(mode || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[-_\s]*v2$/, '')      // strip legacy -v2/_v2 suffix
+        .replace(/[-_\s]+/g, '-');      // align separators for comparisons
+      if (cleaned === 'smart') return 'smart';
+      if (cleaned === 'complete' || cleaned === 'full' || cleaned === 'fullfetch') return 'complete';
+      return null;
+    }
+
     function loadExtractMode() {
       try {
         const stored = localStorage.getItem(EXTRACT_MODE_KEY);
-        if (stored === 'smart' || stored === 'complete') return stored;
-        if (stored === 'smart-v2') return 'smart';
-        if (stored === 'complete-v2') return 'complete';
+        const normalized = normalizeExtractModeValue(stored);
+        if (normalized) {
+          if (normalized !== stored) persistExtractMode(normalized);
+          return normalized;
+        }
       } catch (_) {}
       return 'complete';
     }
 
     function persistExtractMode(mode) {
-      if (mode !== 'smart' && mode !== 'complete') return;
-      try { localStorage.setItem(EXTRACT_MODE_KEY, mode); } catch (_) {}
+      const normalized = normalizeExtractModeValue(mode);
+      if (!normalized) return;
+      try { localStorage.setItem(EXTRACT_MODE_KEY, normalized); } catch (_) {}
     }
 
     function computeLocalVideoHash(payload = {}) {

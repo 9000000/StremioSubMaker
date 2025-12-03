@@ -26,6 +26,7 @@ const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAva
 const GeminiService = require('./src/services/gemini');
 const TranslationEngine = require('./src/services/translationEngine');
 const { createProviderInstance, createTranslationProvider, resolveCfWorkersCredentials } = require('./src/services/translationProviderFactory');
+const { quickNavScript } = require('./src/utils/quickNav');
 const streamActivity = require('./src/utils/streamActivity');
 const { translateInParallel } = require('./src/utils/parallelTranslation');
 const syncCache = require('./src/utils/syncCache');
@@ -4653,6 +4654,8 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
     </div>
 
     <script>
+    const PAGE = { configStr: ${JSON.stringify(configStr)}, videoId: ${JSON.stringify(videoId)}, filename: ${JSON.stringify(config?.lastStream?.filename || '')}, videoHash: ${JSON.stringify(config?.videoHash || '')} };
+    ${quickNavScript()}
     // Theme switching functionality
     (function() {
         const html = document.documentElement;
@@ -4733,89 +4736,18 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
         }
     })();
 
-    // Episode change watcher (toast + manual update)
-    (function initStreamWatcher() {
-        const toast = document.getElementById('episodeToast');
-        const titleEl = document.getElementById('episodeToastTitle');
-        const metaEl = document.getElementById('episodeToastMeta');
-        const updateBtn = document.getElementById('episodeToastUpdate');
-        const dismissBtn = document.getElementById('episodeToastDismiss');
-        if (!toast || !updateBtn || !PAGE || !PAGE.configStr) return;
-
-        const current = { videoId: PAGE.videoId || '', filename: PAGE.filename || '' };
-        let latest = null;
-        let es = null;
-        let pollTimer = null;
-
-        function describe(payload) {
-            const parts = [];
-            if (payload.videoId) parts.push(payload.videoId);
-            if (payload.filename) parts.push(payload.filename);
-            return parts.join(' • ') || 'New stream detected';
-        }
-        function showToast(payload) {
-            titleEl.textContent = 'New stream detected';
-            metaEl.textContent = describe(payload);
-            toast.classList.add('show');
-        }
-        function handleEpisode(payload) {
-            if (!payload || !payload.videoId) return;
-            const same = payload.videoId === current.videoId &&
-                ((payload.filename || '') === (current.filename || ''));
-            if (same) return;
-            latest = payload;
-            showToast(payload);
-        }
-        updateBtn.addEventListener('click', () => {
-            if (!latest || !latest.videoId) return;
-            const url = '/file-upload?config=' + encodeURIComponent(PAGE.configStr) +
-                '&videoId=' + encodeURIComponent(latest.videoId) +
-                '&filename=' + encodeURIComponent(latest.filename || '');
-            window.location.href = url;
-        });
-        if (dismissBtn) {
-            dismissBtn.addEventListener('click', () => {
-                toast.classList.remove('show');
-                latest = null;
-            });
-        }
-
-        async function pollOnce() {
-            try {
-                const resp = await fetch('/api/stream-activity?config=' + encodeURIComponent(PAGE.configStr), { cache: 'no-store' });
-                if (!resp.ok || resp.status === 204) return;
-                const data = await resp.json();
-                handleEpisode(data);
-            } catch (_) {
-                // ignore
-            } finally {
-                pollTimer = setTimeout(pollOnce, 300000);
+    // Episode change watcher (shared quick-nav version)
+    if (typeof window.initStreamWatcher === 'function') {
+        window.initStreamWatcher({
+            configStr: PAGE.configStr,
+            current: { videoId: PAGE.videoId, filename: PAGE.filename, videoHash: PAGE.videoHash },
+            buildUrl: (payload) => {
+                return '/file-upload?config=' + encodeURIComponent(PAGE.configStr) +
+                    '&videoId=' + encodeURIComponent(payload.videoId || '') +
+                    '&filename=' + encodeURIComponent(payload.filename || '');
             }
-        }
-
-        function startSse() {
-            try {
-                es = new EventSource('/api/stream-activity?config=' + encodeURIComponent(PAGE.configStr));
-                es.addEventListener('episode', (ev) => {
-                    try { handleEpisode(JSON.parse(ev.data)); } catch (_) {}
-                });
-                es.addEventListener('error', () => {
-                    try { es.close(); } catch (_) {}
-                    es = null;
-                    pollOnce();
-                });
-            } catch (_) {
-                pollOnce();
-            }
-        }
-
-        window.addEventListener('beforeunload', () => {
-            try { es?.close(); } catch (_) {}
-            if (pollTimer) clearTimeout(pollTimer);
         });
-
-        startSse();
-    })();
+    }
     </script>
 </body>
 </html>
