@@ -1520,7 +1520,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       function ownerIsFresh(rec) {
         if (!rec) return false;
         const ts = Number(rec.ts || 0);
-        return ts && (Date.now() - ts) < 45000;
+        return ts && (Date.now() - ts) < (5 * 60 * 1000);
       }
 
       function refreshOwnerLease() {
@@ -1531,7 +1531,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
           if (isOwner) {
             try { localStorage.setItem(ownerKey, JSON.stringify({ id: tabId, ts: Date.now() })); } catch (_) {}
           }
-        }, 20000);
+        }, 60000);
       }
 
       function becomeOwner(force = false) {
@@ -1765,7 +1765,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       });
 
       becomeOwner(false);
-      setInterval(() => ensureOwner(), 20000);
+      setInterval(() => ensureOwner(), 60000);
       if (!channel) {
         startSse();
       }
@@ -2618,6 +2618,50 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       color: var(--text);
       font-weight: 700;
     }
+    .mkv-callout {
+      margin-top: 10px;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background:
+        linear-gradient(145deg, rgba(8,164,213,0.08), rgba(132,80,255,0.08)),
+        var(--surface-2);
+      box-shadow: 0 10px 26px var(--shadow);
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    [data-theme="dark"] .mkv-callout,
+    [data-theme="true-dark"] .mkv-callout {
+      background:
+        linear-gradient(145deg, rgba(8,164,213,0.14), rgba(132,80,255,0.12)),
+        var(--surface-2);
+      box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+    }
+    .mkv-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: grid;
+      place-items: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    .mkv-title {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      font-weight: 800;
+    }
+    .mkv-text {
+      margin: 4px 0 0;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--text);
+    }
     select.compact-select { width: min(240px, 100%); }
     select.target-select { width: min(420px, 100%); }
     .selected-track-box {
@@ -2722,7 +2766,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
           <li>Make sure the <strong>linked stream</strong> is the movie/episode you want to extract/translate.</li>
           <li>Right-click Stremio's stream and click "Copy stream link".</li>
           <li>Paste the stream URL in the corresponding box.</li>
-          <li>Keep the mode at "Smart" (if subtitles look partial, switch to Complete)</li>
+          <li>Use "Complete" for MKV streams (non-MKV links auto-switch to Smart).</li>
           <li>Click "Extract Subtitles"</li>
         </ol>
 
@@ -2811,18 +2855,20 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
             <label for="stream-url">Stream URL</label>
             <input type="text" id="stream-url" placeholder="Paste the video/stream URL from Stremio or your browser">
           </div>
-          <div class="notice warn" style="margin-top:8px;">
-            <strong>MKV caution:</strong> embedded subs can be scattered across the file. Extraction may need large fetches (hundreds of MB) and take longer; very large files or slow clients might struggle.
+          <div class="mkv-callout" aria-live="polite">
+            <div class="mkv-icon">🎬</div>
+            <div>
+              <div class="mkv-title">MKV tip</div>
+              <p class="mkv-text">Use Complete Mode when extracting MKV streams for the best results. Non-MKV links automatically switch to Smart.</p>
+            </div>
           </div>
           <div class="mode-controls">
             <label for="extract-mode">Mode</label>
             <select id="extract-mode" class="compact-select">
-              <option value="smart">Smart (fast, single-pass)</option>
-              <option value="smart-v2">Smart V2 (fast, single-pass)</option>
-              <option value="complete">Complete (full file)</option>
-              <option value="complete-v2">Complete V2 (full file, single demux)</option>
+              <option value="smart-v2">Smart (fast, single-pass)</option>
+              <option value="complete-v2">Complete (full file, single demux)</option>
             </select>
-            <p class="mode-helper">Smart and Smart V2 perform one best-effort fast pass and fail if incomplete. Complete can fall back to a full fetch when needed. Complete V2 always downloads the entire stream and runs one FFmpeg demux with no retries.</p>
+            <p class="mode-helper">Smart performs one best-effort fast pass and fails if incomplete. Complete always downloads the entire stream and runs one FFmpeg demux with no retries.</p>
             <button id="extract-btn" type="button" class="secondary">Extract Subtitles</button>
           </div>
           <div class="log-header" aria-hidden="true">
@@ -2971,7 +3017,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       tracks: [],
       selectedTrackId: null,
       selectedTargetLang: baseTargetOptions[0]?.code || null,
-      extractMode: 'smart',
+      extractMode: 'complete-v2',
       targets: {},
       downloads: [],
       activeTranslations: 0,
@@ -3047,13 +3093,15 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     function loadExtractMode() {
       try {
         const stored = localStorage.getItem(EXTRACT_MODE_KEY);
-        if (stored === 'smart' || stored === 'smart-v2' || stored === 'complete' || stored === 'complete-v2') return stored;
+        if (stored === 'smart-v2' || stored === 'complete-v2') return stored;
+        if (stored === 'smart') return 'smart-v2';
+        if (stored === 'complete') return 'complete-v2';
       } catch (_) {}
-      return 'smart';
+      return 'complete-v2';
     }
 
     function persistExtractMode(mode) {
-      if (mode !== 'smart' && mode !== 'smart-v2' && mode !== 'complete' && mode !== 'complete-v2') return;
+      if (mode !== 'smart-v2' && mode !== 'complete-v2') return;
       try { localStorage.setItem(EXTRACT_MODE_KEY, mode); } catch (_) {}
     }
 
@@ -3121,6 +3169,21 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 
     function normalizeStreamValue(val) {
       return (val || '').toString().trim();
+    }
+
+    function isMkvUrl(value) {
+      const normalized = normalizeStreamValue(value);
+      if (!normalized) return false;
+      return /\.mkv(\b|[?#/]|$)/i.test(normalized);
+    }
+
+    function autoSelectModeForUrl(url) {
+      const shouldUseComplete = !url || isMkvUrl(url);
+      const nextMode = shouldUseComplete ? 'complete-v2' : 'smart-v2';
+      if (state.extractMode === nextMode) return;
+      state.extractMode = nextMode;
+      if (els.modeSelect) els.modeSelect.value = nextMode;
+      persistExtractMode(state.extractMode);
     }
 
     function isPlaceholderStreamValue(val) {
@@ -3297,8 +3360,8 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 
     state.extractMode = loadExtractMode();
     if (els.modeSelect) {
-      if (state.extractMode !== 'smart' && state.extractMode !== 'smart-v2' && state.extractMode !== 'complete' && state.extractMode !== 'complete-v2') {
-        state.extractMode = 'smart';
+      if (state.extractMode !== 'smart-v2' && state.extractMode !== 'complete-v2') {
+        state.extractMode = 'complete-v2';
       }
       els.modeSelect.value = state.extractMode;
     }
@@ -4184,7 +4247,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       }
       resetExtractionState(true);
       if (els.extractLog) els.extractLog.innerHTML = '';
-      const mode = (state.extractMode === 'complete' || state.extractMode === 'complete-v2' || state.extractMode === 'smart-v2') ? state.extractMode : 'smart';
+      const mode = state.extractMode === 'complete-v2' ? 'complete-v2' : 'smart-v2';
       const messageId = 'extract_' + Date.now();
       setStep2Enabled(false);
       setExtractionInFlight(true);
@@ -4221,6 +4284,15 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         state.selectedTargetLang = els.targetSelect.value || null;
       });
     }
+    const updateModeFromStreamField = () => {
+      autoSelectModeForUrl(els.streamUrl?.value || '');
+    };
+    if (els.streamUrl) {
+      ['input', 'change', 'blur'].forEach(evt => {
+        els.streamUrl.addEventListener(evt, updateModeFromStreamField);
+      });
+      updateModeFromStreamField();
+    }
     if (els.providerSelect) {
       els.providerSelect.addEventListener('change', () => {
         const key = normalizeProviderKey(els.providerSelect.value);
@@ -4242,11 +4314,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     if (els.modeSelect) {
       els.modeSelect.addEventListener('change', () => {
         const value = (els.modeSelect.value || '').toLowerCase();
-        if (value === 'complete' || value === 'complete-v2' || value === 'smart-v2') {
-          state.extractMode = value;
-        } else {
-          state.extractMode = 'smart';
-        }
+        state.extractMode = value === 'complete-v2' ? 'complete-v2' : 'smart-v2';
         persistExtractMode(state.extractMode);
       });
     }

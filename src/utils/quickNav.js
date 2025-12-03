@@ -457,8 +457,8 @@ function quickNavScript() {
       const STALE_BACKSTOP_MS = Math.max(20000, Number(opts.staleBackstopMs) || 30000); // Force a poll if nothing arrives for ~30s
       const SSE_PROBE_TIMEOUT_MS = 4000; // If no event arrives quickly, assume SSE is blocked
       const SSE_COOLDOWN_MS = 10 * 60 * 1000; // Wait before retrying SSE after repeated failures
-      const OWNER_TTL_MS = 45000; // quicker failover if the owning tab closes
-      const OWNER_REFRESH_MS = 20000;
+      const OWNER_TTL_MS = 5 * 60 * 1000; // keep ownership stable longer to avoid duplicate connections
+      const OWNER_REFRESH_MS = 60000;
       const configSig = (() => {
         try {
           let hash = 0;
