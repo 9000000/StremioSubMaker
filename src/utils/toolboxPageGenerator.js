@@ -2627,9 +2627,6 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         linear-gradient(145deg, rgba(8,164,213,0.08), rgba(132,80,255,0.08)),
         var(--surface-2);
       box-shadow: 0 10px 26px var(--shadow);
-      display: flex;
-      gap: 12px;
-      align-items: flex-start;
     }
     [data-theme="dark"] .mkv-callout,
     [data-theme="true-dark"] .mkv-callout {
