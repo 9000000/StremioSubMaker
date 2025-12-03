@@ -644,8 +644,7 @@ function quickNavScript() {
 
       // Attempt to become owner on load if none is fresh
       becomeOwner(false);
-      // Ensure we keep a live connection even if ownership bookkeeping misbehaves
-      startSse();
+      // Owner tab holds the live connection; other tabs listen via BroadcastChannel/storage events
       // Fallback: periodically re-check if owner disappeared
       setInterval(() => ensureOwner(), OWNER_REFRESH_MS);
 
@@ -693,6 +692,8 @@ function quickNavScript() {
       }
 
       async function pollOnce(force = false) {
+        const shouldOwnConnection = isOwner || !channel;
+        if (!shouldOwnConnection && !force) return;
         const isStale = (Date.now() - lastSeenTs) > STALE_BACKSTOP_MS;
         try {
           const resp = await fetch('/api/stream-activity?config=' + encodeURIComponent(configStr), { cache: 'no-store' });
@@ -712,11 +713,15 @@ function quickNavScript() {
             POLL_BACKOFF_MAX_MS,
             baseDelay * Math.max(1, Math.pow(2, pollErrorStreak))
           );
-          pollTimer = setTimeout(() => pollOnce(false), delay);
+          if (shouldOwnConnection) {
+            pollTimer = setTimeout(() => pollOnce(false), delay);
+          }
         }
       }
 
       function startSse() {
+        const shouldOwnConnection = isOwner || !channel;
+        if (!shouldOwnConnection) return;
         const now = Date.now();
         if (now < sseCooldownUntil) return;
         if (es) return;
