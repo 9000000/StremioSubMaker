@@ -4328,7 +4328,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
             const contentBase64 = t.contentBase64 || '';
             const contentValue = (typeof t.content === 'string' || t.content instanceof Uint8Array || t.content instanceof ArrayBuffer) ? t.content : '';
             const byteLength = t.byteLength || (contentBytes ? contentBytes.length : (typeof contentValue === 'string' ? contentValue.length : 0));
-            const rawLang = (t.language || '').toString().trim();
+            const rawLang = canonicalTrackLanguageCode((t.language || t.lang || t.languageRaw || t.name || '').toString().trim());
             return {
               id: t.id || idx,
               label: t.label || ('Track ' + (idx + 1)),

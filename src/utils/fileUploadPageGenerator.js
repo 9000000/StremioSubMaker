@@ -2699,11 +2699,15 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         const cancelResetBtn = document.getElementById('cancelResetBtn');
         const closeResetConfirmBtn = document.getElementById('closeResetConfirmBtn');
 
+        // Pre-rendered language option markup (injected from server-side list)
+        const languageOptionsMarkup = ${JSON.stringify(languageOptions)};
+        const allLanguageOptionsMarkup = ${JSON.stringify(allLanguageOptions)};
+
         // Language lists
         const targetPlaceholderOption = '<option value="">' + localeStrings.targetPlaceholder + '</option>';
         const sourceAutoOption = '<option value="">' + localeStrings.sourceAuto + '</option>';
-        const configuredLanguages = targetPlaceholderOption + languageOptions;
-        const allLanguagesList = targetPlaceholderOption + allLanguageOptions;
+        const configuredLanguages = targetPlaceholderOption + languageOptionsMarkup;
+        const allLanguagesList = targetPlaceholderOption + allLanguageOptionsMarkup;
         const hasConfiguredLanguages = Array.isArray(clientConfig.targetLanguages) && clientConfig.targetLanguages.length > 0;
         const defaultSourceLanguage = Array.isArray(clientConfig.sourceLanguages) && clientConfig.sourceLanguages.length
             ? clientConfig.sourceLanguages[0]
