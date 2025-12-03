@@ -120,6 +120,9 @@ function subscribe(configHash, res) {
   res.setHeader('X-Accel-Buffering', 'no'); // Disable proxy buffering for SSE
   res.flushHeaders?.();
 
+  // Hint client-side reconnection interval to avoid tight retry loops if upstream drops the socket
+  try { res.write(`retry: 5000\n\n`); } catch (_) {}
+
   // Immediate ack + latest snapshot so the client knows current state
   const listener = { res, createdAt: Date.now(), lastEventAt: Date.now() };
   sendEvent(configHash, listener, 'ready', { ok: true, ts: Date.now() });

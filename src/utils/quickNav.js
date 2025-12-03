@@ -443,6 +443,9 @@ function quickNavScript() {
       let pollErrorStreak = 0;
       let sseRetryTimer = null;
       let sseRetryCount = 0;
+      let sseDisabled = false;
+      let sseRapidErrorCount = 0;
+      let sseRapidErrorWindowStart = 0;
       let currentSig = '';
       let lastSig = '';
       let hasBaseline = false;
@@ -712,6 +715,7 @@ function quickNavScript() {
       }
 
       function startSse() {
+        if (sseDisabled) return;
         if (!isOwner && channel) return;
         if (es) return;
         try {
@@ -739,6 +743,19 @@ function quickNavScript() {
           es.addEventListener('error', () => {
             try { es.close(); } catch (_) {}
             es = null;
+
+            // Detect rapid failures and permanently fall back to polling
+            const now = Date.now();
+            if (now - sseRapidErrorWindowStart > 15000) {
+              sseRapidErrorWindowStart = now;
+              sseRapidErrorCount = 0;
+            }
+            sseRapidErrorCount += 1;
+            if (sseRapidErrorCount >= 3) {
+              sseDisabled = true;
+              pollOnce(true);
+              return;
+            }
 
             if (sseRetryCount < MAX_SSE_RETRIES) {
               // Backoff starting at 5s to avoid rapid reconnect spam
