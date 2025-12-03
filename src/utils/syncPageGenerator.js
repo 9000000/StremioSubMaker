@@ -382,34 +382,9 @@ function buildLinkedVideoLabel(videoId, streamFilename, resolvedTitle, t) {
 }
 
 async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, configStr, config) {
-    const videoHash = deriveVideoHash(streamFilename, videoId);
-    const parsedVideoId = parseStremioId(videoId);
-    const episodeTag = formatEpisodeTag(parsedVideoId);
-    const linkedTitle = await fetchLinkedTitleServer(videoId);
-    const linkedVideoDisplay = buildLinkedVideoLabel(videoId, streamFilename, linkedTitle, t);
-    const linkedVideoLabel = escapeHtml(linkedVideoDisplay);
-    const initialVideoTitle = escapeHtml(linkedTitle || buildLinkedVideoLabel(videoId, streamFilename, null, t));
-    const subtitleDetails = [];
-    if (linkedTitle) {
-        subtitleDetails.push(`${copy.meta.titleLabel}: ${linkedTitle}`);
-    } else if (videoId) {
-        subtitleDetails.push(`${copy.meta.videoIdLabel}: ${videoId}`);
-    }
-    if (episodeTag) subtitleDetails.push(`${copy.meta.episodeLabel}: ${episodeTag}`);
-    if (streamFilename) subtitleDetails.push(`${copy.meta.fileLabel}: ${cleanDisplayName(streamFilename)}`);
-    const initialVideoSubtitle = escapeHtml(subtitleDetails.join(' • ') || copy.meta.videoIdUnavailable);
-    const links = {
-        translateFiles: `/file-upload?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}`,
-        syncSubtitles: `/subtitle-sync?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}&filename=${encodeURIComponent(streamFilename || '')}`,
-        embeddedSubs: `/embedded-subtitles?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}&filename=${encodeURIComponent(streamFilename || '')}`,
-        automaticSubs: `/auto-subtitles?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}&filename=${encodeURIComponent(streamFilename || '')}`,
-        subToolbox: `/sub-toolbox?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}&filename=${encodeURIComponent(streamFilename || '')}`,
-        configure: `/configure?config=${encodeURIComponent(configStr || '')}`
-    };
-    const devMode = (config || {}).devMode === true;
-    const languageMaps = buildLanguageLookupMaps();
-    const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
+    // Translator must be available before building any UI strings
     const t = getTranslator(config?.uiLanguage || 'en');
+    const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
     const themeToggleLabel = t('fileUpload.themeToggle', {}, 'Toggle theme');
     const copy = {
         documentTitle: t('sync.documentTitle', {}, 'Subtitles Sync Studio - SubMaker'),
@@ -513,6 +488,33 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             episodeFallback: t('sync.meta.episodeFallback', {}, 'Episode')
         }
     };
+
+    const videoHash = deriveVideoHash(streamFilename, videoId);
+    const parsedVideoId = parseStremioId(videoId);
+    const episodeTag = formatEpisodeTag(parsedVideoId);
+    const linkedTitle = await fetchLinkedTitleServer(videoId);
+    const linkedVideoDisplay = buildLinkedVideoLabel(videoId, streamFilename, linkedTitle, t);
+    const linkedVideoLabel = escapeHtml(linkedVideoDisplay);
+    const initialVideoTitle = escapeHtml(linkedTitle || buildLinkedVideoLabel(videoId, streamFilename, null, t));
+    const subtitleDetails = [];
+    if (linkedTitle) {
+        subtitleDetails.push(`${copy.meta.titleLabel}: ${linkedTitle}`);
+    } else if (videoId) {
+        subtitleDetails.push(`${copy.meta.videoIdLabel}: ${videoId}`);
+    }
+    if (episodeTag) subtitleDetails.push(`${copy.meta.episodeLabel}: ${episodeTag}`);
+    if (streamFilename) subtitleDetails.push(`${copy.meta.fileLabel}: ${cleanDisplayName(streamFilename)}`);
+    const initialVideoSubtitle = escapeHtml(subtitleDetails.join(' • ') || copy.meta.videoIdUnavailable);
+    const links = {
+        translateFiles: `/file-upload?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}`,
+        syncSubtitles: `/subtitle-sync?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}&filename=${encodeURIComponent(streamFilename || '')}`,
+        embeddedSubs: `/embedded-subtitles?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}&filename=${encodeURIComponent(streamFilename || '')}`,
+        automaticSubs: `/auto-subtitles?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}&filename=${encodeURIComponent(streamFilename || '')}`,
+        subToolbox: `/sub-toolbox?config=${encodeURIComponent(configStr || '')}&videoId=${encodeURIComponent(videoId || '')}&filename=${encodeURIComponent(streamFilename || '')}`,
+        configure: `/configure?config=${encodeURIComponent(configStr || '')}`
+    };
+    const devMode = (config || {}).devMode === true;
+    const languageMaps = buildLanguageLookupMaps();
 
     // Filter out action buttons and xSync entries to show only fetchable subtitles
     // Filter out action buttons (legacy and new Sub Toolbox) so only real subtitles are selectable
