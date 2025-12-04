@@ -3705,14 +3705,14 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         els.hashStatus.textContent = tt(
           'toolbox.autoSubs.hash.mismatch',
           { linked, stream },
-          `Hash mismatch: linked ${linked} vs pasted ${stream}. Cache uploads disabled.`
+          'Hash mismatch: linked ' + linked + ' vs pasted ' + stream + '. Cache uploads disabled.'
         );
         els.hashStatus.classList.add('warn');
       } else if (stream) {
         els.hashStatus.textContent = tt(
           'toolbox.autoSubs.hash.linked',
           { linked, stream, cache: cacheLabel },
-          `Linked: ${linked} | Stream: ${stream}${cacheLabel}`
+          'Linked: ' + linked + ' | Stream: ' + stream + cacheLabel
         );
         els.hashStatus.classList.remove('warn');
       } else {
@@ -4820,7 +4820,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
     ? targetLanguages.map(code => `<option value="${escapeHtml(code)}">${escapeHtml(getLanguageName(code) || code)}</option>`).join('')
     : `<option value="">${escapeHtml(t('toolbox.autoSubs.options.addTargets', {}, 'Add target languages in Configure'))}</option>`;
   const videoHash = deriveVideoHash(filename, videoId);
-  const isLikelyUrl = (val) => /^[a-z][a-z0-9+.-]*:\\/\\//i.test(val || '');
+  const urlSchemePattern = new RegExp('^[a-z][a-z0-9+.-]*://', 'i');
+  const isLikelyUrl = (val) => urlSchemePattern.test(val || '');
   const initialStreamUrl = isLikelyUrl(streamUrl) ? streamUrl : (isLikelyUrl(filename) ? filename : '');
   const languageMaps = buildLanguageLookupMaps();
   const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
@@ -4926,7 +4927,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
         cacheBlocked: false,
         autoSubsInFlight: false
       };
-      const isLikelyStreamUrl = (val) => /^[a-z][a-z0-9+.-]*:\\/\\//i.test(val || '');
+      const urlSchemePattern = new RegExp('^[a-z][a-z0-9+.-]*://', 'i');
+      const isLikelyStreamUrl = (val) => urlSchemePattern.test(val || '');
       const bootstrapStreamUrl = BOOTSTRAP.streamUrl || '';
       const fallbackStreamUrl = !bootstrapStreamUrl && isLikelyStreamUrl(BOOTSTRAP.filename) ? BOOTSTRAP.filename : '';
       const initialStreamUrl = bootstrapStreamUrl || fallbackStreamUrl;
@@ -5308,7 +5310,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
             hashEl.textContent = tt(
               'toolbox.autoSubs.hash.mismatch',
               { linked, stream: streamHash },
-              `Hash mismatch: linked ${linked} vs pasted ${streamHash}. Cache uploads disabled.`
+              'Hash mismatch: linked ' + linked + ' vs pasted ' + streamHash + '. Cache uploads disabled.'
             );
             hashEl.classList.add('warn');
           } else if (streamHash) {
@@ -5316,7 +5318,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
             hashEl.textContent = tt(
               'toolbox.autoSubs.hash.linked',
               { linked, stream: streamHash, cache: cacheLabel },
-              `Linked: ${linked} | Stream: ${streamHash}${cacheLabel}`
+              'Linked: ' + linked + ' | Stream: ' + streamHash + cacheLabel
             );
             hashEl.classList.remove('warn');
           } else {
