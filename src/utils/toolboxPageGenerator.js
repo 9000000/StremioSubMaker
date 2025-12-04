@@ -6914,6 +6914,46 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     }
     .episode-toast button.action:hover { transform: translateY(-1px); box-shadow: 0 12px 24px var(--glow); }
 
+    /* Linked stream card (shared with embedded extractor) */
+    .linked-stream-wrapper {
+      display: flex;
+      justify-content: center;
+      margin: 10px auto 0;
+      flex-basis: 100%;
+      width: 100%;
+    }
+    .video-meta {
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px dashed var(--border);
+      background: var(--surface-2);
+    }
+    #linked-stream-card {
+      width: min(780px, 100%);
+      text-align: center;
+    }
+    .video-meta-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 0 0 4px;
+      font-weight: 700;
+    }
+    .video-meta-title {
+      margin: 0;
+      font-weight: 800;
+      font-size: 16px;
+      letter-spacing: -0.01em;
+    }
+    .video-meta-subtitle {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      word-break: break-word;
+    }
+
     @media (max-width: 900px) {
       .wrap { padding: 2rem 1.25rem; }
       .hero { grid-template-columns: 1fr; }

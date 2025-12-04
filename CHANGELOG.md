@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.14
+
+- **xEmbed language grouping:** Embedded originals now surface with canonical language codes, so extracted tracks merge into the same Stremio language bucket instead of creating duplicate language entries.
+- **Make from embedded:** “Make (Language)” entries now include extracted embedded tracks as valid sources, even when no provider subtitles exist, with deduped source lists.
+- **Embedded translation path:** Translations triggered from embedded originals pull directly from the xEmbed cache (skipping provider downloads) and save the resulting xEmbed translations back with metadata for reuse.
+
 ## SubMaker v1.4.13
 
 - **Subtitle caching:** Final SRT/VTT responses (downloads, xSync, xEmbed) now use device-private caching so user-set subtitle delays are kept instead of resetting when the player reloads the track.

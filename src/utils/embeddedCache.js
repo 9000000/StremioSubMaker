@@ -221,6 +221,18 @@ async function getTranslatedEmbedded(videoHash, trackId, sourceLanguageCode, tar
   return { cacheKey, ...entry };
 }
 
+/**
+ * Fetch an embedded subtitle entry directly by its cache key.
+ * Works for both original and translated entries.
+ */
+async function getEmbeddedByCacheKey(cacheKey) {
+  if (!cacheKey) return null;
+  const adapter = await getStorageAdapter();
+  const entry = unwrapEntry(await adapter.get(cacheKey, StorageAdapter.CACHE_TYPES.EMBEDDED));
+  if (!entry) return null;
+  return { cacheKey, ...entry };
+}
+
 async function listEmbeddedTranslations(videoHash) {
   const adapter = await getStorageAdapter();
   const pattern = `${normalizeString(videoHash || 'unknown')}_translation_*`;
@@ -398,6 +410,7 @@ module.exports = {
   saveTranslatedEmbedded,
   getOriginalEmbedded,
   getTranslatedEmbedded,
+  getEmbeddedByCacheKey,
   listEmbeddedOriginals,
   listEmbeddedTranslations,
   pruneOriginalsForVideo,

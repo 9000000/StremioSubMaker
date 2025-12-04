@@ -372,7 +372,8 @@ async function transcribeWithCloudflare(audioBuffer, opts = {}) {
         throw new Error('Cloudflare Workers AI credentials are missing');
     }
     const model = (opts.model || '@cf/openai/whisper').trim();
-    const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${encodeURIComponent(model)}`;
+    // Cloudflare expects the model path with slashes preserved (e.g. @cf/openai/whisper); do not encode slashes
+    const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${encodeURI(model)}`;
     const FormDataCtor = typeof FormData !== 'undefined' ? FormData : global.FormData;
     const BlobCtor = typeof Blob !== 'undefined' ? Blob : require('buffer').Blob;
     if (!FormDataCtor || !BlobCtor) {

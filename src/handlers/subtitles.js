@@ -2246,6 +2246,27 @@ function createSubtitleHandler(config) {
           return subtitle;
         });
 
+      const toolboxEnabled = config.subToolboxEnabled === true
+        || config.fileTranslationEnabled === true
+        || config.syncSubtitlesEnabled === true;
+
+      // Derive a single stable video hash for cache lookups
+      const primaryVideoHash = deriveVideoHash(streamFilename || '', id);
+      const videoHashes = primaryVideoHash ? [primaryVideoHash] : [];
+
+      // Preload embedded originals (used for display + translation sources)
+      const embeddedOriginalsByHash = new Map();
+      if (videoHashes.length) {
+        for (const hash of videoHashes) {
+          try {
+            const originals = await embeddedCache.listEmbeddedOriginals(hash);
+            embeddedOriginalsByHash.set(hash, originals || []);
+          } catch (error) {
+            log.error(() => [`[Subtitles] Failed to load xEmbed originals for ${hash}:`, error.message]);
+          }
+        }
+      }
+
       // Add translation buttons for each target language (skip in no-translation mode)
       const translationEntries = [];
       if (!config.noTranslationMode) {
@@ -2260,14 +2281,41 @@ function createSubtitleHandler(config) {
 
         // Create translation entries: for each target language, create entries for top source language subtitles
         // Note: filteredFoundSubtitles is already limited to MAX_SUBS_PER_LANGUAGE per language (including source languages)
-        const sourceSubtitles = filteredFoundSubtitles.filter(sub =>
+        const providerSourceSubtitles = filteredFoundSubtitles.filter(sub =>
           config.sourceLanguages.some(sourceLang => {
             const normalized = normalizeLanguageCode(sourceLang);
             return sub.languageCode === normalized;
           })
         );
 
-        log.debug(() => `[Subtitles] Found ${sourceSubtitles.length} source language subtitles for translation (already limited to ${MAX_SUBS_PER_LANGUAGE} per language)`);
+        // Add embedded originals as source subtitles when they match configured source languages
+        const embeddedSourceSubtitles = [];
+        for (const hash of videoHashes) {
+          const originals = embeddedOriginalsByHash.get(hash) || [];
+          for (const entry of originals) {
+            if (!entry || !entry.trackId) continue;
+            const normalizedSource = normalizeLanguageCode(entry.languageCode || '');
+            if (!normalizedSource) continue;
+            const isAllowedSource = config.sourceLanguages.some(sourceLang => normalizeLanguageCode(sourceLang) === normalizedSource);
+            if (!isAllowedSource) continue;
+            const embeddedFileId = entry.cacheKey ? `xembed_${entry.cacheKey}` : `xembed_${hash}_${entry.trackId}`;
+            embeddedSourceSubtitles.push({
+              fileId: embeddedFileId,
+              languageCode: normalizedSource
+            });
+          }
+        }
+
+        // Merge provider + embedded sources without duplication
+        const seenSourceIds = new Set(providerSourceSubtitles.map(sub => sub.fileId));
+        const sourceSubtitles = [...providerSourceSubtitles];
+        for (const embedded of embeddedSourceSubtitles) {
+          if (!embedded.fileId || seenSourceIds.has(embedded.fileId)) continue;
+          seenSourceIds.add(embedded.fileId);
+          sourceSubtitles.push(embedded);
+        }
+
+        log.debug(() => `[Subtitles] Found ${sourceSubtitles.length} source language subtitles for translation (providers + embedded)`);
 
         // For each target language, create a translation entry for each source subtitle
         // Translation entries are created from the already-limited source subtitles (16 per source language)
@@ -2318,14 +2366,6 @@ function createSubtitleHandler(config) {
       }
 
       // Add xSync entries (synced subtitles from cache)
-      const toolboxEnabled = config.subToolboxEnabled === true
-        || config.fileTranslationEnabled === true
-        || config.syncSubtitlesEnabled === true;
-
-      // Derive a single stable video hash for cache lookups
-      const primaryVideoHash = deriveVideoHash(streamFilename || '', id);
-      const videoHashes = primaryVideoHash ? [primaryVideoHash] : [];
-
       const xSyncEntries = [];
       if (toolboxEnabled && videoHashes.length) {
         const seenSync = new Set();
@@ -2414,10 +2454,9 @@ function createSubtitleHandler(config) {
               if (seenOriginals.has(dedupeKey)) continue;
               seenOriginals.add(dedupeKey);
 
-              const langName = getLanguageName(sourceCode) || sourceCode;
               xEmbedOriginalEntries.push({
                 id: `xembed_orig_${entry.cacheKey}`,
-                lang: langName,
+                lang: sourceCode,
                 url: `{{ADDON_URL}}/xembedded/${hash}/${sourceCode}/${entry.trackId}/original`
               });
             }
@@ -2795,6 +2834,32 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
     const waitForFullTranslation = options.waitForFullTranslation === true;
     const mobileWaitTimeoutMs = waitForFullTranslation ? getMobileWaitTimeoutMs(config) : null;
 
+    // If translating an xEmbed original, pull source directly from embedded cache
+    let embeddedSource = null;
+    let embeddedSourceContent = null;
+    if (sourceFileId.startsWith('xembed_')) {
+      const cacheKey = sourceFileId.replace(/^xembed_/, '');
+      try {
+        const embeddedEntry = await embeddedCache.getEmbeddedByCacheKey(cacheKey);
+        if (embeddedEntry && embeddedEntry.content && embeddedEntry.type === 'original') {
+          embeddedSource = {
+            cacheKey,
+            videoHash: embeddedEntry.videoHash,
+            trackId: embeddedEntry.trackId,
+            languageCode: canonicalSyncLanguageCode(embeddedEntry.languageCode || 'und') || 'und',
+            metadata: embeddedEntry.metadata || {}
+          };
+          embeddedSourceContent = embeddedEntry.content;
+          log.debug(() => `[Translation] Using embedded ORIGINAL source from cache ${cacheKey} (${embeddedSource.languageCode})`);
+        } else {
+          const type = embeddedEntry?.type || 'unknown';
+          log.warn(() => `[Translation] Embedded source not usable for ${sourceFileId} (type=${type})`);
+        }
+      } catch (err) {
+        log.warn(() => [`[Translation] Failed to load embedded source ${sourceFileId}:`, err.message]);
+      }
+    }
+
     // Generate cache keys using shared utility (single source of truth for cache key scoping)
     const { baseKey, cacheKey, runtimeKey, bypass, bypassEnabled, userHash, allowPermanent } = generateCacheKeys(
       config,
@@ -2999,45 +3064,49 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
 
     let sourceContent;
     try {
-      // Check download cache first
-      sourceContent = getDownloadCached(sourceFileId);
-
-      if (!sourceContent) {
-        // Download from provider
-        log.debug(() => `[Translation] Pre-flight: downloading from provider`);
-
-        if (sourceFileId.startsWith('subdl_')) {
-          if (!config.subtitleProviders?.subdl?.enabled) {
-            throw new Error('SubDL provider is disabled');
-          }
-          const subdl = new SubDLService(config.subtitleProviders.subdl.apiKey);
-          sourceContent = await subdl.downloadSubtitle(sourceFileId);
-        } else if (sourceFileId.startsWith('subsource_')) {
-          if (!config.subtitleProviders?.subsource?.enabled) {
-            throw new Error('SubSource provider is disabled');
-          }
-          const subsource = new SubSourceService(config.subtitleProviders.subsource.apiKey);
-          sourceContent = await subsource.downloadSubtitle(sourceFileId);
-        } else if (sourceFileId.startsWith('v3_')) {
-          if (!config.subtitleProviders?.opensubtitles?.enabled) {
-            throw new Error('OpenSubtitles provider is disabled');
-          }
-          const opensubtitlesV3 = new OpenSubtitlesV3Service();
-          sourceContent = await opensubtitlesV3.downloadSubtitle(sourceFileId);
-        } else {
-          if (!config.subtitleProviders?.opensubtitles?.enabled) {
-            throw new Error('OpenSubtitles provider is disabled');
-          }
-          const opensubtitles = new OpenSubtitlesService(config.subtitleProviders.opensubtitles);
-          sourceContent = await opensubtitles.downloadSubtitle(sourceFileId);
-        }
-
-        // Save to download cache for subsequent operations
-        try {
-          saveDownloadCached(sourceFileId, sourceContent);
-        } catch (_) {}
+      if (embeddedSourceContent) {
+        sourceContent = embeddedSourceContent;
       } else {
-        log.debug(() => `[Translation] Pre-flight: using cached source (${sourceContent.length} bytes)`);
+        // Check download cache first
+        sourceContent = getDownloadCached(sourceFileId);
+
+        if (!sourceContent) {
+          // Download from provider
+          log.debug(() => `[Translation] Pre-flight: downloading from provider`);
+
+          if (sourceFileId.startsWith('subdl_')) {
+            if (!config.subtitleProviders?.subdl?.enabled) {
+              throw new Error('SubDL provider is disabled');
+            }
+            const subdl = new SubDLService(config.subtitleProviders.subdl.apiKey);
+            sourceContent = await subdl.downloadSubtitle(sourceFileId);
+          } else if (sourceFileId.startsWith('subsource_')) {
+            if (!config.subtitleProviders?.subsource?.enabled) {
+              throw new Error('SubSource provider is disabled');
+            }
+            const subsource = new SubSourceService(config.subtitleProviders.subsource.apiKey);
+            sourceContent = await subsource.downloadSubtitle(sourceFileId);
+          } else if (sourceFileId.startsWith('v3_')) {
+            if (!config.subtitleProviders?.opensubtitles?.enabled) {
+              throw new Error('OpenSubtitles provider is disabled');
+            }
+            const opensubtitlesV3 = new OpenSubtitlesV3Service();
+            sourceContent = await opensubtitlesV3.downloadSubtitle(sourceFileId);
+          } else {
+            if (!config.subtitleProviders?.opensubtitles?.enabled) {
+              throw new Error('OpenSubtitles provider is disabled');
+            }
+            const opensubtitles = new OpenSubtitlesService(config.subtitleProviders.opensubtitles);
+            sourceContent = await opensubtitles.downloadSubtitle(sourceFileId);
+          }
+
+          // Save to download cache for subsequent operations
+          try {
+            saveDownloadCached(sourceFileId, sourceContent);
+          } catch (_) {}
+        } else {
+          log.debug(() => `[Translation] Pre-flight: using cached source (${sourceContent.length} bytes)`);
+        }
       }
 
       // Validate source size - same check as in performTranslation
@@ -3080,7 +3149,8 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
       { cacheKey, runtimeKey, baseKey, sharedInFlightKey },
       effectiveUserHash,
       allowPermanent,
-      sourceContent
+      sourceContent,
+      embeddedSource
     );
     inFlightTranslations.set(runtimeKey, translationPromise);
     if (sharedInFlightKey) {
@@ -3144,7 +3214,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
  * @param {string} userHash - User hash for concurrency tracking
  * @param {string} preDownloadedContent - Optional pre-downloaded source content (from pre-flight validation)
  */
-async function performTranslation(sourceFileId, targetLanguage, config, { cacheKey, runtimeKey, baseKey, sharedInFlightKey = null }, userHash, allowPermanent, preDownloadedContent = null) {
+async function performTranslation(sourceFileId, targetLanguage, config, { cacheKey, runtimeKey, baseKey, sharedInFlightKey = null }, userHash, allowPermanent, preDownloadedContent = null, embeddedSource = null) {
   try {
     log.debug(() => `[Translation] Background translation started for ${sourceFileId} to ${targetLanguage}`);
     cacheMetrics.apiCalls++;
@@ -3443,6 +3513,31 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
       await saveToStorage(baseKey, cachedData, { allowPermanent });
     } else {
       log.debug(() => `[Translation] Skipped permanent cache write (allow=${allowPermanent}, flag=${ENABLE_PERMANENT_TRANSLATIONS}, persistent=${cacheConfig.persistent !== false}, enabled=${cacheConfig.enabled})`);
+    }
+
+    // If translation originated from an embedded source, persist to xEmbed cache too
+    if (embeddedSource && embeddedSource.videoHash && embeddedSource.trackId && translatedContent) {
+      try {
+        const canonicalSourceLang = canonicalSyncLanguageCode(embeddedSource.languageCode || 'und') || 'und';
+        const canonicalTargetLang = canonicalSyncLanguageCode(targetLanguage) || targetLanguage;
+        const translationMeta = {
+          ...(embeddedSource.metadata || {}),
+          provider: providerName,
+          model: effectiveModel,
+          savedFrom: 'stremio_make'
+        };
+        await embeddedCache.saveTranslatedEmbedded(
+          embeddedSource.videoHash,
+          embeddedSource.trackId,
+          canonicalSourceLang,
+          canonicalTargetLang,
+          translatedContent,
+          translationMeta
+        );
+        log.debug(() => `[Translation] Saved xEmbed translation for ${embeddedSource.videoHash}_${embeddedSource.trackId} -> ${canonicalTargetLang}`);
+      } catch (e) {
+        log.warn(() => [`[Translation] Failed to save xEmbed translation for ${embeddedSource?.videoHash}_${embeddedSource?.trackId}:`, e.message]);
+      }
     }
 
     // Mark translation as complete
