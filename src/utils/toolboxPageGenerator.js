@@ -3000,7 +3000,8 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         return wordToHexValue;
       }
       function utf8Encode(string) {
-        string = string.replace(/\r\n/g, '\n');
+        // Escape CRLF so the regex remains valid in the generated inline script
+        string = string.replace(/\\r\\n/g, '\\n');
         let utftext = '';
         for (let n = 0; n < string.length; n++) {
           const c = string.charCodeAt(n);
