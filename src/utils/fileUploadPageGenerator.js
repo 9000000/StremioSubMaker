@@ -139,12 +139,22 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
     const DEFAULT_MAX_OUTPUT_TOKENS = 65536;
 
     const uiLang = (config?.uiLanguage || 'en').toString().toLowerCase();
+    const languageLookup = clientConfig.languageMaps || safeLanguageMaps();
+    const languageNameByCode = languageLookup.byCode || {};
     let languageDisplayNames = null;
     try {
         languageDisplayNames = new Intl.DisplayNames([uiLang], { type: 'language' });
     } catch (_) {}
+    const lookupLanguageName = (code) => {
+        if (!code) return '';
+        const normalized = String(code).trim().toLowerCase();
+        if (!normalized) return '';
+        const compact = normalized.replace(/[_-]/g, '');
+        return languageNameByCode[normalized] || languageNameByCode[compact] || getLanguageName(normalized) || '';
+    };
     const formatLanguageLabel = (code, fallback) => {
         if (!code) return fallback || '';
+        const fallbackName = fallback || lookupLanguageName(code);
         const normalized = String(code).replace('_', '-');
         const localized = languageDisplayNames
             ? (languageDisplayNames.of(normalized) || languageDisplayNames.of(normalized.split('-')[0]))
@@ -159,11 +169,12 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
              localizedValue.toLowerCase() === normalizedCode.replace('-', '_'));
 
         if (localized && !isCodeEcho) return localized;
-        return fallback || code;
+        if (fallbackName) return fallbackName;
+        return code;
     };
 
     const targetLangs = clientConfig.targetLanguages.map(lang => {
-        const langName = formatLanguageLabel(lang, getLanguageName(lang) || lang);
+        const langName = formatLanguageLabel(lang);
         return { code: lang, name: langName };
     });
 
@@ -2725,7 +2736,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             ? clientConfig.sourceLanguages[0]
             : '';
         const defaultTargetLanguage = hasConfiguredLanguages ? clientConfig.targetLanguages[0] : '';
-        const defaultShowAllLanguages = !hasConfiguredLanguages;
+        const defaultShowAllLanguages = hasConfiguredLanguages ? false : true;
         const defaultWorkflowValue = translationDefaults.singleBatchMode ? 'single-pass' : 'batched';
         const defaultTimingValue = translationDefaults.sendTimestampsToAI ? 'ai-timing' : 'preserve-timing';
         if (workflowMode) workflowMode.value = defaultWorkflowValue;
@@ -2921,11 +2932,12 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             }
         }
 
-        // Apply initial language list
-        setLanguageOptions(!hasConfiguredLanguages);
-        if (!hasConfiguredLanguages) {
-            showAllLanguagesCheckbox.checked = true;
-            showAllLanguagesCheckbox.disabled = true;
+        // Apply initial language list (prefer configured targets when available)
+        const initialShowAllLanguages = defaultShowAllLanguages;
+        setLanguageOptions(initialShowAllLanguages);
+        if (showAllLanguagesCheckbox) {
+            showAllLanguagesCheckbox.checked = initialShowAllLanguages;
+            showAllLanguagesCheckbox.disabled = false;
         }
 
         // Language toggle functionality
@@ -3100,7 +3112,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
 
             if (showAllLanguagesCheckbox) {
                 showAllLanguagesCheckbox.checked = defaultShowAllLanguages;
-                showAllLanguagesCheckbox.disabled = defaultShowAllLanguages;
+                showAllLanguagesCheckbox.disabled = false;
             }
 
             setLanguageOptions(showAllLanguagesCheckbox ? showAllLanguagesCheckbox.checked : false);

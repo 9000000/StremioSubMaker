@@ -411,6 +411,11 @@
           "modelTurbo": "turbo (GPU)",
           "diarization": "Speaker diarization",
           "translateOutput": "Translate to target languages",
+          "singleBatch": "Single batch mode",
+          "sendTimestamps": "Send timestamps to AI",
+          "providerLabel": "Translation provider",
+          "providerModelLabel": "Translation model",
+          "providerModelPlaceholder": "Use provider default",
           "step3Chip": "Step 3",
           "step3Title": "Run pipeline",
           "pipeline": "We'll stitch: fetch -> segment -> transcribe -> align -> translate (optional) -> deliver SRT.",
@@ -418,6 +423,9 @@
           "step4Title": "Output",
           "generatedSrt": "Generated SRT",
           "downloads": "Downloads",
+          "translationsEmpty": "No translations yet.",
+          "translationCardTitle": "Translated {lang}",
+          "translationCardFallback": "Translated subtitle",
           "downloadsNote": "We'll enable downloads after the pipeline finishes.",
           "fetchPill": "Fetch stream",
           "transcribePill": "Transcribe",
@@ -430,7 +438,8 @@
           "preview": "Preview plan",
           "progress": "Progress",
           "downloadSrt": "Download SRT",
-          "downloadVtt": "Download VTT"
+          "downloadVtt": "Download VTT",
+          "downloadTranslation": "Download {lang}"
         },
         "options": {
           "addTargets": "Add target languages in Configure"
@@ -441,6 +450,7 @@
           "ok": "OK",
           "fetching": "Fetching stream...",
           "transcribing": "Transcribing with Whisper ({model})",
+          "transcriptionDone": "Transcription complete. Preparing downloads...",
           "aligning": "Aligning and cleaning timestamps",
           "translating": "Translating to {target}",
           "skipTranslate": "Skipping translation",
@@ -449,7 +459,25 @@
           "done": "Done. Ready to download.",
           "previewPlan": "Pipeline: fetch -> transcribe -> align -> translate -> deliver.",
           "noOutput": "No output yet.",
-          "translateFallbackTarget": "targets"
+          "translateFallbackTarget": "targets",
+          "failedPrefix": "Failed: "
+        },
+        "hash": {
+          "mismatch": "Hash mismatch: linked {linked} vs pasted {stream}. Cache uploads disabled.",
+          "linked": "Linked: {linked} | Stream: {stream}{cache}",
+          "waiting": "Waiting for stream hash...",
+          "cacheDisabled": " (cache disabled)"
+        },
+        "logs": {
+          "noStream": "Paste a stream URL first.",
+          "noTargets": "Select at least one target language or disable translation.",
+          "sendingRequest": "Sending request to Cloudflare Workers AI...",
+          "finished": "Finished. Downloads are ready.",
+          "cacheSkipped": "Cache uploads were skipped due to hash mismatch.",
+          "errorPrefix": "Error: "
+        },
+        "providers": {
+          "missing": "No provider configured"
         }
       },
       "footnote": "Toolbox is tied to your current session and stream. Keep this tab open while streaming for the smoothest handoff."
