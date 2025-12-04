@@ -3,6 +3,7 @@
     'use strict';
 
     const DEFAULT_LOCALE = { lang: 'en', messages: {} };
+    const RTL_LANGS = new Set(['ar', 'he', 'fa', 'ur']);
     const UI_LANGUAGE_STORAGE_KEY = 'submaker_ui_language';
     let locale = DEFAULT_LOCALE;
 
@@ -28,6 +29,10 @@
             };
             if (document && document.documentElement) {
                 document.documentElement.lang = locale.lang || 'en';
+                const langBase = (locale.lang || '').split('-')[0];
+                const isRtl = RTL_LANGS.has(langBase);
+                document.documentElement.dir = isRtl ? 'rtl' : 'ltr';
+                document.documentElement.classList.toggle('rtl', isRtl);
             }
         } catch (_) {
             locale = DEFAULT_LOCALE;
@@ -226,7 +231,7 @@
             labelKey: 'config.uiLanguages.en.label',
             flagKey: 'config.uiLanguages.en.flag',
             fallbackLabel: 'English',
-            fallbackFlag: 'EN'
+            fallbackFlag: 'US'
         },
         {
             value: 'es',
@@ -240,14 +245,14 @@
             labelKey: 'config.uiLanguages.pt-br.label',
             flagKey: 'config.uiLanguages.pt-br.flag',
             fallbackLabel: 'Portuguese (Brazil)',
-            fallbackFlag: 'PT'
+            fallbackFlag: 'BR'
         },
         {
             value: 'ar',
             labelKey: 'config.uiLanguages.ar.label',
             flagKey: 'config.uiLanguages.ar.flag',
             fallbackLabel: 'Arabic',
-            fallbackFlag: 'AR'
+            fallbackFlag: 'SA'
         }
     ];
     const KEY_OPTIONAL_PROVIDERS = new Set(['googletranslate']);

@@ -318,13 +318,10 @@
           "helper": "Right-click Stremio's stream and select \"Copy Stream URL\". Ensure the linked stream is the right one. Paste the stream URL below and extract its subtitles.",
           "streamLabel": "Stream URL",
           "streamPlaceholder": "Paste the video/stream URL from Stremio or your browser",
-          "mkvTitle": "MKV tip",
-          "mkvLine1": "Use Complete Mode when extracting MKV streams for the best results.",
-          "mkvLine2": "In Complete mode, the whole file will be fetched for extraction.",
           "modeLabel": "Mode",
           "modeSmart": "Smart (fast)",
           "modeComplete": "Complete (full file)",
-          "modeHelper": "Smart performs one best-effort fast pass and fails if incomplete. Complete always downloads the entire stream and runs one FFmpeg demux with no retries.",
+          "modeHelper": "In Complete mode, the whole file will be fetched for extraction.\nComplete mode is needed for MKV files.",
           "extractButton": "Extract Subtitles",
           "extractBlocked": "Refresh the stream link in Stremio, then try again.",
           "logHeader": "Live log",
@@ -622,7 +619,7 @@
       "uiLanguages": {
         "en": {
           "label": "English",
-          "flag": "EN"
+          "flag": "US"
         },
         "es": {
           "label": "Español",
@@ -630,11 +627,11 @@
         },
         "pt-br": {
           "label": "Português (Brasil)",
-          "flag": "PT"
+          "flag": "BR"
         },
         "ar": {
           "label": "Arabic",
-          "flag": "AR"
+          "flag": "SA"
         }
       },
       "heroTitle": "SubMaker",

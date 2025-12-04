@@ -996,6 +996,22 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       color: var(--muted);
       font-size: 13px;
     }
+    @media (max-width: 980px) {
+      .masthead {
+        justify-content: center;
+        text-align: center;
+      }
+      .masthead .brand {
+        justify-content: center;
+        width: 100%;
+      }
+      .masthead .brand > div { text-align: center; }
+      .status-badges {
+        justify-content: center;
+        width: 100%;
+      }
+      .status-badge { justify-content: center; }
+    }
     @media (max-width: 900px) {
       .hero {
         grid-template-columns: 1fr;
@@ -1448,13 +1464,10 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       helper: t('toolbox.embedded.step1.helper', {}, 'Right-click Stremio\'s stream and select "Copy Stream URL". Ensure the linked stream is the right one. Paste the stream URL below and extract its subtitles.'),
       streamLabel: t('toolbox.embedded.step1.streamLabel', {}, 'Stream URL'),
       streamPlaceholder: t('toolbox.embedded.step1.streamPlaceholder', {}, 'Paste the video/stream URL from Stremio or your browser'),
-      mkvTitle: t('toolbox.embedded.step1.mkvTitle', {}, 'MKV tip'),
-      mkvLine1: t('toolbox.embedded.step1.mkvLine1', {}, 'Use Complete Mode when extracting MKV streams for the best results.'),
-      mkvLine2: t('toolbox.embedded.step1.mkvLine2', {}, 'In Complete mode, the whole file will be fetched for extraction.'),
       modeLabel: t('toolbox.embedded.step1.modeLabel', {}, 'Mode'),
       modeSmart: t('toolbox.embedded.step1.modeSmart', {}, 'Smart (fast)'),
       modeComplete: t('toolbox.embedded.step1.modeComplete', {}, 'Complete (full file)'),
-      modeHelper: t('toolbox.embedded.step1.modeHelper', {}, 'Smart performs one best-effort fast pass and fails if incomplete. Complete always downloads the entire stream and runs one FFmpeg demux with no retries.'),
+      modeHelper: t('toolbox.embedded.step1.modeHelper', {}, 'In Complete mode, the whole file will be fetched for extraction.\nComplete mode is needed for MKV files.'),
       extractButton: t('toolbox.embedded.step1.extractButton', {}, 'Extract Subtitles'),
       extractBlocked: t('toolbox.embedded.step1.extractBlocked', {}, 'Refresh the stream link in Stremio, then try again.'),
       hashMismatchInline: t('toolbox.embedded.step1.hashMismatchInline', {}, 'Stream URL hash mismatch. Copy the matching Stremio stream link to unlock extraction.'),
@@ -1522,6 +1535,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       (copy.step2.translationContext || "You're translating subtitles for {label}").replace('{label}', translationContextLabel)
     )
   );
+  const modeHelperHtml = escapeHtml(copy.step1.modeHelper).replace(/\n/g, '<br>');
   const providerOptions = (() => {
     const options = [];
     const providers = config.providers || {};
@@ -2460,54 +2474,6 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       color: var(--text);
       font-weight: 700;
     }
-    .mkv-callout {
-      margin-top: 10px;
-      padding: 14px;
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      background:
-        linear-gradient(145deg, rgba(8,164,213,0.08), rgba(132,80,255,0.08)),
-        var(--surface-2);
-      box-shadow: 0 10px 26px var(--shadow);
-    }
-    [data-theme="dark"] .mkv-callout,
-    [data-theme="true-dark"] .mkv-callout {
-      background:
-        linear-gradient(145deg, rgba(8,164,213,0.14), rgba(132,80,255,0.12)),
-        var(--surface-2);
-      box-shadow: 0 10px 26px rgba(0,0,0,0.35);
-    }
-    .mkv-header {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 6px;
-    }
-    .mkv-icon {
-      width: 28px;
-      height: 28px;
-      border-radius: 8px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      display: grid;
-      place-items: center;
-      font-size: 16px;
-      flex-shrink: 0;
-    }
-    .mkv-title {
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      font-weight: 800;
-    }
-    .mkv-text {
-      margin: 4px 0 0;
-      font-size: 13px;
-      line-height: 1.45;
-      color: var(--text);
-    }
-    .mkv-text + .mkv-text { margin-top: 6px; color: var(--muted); }
     .aio-warning {
       margin-top: 12px;
       font-size: 13px;
@@ -2697,29 +2663,22 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
               <p class="video-meta-subtitle" id="video-meta-subtitle">${initialVideoSubtitle}</p>
             </div>
           </div>
-          <div class="field-block form-group">
-            <label for="stream-url">${escapeHtml(copy.step1.streamLabel)}</label>
-            <input type="text" id="stream-url" placeholder="${escapeHtml(copy.step1.streamPlaceholder)}">
-          </div>
-          <div class="mkv-callout" aria-live="polite">
-            <div class="mkv-header">
-              <div class="mkv-icon">🎬</div>
-              <div class="mkv-title">${escapeHtml(copy.step1.mkvTitle)}</div>
+            <div class="field-block form-group">
+              <label for="stream-url">${escapeHtml(copy.step1.streamLabel)}</label>
+              <input type="text" id="stream-url" placeholder="${escapeHtml(copy.step1.streamPlaceholder)}">
             </div>
-            <p class="mkv-text">${escapeHtml(copy.step1.mkvLine1)}</p>
-            <p class="mkv-text">${escapeHtml(copy.step1.mkvLine2)}</p>
-          </div>
-          <div class="mode-controls">
-            <label for="extract-mode">${escapeHtml(copy.step1.modeLabel)}</label>
-            <select id="extract-mode" class="compact-select">
-              <option value="smart">${escapeHtml(copy.step1.modeSmart)}</option>
-              <option value="complete">${escapeHtml(copy.step1.modeComplete)}</option>
-            </select>
-            <p class="mode-helper">${escapeHtml(copy.step1.modeHelper)}</p>
-            <button id="extract-btn" type="button" class="secondary">${escapeHtml(copy.step1.extractButton)}</button>
-            <p id="extract-blocked-msg" style="margin:6px 0 0; color:#d14343; font-weight:600; display:none;">${escapeHtml(copy.step1.extractBlocked)}</p>
-            <p id="hash-mismatch-inline" class="hash-inline">${escapeHtml(copy.step1.hashMismatchInline)}</p>
-          </div>
+            <div class="notice" id="hash-status" style="margin-top:10px;">${escapeHtml(t('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...'))}</div>
+            <div class="mode-controls">
+              <label for="extract-mode">${escapeHtml(copy.step1.modeLabel)}</label>
+              <select id="extract-mode" class="compact-select">
+                <option value="smart">${escapeHtml(copy.step1.modeSmart)}</option>
+                <option value="complete">${escapeHtml(copy.step1.modeComplete)}</option>
+              </select>
+              <p class="mode-helper">${modeHelperHtml}</p>
+              <button id="extract-btn" type="button" class="secondary">${escapeHtml(copy.step1.extractButton)}</button>
+              <p id="extract-blocked-msg" style="margin:6px 0 0; color:#d14343; font-weight:600; display:none;">${escapeHtml(copy.step1.extractBlocked)}</p>
+              <p id="hash-mismatch-inline" class="hash-inline">${escapeHtml(copy.step1.hashMismatchInline)}</p>
+            </div>
           <div class="log-header" aria-hidden="true">
             <span class="pulse"></span>
             <span class="label">${escapeHtml(copy.step1.logHeader)}</span>
@@ -3445,6 +3404,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       extractLog: document.getElementById('extract-log'),
       translateLog: document.getElementById('translate-log'),
       streamUrl: document.getElementById('stream-url'),
+      hashStatus: document.getElementById('hash-status'),
       extractBtn: document.getElementById('extract-btn'),
       targetSelect: document.getElementById('target-select'),
       translateBtn: document.getElementById('translate-btn'),
@@ -3733,6 +3693,34 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       }
     }
 
+    function renderHashStatus(linkedHash, streamHash) {
+      if (!els.hashStatus) return;
+      const linked = linkedHash || getVideoHash() || '';
+      const stream = streamHash || state.streamHashInfo?.hash || '';
+      const hasMismatch = linked && stream && linked !== stream;
+      const cacheLabel = (state.cacheBlocked || hasMismatch)
+        ? tt('toolbox.autoSubs.hash.cacheDisabled', {}, ' (cache disabled)')
+        : '';
+      if (hasMismatch) {
+        els.hashStatus.textContent = tt(
+          'toolbox.autoSubs.hash.mismatch',
+          { linked, stream },
+          `Hash mismatch: linked ${linked} vs pasted ${stream}. Cache uploads disabled.`
+        );
+        els.hashStatus.classList.add('warn');
+      } else if (stream) {
+        els.hashStatus.textContent = tt(
+          'toolbox.autoSubs.hash.linked',
+          { linked, stream, cache: cacheLabel },
+          `Linked: ${linked} | Stream: ${stream}${cacheLabel}`
+        );
+        els.hashStatus.classList.remove('warn');
+      } else {
+        els.hashStatus.textContent = tt('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...');
+        els.hashStatus.classList.remove('warn');
+      }
+    }
+
     function updateHashMismatchState(opts = {}) {
       const streamUrl = typeof opts.streamUrl === 'string' ? opts.streamUrl : (els.streamUrl?.value || '');
       const trimmedUrl = (streamUrl || '').trim();
@@ -3759,6 +3747,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         }
       }
       renderHashMismatchAlert();
+      renderHashStatus(linkedHash, streamHashInfo.hash);
       applyExtractDisabled();
       return { mismatch, linkedHash, streamHash: streamHashInfo.hash || '' };
     }
@@ -3811,6 +3800,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       renderTargets();
       setStep2Enabled(false);
       setTranslationInFlight(false);
+      renderHashStatus(getVideoHash(), state.streamHashInfo?.hash || '');
       if (clearLogs) {
         if (els.translateLog) els.translateLog.innerHTML = '';
         if (els.extractLog) els.extractLog.innerHTML = '';
@@ -4821,7 +4811,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 `;
 }
 
-function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
+function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, streamUrl = '') {
   const links = buildToolLinks(configStr, videoId, filename);
   const devMode = config.devMode === true;
   const t = getTranslator(config?.uiLanguage || 'en');
@@ -4830,6 +4820,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     ? targetLanguages.map(code => `<option value="${escapeHtml(code)}">${escapeHtml(getLanguageName(code) || code)}</option>`).join('')
     : `<option value="">${escapeHtml(t('toolbox.autoSubs.options.addTargets', {}, 'Add target languages in Configure'))}</option>`;
   const videoHash = deriveVideoHash(filename, videoId);
+  const isLikelyUrl = (val) => /^[a-z][a-z0-9+.-]*:\\/\\//i.test(val || '');
+  const initialStreamUrl = isLikelyUrl(streamUrl) ? streamUrl : (isLikelyUrl(filename) ? filename : '');
   const languageMaps = buildLanguageLookupMaps();
   const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
   const subtitleMenuTargets = targetLanguages.map(code => ({
@@ -4934,6 +4926,13 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
         cacheBlocked: false,
         autoSubsInFlight: false
       };
+      const isLikelyStreamUrl = (val) => /^[a-z][a-z0-9+.-]*:\\/\\//i.test(val || '');
+      const bootstrapStreamUrl = BOOTSTRAP.streamUrl || '';
+      const fallbackStreamUrl = !bootstrapStreamUrl && isLikelyStreamUrl(BOOTSTRAP.filename) ? BOOTSTRAP.filename : '';
+      const initialStreamUrl = bootstrapStreamUrl || fallbackStreamUrl;
+      if (els.streamUrl && initialStreamUrl) {
+        els.streamUrl.value = initialStreamUrl;
+      }
 
       function md5hex(str) {
         function rotateLeft(lValue, iShiftBits) { return (lValue << iShiftBits) | (lValue >>> (32 - iShiftBits)); }
@@ -5180,24 +5179,19 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
 
       function getSelectedTargets() {
         if (!els.targetLang) return [];
-        const values = [];
-        for (const opt of els.targetLang.options) {
-          if (opt.selected && opt.value) values.push(opt.value);
-        }
-        return values;
+        const val = (els.targetLang.value || '').trim();
+        return val ? [val] : [];
       }
 
       function hydrateTargets() {
         if (!els.targetLang) return;
         const preferred = Array.isArray(BOOTSTRAP.targetLanguages) ? BOOTSTRAP.targetLanguages : [];
-        let firstFound = false;
-        for (const opt of els.targetLang.options) {
-          const match = preferred.includes(opt.value);
-          opt.selected = match;
-          if (match) firstFound = true;
-        }
-        if (!firstFound && els.targetLang.options.length) {
-          els.targetLang.options[0].selected = true;
+        const desired = preferred.find(Boolean) || '';
+        const hasDesired = desired && Array.from(els.targetLang.options || []).some(opt => opt.value === desired);
+        if (hasDesired) {
+          els.targetLang.value = desired;
+        } else if (els.targetLang.options.length) {
+          els.targetLang.selectedIndex = 0;
         }
       }
 
@@ -5430,8 +5424,15 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
       }
 
       function initDefaults() {
-        if (els.model && BOOTSTRAP.defaults?.whisperModel) {
-          els.model.value = BOOTSTRAP.defaults.whisperModel;
+        if (els.model) {
+          const desiredModel = BOOTSTRAP.defaults?.whisperModel;
+          const opts = Array.from(els.model.options || []);
+          const hasDesired = desiredModel && opts.some(opt => opt.value === desiredModel);
+          if (hasDesired) {
+            els.model.value = desiredModel;
+          } else if (!els.model.value && opts.length) {
+            els.model.value = opts[0].value;
+          }
         }
         if (els.sendTimestamps) {
           els.sendTimestamps.checked = BOOTSTRAP.defaults?.sendTimestampsToAI === true;
@@ -5451,8 +5452,9 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
         els.startBtn?.addEventListener('click', runAutoSubs);
         els.previewBtn?.addEventListener('click', previewPlan);
         els.prefill?.addEventListener('click', () => {
-          if (BOOTSTRAP.filename) {
-            els.streamUrl.value = BOOTSTRAP.filename;
+          const preferredStream = initialStreamUrl || (isLikelyStreamUrl(BOOTSTRAP.filename) ? BOOTSTRAP.filename : '');
+          if (preferredStream) {
+            els.streamUrl.value = preferredStream;
           } else if (BOOTSTRAP.videoId) {
             els.streamUrl.value = 'stremio://' + BOOTSTRAP.videoId;
           }
@@ -6070,6 +6072,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
       padding: 14px;
       box-shadow: 0 10px 24px var(--shadow);
       transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+      display: flex;
+      flex-direction: column;
     }
     .step-card:hover { border-color: var(--primary); box-shadow: 0 14px 30px var(--glow); transform: translateY(-2px); }
     .step-title { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-weight: 800; color: var(--text-primary); }
@@ -6084,6 +6088,22 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
       font-weight: 700;
       font-size: 0.85rem;
     }
+    .step-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      text-align: center;
+    }
+    .step-body > * { width: min(100%, 920px); }
+    .step-body .controls { justify-content: center; }
+    .step-body .row { width: 100%; }
+    .step-body .progress,
+    .step-body .status,
+    .step-body .chips,
+    .step-body .log-area { width: 100%; align-self: center; }
 
     .btn {
       display: inline-flex;
@@ -6290,62 +6310,65 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
       <div class="joined-grid">
         <div class="step-card">
           <div class="step-title"><span class="step-chip">${escapeHtml(copy.steps.one)}</span><span>${escapeHtml(copy.steps.inputTitle)}</span></div>
-          <label for="streamUrl">${escapeHtml(copy.steps.streamLabel)}</label>
-          <input type="text" id="streamUrl" placeholder="${escapeHtml(copy.steps.streamPlaceholder)}">
-          <div class="notice" id="hashStatus" style="margin-top:10px;">${escapeHtml(copy.videoMeta.waiting)}</div>
-          <small style="color: var(--text-secondary); display:block; margin-top:6px;">${escapeHtml(copy.steps.streamHelp)}</small>
-          <div class="controls" style="margin-top:12px;">
-            <button class="btn secondary" id="prefillFromVideo">${escapeHtml(copy.steps.prefill)}</button>
-            <button class="btn ghost" id="clearInputs">${escapeHtml(copy.steps.clear)}</button>
+          <div class="step-body">
+            <label for="streamUrl">${escapeHtml(copy.steps.streamLabel)}</label>
+            <input type="text" id="streamUrl" placeholder="${escapeHtml(copy.steps.streamPlaceholder)}">
+            <div class="notice" id="hashStatus" style="margin-top:10px;">${escapeHtml(copy.videoMeta.waiting)}</div>
+            <small style="color: var(--text-secondary); display:block; margin-top:6px;">${escapeHtml(copy.steps.streamHelp)}</small>
+            <div class="controls" style="margin-top:12px;">
+              <button class="btn secondary" id="prefillFromVideo">${escapeHtml(copy.steps.prefill)}</button>
+              <button class="btn ghost" id="clearInputs">${escapeHtml(copy.steps.clear)}</button>
+            </div>
           </div>
         </div>
         <div class="step-card">
           <div class="step-title"><span class="step-chip">${escapeHtml(copy.steps.two)}</span><span>${escapeHtml(copy.steps.langModelTitle)}</span></div>
-          <div class="row">
-            <div>
-              <label for="detectedLang">${escapeHtml(copy.steps.sourceLabel)}</label>
-              <select id="detectedLang">
-                <option value="">${escapeHtml(copy.steps.autoDetect)}</option>
-                ${targetOptions}
-              </select>
+          <div class="step-body">
+            <div class="row">
+              <div>
+                <label for="detectedLang">${escapeHtml(copy.steps.sourceLabel)}</label>
+                <select id="detectedLang">
+                  <option value="">${escapeHtml(copy.steps.autoDetect)}</option>
+                  ${targetOptions}
+                </select>
+              </div>
+              <div>
+                <label for="targetLang">${escapeHtml(copy.steps.targetLabel)}</label>
+                <select id="targetLang">
+                  ${targetOptions}
+                </select>
+              </div>
+              <div>
+                <label for="whisperModel">${escapeHtml(copy.steps.modelLabel)}</label>
+                <select id="whisperModel">
+                  <option value="@cf/openai/whisper">CF @cf/openai/whisper</option>
+                  <option value="@cf/openai/whisper-large-v3-turbo">@cf/openai/whisper-large-v3-turbo</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <label for="targetLang">${escapeHtml(copy.steps.targetLabel)}</label>
-              <select id="targetLang" multiple>
-                ${targetOptions}
-              </select>
+            <div class="controls">
+              <label style="display:flex; gap:8px; align-items:center; font-weight:600; color:var(--text-primary);">
+                <input type="checkbox" id="singleBatchMode"> ${escapeHtml(copy.steps.singleBatch)}
+              </label>
+              <label style="display:flex; gap:8px; align-items:center; font-weight:600; color:var(--text-primary);">
+                <input type="checkbox" id="enableDiarization"> ${escapeHtml(copy.steps.diarization)}
+              </label>
+              <label style="display:flex; gap:8px; align-items:center; font-weight:600; color:var(--text-primary);">
+                <input type="checkbox" id="translateOutput" checked> ${escapeHtml(copy.steps.translateOutput)}
+              </label>
+              <label style="display:flex; gap:8px; align-items:center; font-weight:600; color:var(--text-primary);">
+                <input type="checkbox" id="sendTimestamps"> ${escapeHtml(copy.steps.sendTimestamps)}
+              </label>
             </div>
-            <div>
-              <label for="whisperModel">${escapeHtml(copy.steps.modelLabel)}</label>
-              <select id="whisperModel">
-                <option value="@cf/openai/whisper">CF @cf/openai/whisper</option>
-                <option value="@cf/openai/whisper-large-v3-turbo">@cf/openai/whisper-large-v3-turbo</option>
-                <option value="@cf/myshell-ai/melotts">@cf/myshell-ai/melotts</option>
-              </select>
-            </div>
-          </div>
-          <div class="controls">
-            <label style="display:flex; gap:8px; align-items:center; font-weight:600; color:var(--text-primary);">
-              <input type="checkbox" id="singleBatchMode"> ${escapeHtml(copy.steps.singleBatch)}
-            </label>
-            <label style="display:flex; gap:8px; align-items:center; font-weight:600; color:var(--text-primary);">
-              <input type="checkbox" id="enableDiarization"> ${escapeHtml(copy.steps.diarization)}
-            </label>
-            <label style="display:flex; gap:8px; align-items:center; font-weight:600; color:var(--text-primary);">
-              <input type="checkbox" id="translateOutput" checked> ${escapeHtml(copy.steps.translateOutput)}
-            </label>
-            <label style="display:flex; gap:8px; align-items:center; font-weight:600; color:var(--text-primary);">
-              <input type="checkbox" id="sendTimestamps"> ${escapeHtml(copy.steps.sendTimestamps)}
-            </label>
-          </div>
-          <div class="row" style="margin-top:10px;">
-            <div>
-              <label for="translationProvider">${escapeHtml(copy.steps.providerLabel)}</label>
-              <select id="translationProvider"></select>
-            </div>
-            <div>
-              <label for="translationModel">${escapeHtml(copy.steps.providerModelLabel)}</label>
-              <input type="text" id="translationModel" placeholder="${escapeHtml(copy.steps.providerModelPlaceholder)}">
+            <div class="row" style="margin-top:10px;">
+              <div>
+                <label for="translationProvider">${escapeHtml(copy.steps.providerLabel)}</label>
+                <select id="translationProvider"></select>
+              </div>
+              <div>
+                <label for="translationModel">${escapeHtml(copy.steps.providerModelLabel)}</label>
+                <input type="text" id="translationModel" placeholder="${escapeHtml(copy.steps.providerModelPlaceholder)}">
+              </div>
             </div>
           </div>
         </div>
@@ -6357,41 +6380,45 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
       <div class="joined-grid">
         <div class="step-card">
           <div class="step-title"><span class="step-chip">${escapeHtml(copy.steps.three)}</span><span>${escapeHtml(copy.steps.runPipelineTitle)}</span></div>
-          <p style="margin:0 0 8px; color: var(--text-secondary);">${escapeHtml(copy.steps.pipelineDesc)}</p>
-          <div class="controls">
-            <button class="btn" id="startAutoSubs">${escapeHtml(copy.steps.start)}</button>
-            <button class="btn secondary" id="previewSteps">${escapeHtml(copy.steps.previewPlan)}</button>
+          <div class="step-body">
+            <p style="margin:0 0 8px; color: var(--text-secondary);">${escapeHtml(copy.steps.pipelineDesc)}</p>
+            <div class="controls">
+              <button class="btn" id="startAutoSubs">${escapeHtml(copy.steps.start)}</button>
+              <button class="btn secondary" id="previewSteps">${escapeHtml(copy.steps.previewPlan)}</button>
+            </div>
+            <div class="progress" aria-label="${escapeHtml(copy.steps.progressAria)}">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="status" id="statusText">${escapeHtml(copy.steps.awaiting)}</div>
+            <div class="chips" style="margin-top:10px;">
+              <span class="pill check" id="stepFetch">- ${escapeHtml(copy.steps.pills.fetch)}</span>
+              <span class="pill" id="stepTranscribe">- ${escapeHtml(copy.steps.pills.transcribe)}</span>
+              <span class="pill" id="stepAlign">- ${escapeHtml(copy.steps.pills.align)}</span>
+              <span class="pill" id="stepTranslate">- ${escapeHtml(copy.steps.pills.translate)}</span>
+              <span class="pill" id="stepDeliver">- ${escapeHtml(copy.steps.pills.deliver)}</span>
+            </div>
+            <div id="logArea" class="log-area" aria-live="polite"></div>
           </div>
-          <div class="progress" aria-label="${escapeHtml(copy.steps.progressAria)}">
-            <div class="progress-fill" id="progressFill"></div>
-          </div>
-          <div class="status" id="statusText">${escapeHtml(copy.steps.awaiting)}</div>
-          <div class="chips" style="margin-top:10px;">
-            <span class="pill check" id="stepFetch">- ${escapeHtml(copy.steps.pills.fetch)}</span>
-            <span class="pill" id="stepTranscribe">- ${escapeHtml(copy.steps.pills.transcribe)}</span>
-            <span class="pill" id="stepAlign">- ${escapeHtml(copy.steps.pills.align)}</span>
-            <span class="pill" id="stepTranslate">- ${escapeHtml(copy.steps.pills.translate)}</span>
-            <span class="pill" id="stepDeliver">- ${escapeHtml(copy.steps.pills.deliver)}</span>
-          </div>
-          <div id="logArea" class="log-area" aria-live="polite"></div>
         </div>
         <div class="step-card">
           <div class="step-title"><span class="step-chip">${escapeHtml(copy.steps.four)}</span><span>${escapeHtml(copy.steps.outputTitle)}</span></div>
-          <div class="row">
-            <div>
-              <label>${escapeHtml(copy.steps.generated)}</label>
-              <div style="padding:12px; border:1px solid var(--border); border-radius:12px; background: var(--surface-light); min-height:120px;" id="srtPreview">
-                ${escapeHtml(copy.steps.noOutput)}
+          <div class="step-body">
+            <div class="row">
+              <div>
+                <label>${escapeHtml(copy.steps.generated)}</label>
+                <div style="padding:12px; border:1px solid var(--border); border-radius:12px; background: var(--surface-light); min-height:120px;" id="srtPreview">
+                  ${escapeHtml(copy.steps.noOutput)}
+                </div>
+                <div class="controls" style="margin-top:8px;">
+                  <button class="btn secondary" disabled id="downloadSrt">${escapeHtml(copy.steps.downloadSrt)}</button>
+                  <button class="btn secondary" disabled id="downloadVtt">${escapeHtml(copy.steps.downloadVtt)}</button>
+                </div>
               </div>
-              <div class="controls" style="margin-top:8px;">
-                <button class="btn secondary" disabled id="downloadSrt">${escapeHtml(copy.steps.downloadSrt)}</button>
-                <button class="btn secondary" disabled id="downloadVtt">${escapeHtml(copy.steps.downloadVtt)}</button>
+              <div>
+                <label>${escapeHtml(copy.steps.downloads)}</label>
+                <div id="translationDownloads" style="display:grid; gap:10px;"></div>
+                <p style="margin-top:8px; color: var(--text-secondary);">${escapeHtml(copy.steps.enableAfter)}</p>
               </div>
-            </div>
-            <div>
-              <label>${escapeHtml(copy.steps.downloads)}</label>
-              <div id="translationDownloads" style="display:grid; gap:10px;"></div>
-              <p style="margin-top:8px; color: var(--text-secondary);">${escapeHtml(copy.steps.enableAfter)}</p>
             </div>
           </div>
         </div>
@@ -6406,6 +6433,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     configStr,
     videoId,
     filename: filename || '',
+    streamUrl: initialStreamUrl,
     videoHash,
     defaults,
     providerOptions,

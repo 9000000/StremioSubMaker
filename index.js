@@ -3047,8 +3047,6 @@ async function resolveConfigAsync(configStr, req) {
 // Custom route: Download subtitle (BEFORE SDK router to take precedence)
 app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validateRequest(subtitleParamsSchema, 'params'), async (req, res) => {
     try {
-        // Defense-in-depth: Prevent caching (already set by early middleware, but explicit is safer)
-        setNoStore(res);
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, fileId, language } = req.params;
@@ -3059,6 +3057,7 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
             const errorSubtitle = createSessionTokenErrorSubtitle(null, null, config?.uiLanguage || 'en');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', 'attachment; filename=\"session-token-not-found.srt\"');
+            setSubtitleCacheHeaders(res, 'loading');
             return res.status(401).send(errorSubtitle);
         }
         t = getTranslatorFromRequest(req, res, config);
@@ -3083,6 +3082,7 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
                 const errorMessage = createInvalidSubtitleMessage('The subtitle file is too small and seems corrupted.', config?.uiLanguage || 'en');
                 res.setHeader('Content-Type', 'text/plain; charset=utf-8');
                 res.setHeader('Content-Disposition', `attachment; filename="${fileId}.srt"`);
+                setSubtitleCacheHeaders(res, 'loading');
                 res.send(errorMessage);
                 return;
             }
@@ -3096,6 +3096,7 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
                 res.setHeader('Content-Type', 'text/plain; charset=utf-8');
                 res.setHeader('Content-Disposition', `attachment; filename="${fileId}.srt"`);
             }
+            setSubtitleCacheHeaders(res, 'final');
             res.send(cachedContent);
             return;
         }
@@ -3126,6 +3127,7 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Content-Disposition', `attachment; filename="${fileId}.srt"`);
         }
+        setSubtitleCacheHeaders(res, 'final');
         res.send(content);
 
     } catch (error) {
@@ -3689,7 +3691,7 @@ app.get('/addon/:config/auto-subtitles/:videoId', async (req, res) => {
 app.get('/auto-subtitles', async (req, res) => {
     try {
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
-        const { config: configStr, videoId, filename } = req.query;
+        const { config: configStr, videoId, filename, streamUrl } = req.query;
         if (!configStr || !videoId) {
             return res.status(400).send(t('server.errors.missingConfigOrVideo', {}, 'Missing config or videoId'));
         }
@@ -3709,7 +3711,8 @@ app.get('/auto-subtitles', async (req, res) => {
             configStr,
             videoId,
             filename,
-            config
+            config,
+            streamUrl
         );
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
@@ -4012,8 +4015,6 @@ app.get('/subtitle-sync', async (req, res) => {
 // API endpoint: Download xSync subtitle
 app.get('/addon/:config/xsync/:videoHash/:lang/:sourceSubId', async (req, res) => {
     try {
-        // Defense-in-depth: Prevent caching (user-specific synced subtitle)
-        setNoStore(res);
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         const { config: configStr, videoHash, lang, sourceSubId } = req.params;
@@ -4022,6 +4023,7 @@ app.get('/addon/:config/xsync/:videoHash/:lang/:sourceSubId', async (req, res) =
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[xSync Download] Rejected due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, config);
+            setSubtitleCacheHeaders(res, 'loading');
             return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
         }
         t = getTranslatorFromRequest(req, res, config);
@@ -4040,6 +4042,7 @@ app.get('/addon/:config/xsync/:videoHash/:lang/:sourceSubId', async (req, res) =
 
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${videoHash}_${lang}_synced.srt"`);
+        setSubtitleCacheHeaders(res, 'final');
         res.send(syncedSub.content);
 
     } catch (error) {
@@ -4117,13 +4120,13 @@ app.post('/api/save-synced-subtitle', userDataWriteLimiter, async (req, res) => 
 app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId', async (req, res) => {
     try {
         const { config: configStr, videoHash, lang, trackId } = req.params;
-        setNoStore(res);
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const config = await resolveConfigGuarded(configStr, req, res, '[xEmbed Download] config', t);
         if (!config) return;
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[xEmbed Download] Rejected due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, config);
+            setSubtitleCacheHeaders(res, 'loading');
             return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
         }
         t = getTranslatorFromRequest(req, res, config);
@@ -4150,6 +4153,7 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId', async (req, res) =
 
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_xembed.srt"`);
+        setSubtitleCacheHeaders(res, 'final');
         res.send(match.content);
     } catch (error) {
         const t = res.locals?.t || getTranslatorFromRequest(req, res);
@@ -4163,13 +4167,13 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId', async (req, res) =
 app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId/original', async (req, res) => {
     try {
         const { config: configStr, videoHash, lang, trackId } = req.params;
-        setNoStore(res);
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const config = await resolveConfigGuarded(configStr, req, res, '[xEmbed Original] config', t);
         if (!config) return;
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[xEmbed Original] Rejected due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, config);
+            setSubtitleCacheHeaders(res, 'loading');
             return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
         }
         t = getTranslatorFromRequest(req, res, config);
@@ -4196,6 +4200,7 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId/original', async (re
 
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_original.srt"`);
+        setSubtitleCacheHeaders(res, 'final');
         res.send(match.content);
     } catch (error) {
         const t = res.locals?.t || getTranslatorFromRequest(req, res);

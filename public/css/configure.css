@@ -32,6 +32,29 @@
             color-scheme: light;
         }
 
+        [dir="rtl"] body {
+            direction: rtl;
+            text-align: right;
+        }
+
+        [dir="rtl"] .ui-language-flag-row,
+        [dir="rtl"] .ui-lang-flag,
+        [dir="rtl"] .version-badge,
+        [dir="rtl"] code,
+        [dir="rtl"] .kbd,
+        [dir="rtl"] .pill,
+        [dir="rtl"] .badge {
+            direction: ltr;
+            unicode-bidi: isolate;
+            text-align: left;
+        }
+
+        [dir="rtl"] input,
+        [dir="rtl"] textarea,
+        [dir="rtl"] select {
+            text-align: right;
+        }
+
         [data-theme="dark"] {
             color-scheme: dark;
         }

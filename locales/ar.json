@@ -594,7 +594,7 @@
       "uiLanguages": {
         "en": {
           "label": "الإنجليزية",
-          "flag": "EN"
+          "flag": "US"
         },
         "es": {
           "label": "الإسبانية",
@@ -602,11 +602,11 @@
         },
         "pt-br": {
           "label": "البرتغالية (البرازيل)",
-          "flag": "PT"
+          "flag": "BR"
         },
         "ar": {
           "label": "العربية",
-          "flag": "AR"
+          "flag": "SA"
         }
       },
       "heroTitle": "SubMaker",

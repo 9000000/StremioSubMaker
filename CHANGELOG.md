@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.13
+
+- **Subtitle caching:** Final SRT/VTT responses (downloads, xSync, xEmbed) now use device-private caching so user-set subtitle delays are kept instead of resetting when the player reloads the track.
+
 ## SubMaker v1.4.12
 
 - **Extract Subs rollout:** Embedded subtitles extractor is now always enabled in Sub Toolbox and QuickNav.
