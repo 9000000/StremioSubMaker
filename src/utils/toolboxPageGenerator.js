@@ -4887,6 +4887,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     return options;
   })();
 
+  function autoSubsRuntime(copy) {
     (function() {
       const els = {
         startBtn: document.getElementById('startAutoSubs'),
@@ -5565,6 +5566,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
         },
       });
     })();
+  }
 
   const defaults = {
     whisperModel: 'medium',
@@ -5603,6 +5605,12 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     hash: {
       waiting: t('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...'),
       cacheDisabled: t('toolbox.autoSubs.hash.cacheDisabled', {}, 'Cache disabled for this run.')
+    },
+    videoMeta: {
+      label: t('toolbox.embedded.videoMeta.label', {}, 'Linked stream'),
+      none: t('toolbox.embedded.videoMeta.none', {}, 'No stream linked'),
+      unavailable: t('toolbox.embedded.videoMeta.unavailable', {}, 'Video ID unavailable'),
+      waiting: t('toolbox.embedded.videoMeta.waiting', {}, 'Waiting for a linked stream...')
     },
     sections: {
       linkAndPrep: t('toolbox.autoSubs.sections.setup', {}, 'Link a stream & prep the model'),
@@ -6437,6 +6445,9 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
       error: ${JSON.stringify(t('toolbox.refresh.error', {}, 'Refresh failed'))},
       current: ${JSON.stringify(t('toolbox.refresh.current', {}, 'Already latest'))}
     };
+
+    const copy = ${safeJsonSerialize(copy)};
+    (${autoSubsRuntime.toString()})(copy);
 
     ${quickNavScript()}
     if (window.ComboBox && typeof window.ComboBox.enhanceAll === 'function') {
