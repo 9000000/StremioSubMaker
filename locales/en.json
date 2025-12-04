@@ -385,7 +385,8 @@
           "notDetected": "Extension not detected",
           "ready": "Ready",
           "readyVersion": "Ready (v{version})",
-          "readyWithVersion": "Ready (v{version})"
+          "readyWithVersion": "Ready (v{version})",
+          "note": "Extension ping is status-only; local Whisper engine is not available yet."
         },
         "sections": {
           "setup": "Link a stream & prep the model",
@@ -466,7 +467,7 @@
           "mismatch": "Hash mismatch: linked {linked} vs pasted {stream}. Cache uploads disabled.",
           "linked": "Linked: {linked} | Stream: {stream}{cache}",
           "waiting": "Waiting for stream hash...",
-          "cacheDisabled": " (cache disabled)"
+          "cacheDisabled": "Cache disabled for this run."
         },
         "logs": {
           "noStream": "Paste a stream URL first.",

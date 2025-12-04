@@ -385,7 +385,8 @@
           "notDetected": "Extensão não detectada",
           "ready": "Pronta",
           "readyVersion": "Pronta (v{version})",
-          "readyWithVersion": "Pronta (v{version})"
+          "readyWithVersion": "Pronta (v{version})",
+          "note": "O ping da extensão é apenas de status; o motor local do Whisper ainda não está disponível."
         },
         "sections": {
           "setup": "Vincular um stream & preparar o modelo",
@@ -411,11 +412,11 @@
           "modelTurbo": "turbo (GPU)",
           "diarization": "Diarização de falantes",
           "translateOutput": "Traduzir para idiomas de destino",
-          "singleBatch": "Single batch mode",
-          "sendTimestamps": "Send timestamps to AI",
-          "providerLabel": "Translation provider",
-          "providerModelLabel": "Translation model",
-          "providerModelPlaceholder": "Use provider default",
+          "singleBatch": "Modo de lote único",
+          "sendTimestamps": "Enviar timestamps para a IA",
+          "providerLabel": "Fornecedor de tradução",
+          "providerModelLabel": "Modelo de tradução",
+          "providerModelPlaceholder": "Usar padrão do fornecedor",
           "step3Chip": "Passo 3",
           "step3Title": "Executar pipeline",
           "pipeline": "Vamos processar: buscar -> segmentar -> transcrever -> alinhar -> traduzir (opcional) -> entregar SRT.",
@@ -423,9 +424,9 @@
           "step4Title": "Saída",
           "generatedSrt": "SRT Gerado",
           "downloads": "Downloads",
-          "translationsEmpty": "No translations yet.",
-          "translationCardTitle": "Translated {lang}",
-          "translationCardFallback": "Translated subtitle",
+          "translationsEmpty": "Ainda não há traduções.",
+          "translationCardTitle": "Traduzido {lang}",
+          "translationCardFallback": "Legenda traduzida",
           "downloadsNote": "Habilitaremos os downloads após o pipeline terminar.",
           "fetchPill": "Buscar stream",
           "transcribePill": "Transcrever",
@@ -439,7 +440,7 @@
           "progress": "Progresso",
           "downloadSrt": "Baixar SRT",
           "downloadVtt": "Baixar VTT",
-          "downloadTranslation": "Download {lang}"
+          "downloadTranslation": "Baixar {lang}"
         },
         "options": {
           "addTargets": "Adicionar idiomas de destino em Configurar"
@@ -450,7 +451,7 @@
           "ok": "OK",
           "fetching": "Buscando stream...",
           "transcribing": "Transcrevendo com Whisper ({model})",
-          "transcriptionDone": "Transcription complete. Preparing downloads...",
+          "transcriptionDone": "Transcrição concluída. Preparando downloads...",
           "aligning": "Alinhando e limpando timestamps",
           "translating": "Traduzindo para {target}",
           "skipTranslate": "Pulando tradução",
@@ -460,24 +461,24 @@
           "previewPlan": "Pipeline: buscar -> transcrever -> alinhar -> traduzir -> entregar.",
           "noOutput": "Nenhuma saída ainda.",
           "translateFallbackTarget": "destinos",
-          "failedPrefix": "Failed: "
+          "failedPrefix": "Falhou: "
         },
         "hash": {
-          "mismatch": "Hash mismatch: linked {linked} vs pasted {stream}. Cache uploads disabled.",
-          "linked": "Linked: {linked} | Stream: {stream}{cache}",
-          "waiting": "Waiting for stream hash...",
-          "cacheDisabled": " (cache disabled)"
+          "mismatch": "Incompatibilidade de hash: vinculado {linked} vs colado {stream}. Upload em cache desabilitado.",
+          "linked": "Vinculado: {linked} | Stream: {stream}{cache}",
+          "waiting": "Aguardando hash do stream...",
+          "cacheDisabled": "Cache desabilitado nesta execução."
         },
         "logs": {
-          "noStream": "Paste a stream URL first.",
-          "noTargets": "Select at least one target language or disable translation.",
-          "sendingRequest": "Sending request to Cloudflare Workers AI...",
-          "finished": "Finished. Downloads are ready.",
-          "cacheSkipped": "Cache uploads were skipped due to hash mismatch.",
-          "errorPrefix": "Error: "
+          "noStream": "Cole uma URL de stream primeiro.",
+          "noTargets": "Selecione ao menos um idioma de destino ou desative a tradução.",
+          "sendingRequest": "Enviando requisição para Cloudflare Workers AI...",
+          "finished": "Pronto. Downloads disponíveis.",
+          "cacheSkipped": "Uploads para cache foram pulados por incompatibilidade de hash.",
+          "errorPrefix": "Erro: "
         },
         "providers": {
-          "missing": "No provider configured"
+          "missing": "Nenhum fornecedor configurado"
         }
       },
       "footnote": "O Toolbox está vinculado à sua sessão e stream atual. Mantenha esta aba aberta enquanto assiste para uma transição mais suave."

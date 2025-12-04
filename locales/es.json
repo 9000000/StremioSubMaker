@@ -385,7 +385,8 @@
           "notDetected": "Extensión no detectada",
           "ready": "Lista",
           "readyVersion": "Lista (v{version})",
-          "readyWithVersion": "Lista (v{version})"
+          "readyWithVersion": "Lista (v{version})",
+          "note": "El ping de la extensión es solo de estado; el motor local de Whisper aún no está disponible."
         },
         "sections": {
           "setup": "Vincula un stream y prepara el modelo",
@@ -411,11 +412,11 @@
           "modelTurbo": "turbo (GPU)",
           "diarization": "Diarización de hablantes",
           "translateOutput": "Traducir a los idiomas destino",
-          "singleBatch": "Single batch mode",
-          "sendTimestamps": "Send timestamps to AI",
-          "providerLabel": "Translation provider",
-          "providerModelLabel": "Translation model",
-          "providerModelPlaceholder": "Use provider default",
+          "singleBatch": "Modo de lote único",
+          "sendTimestamps": "Enviar marcas de tiempo a la IA",
+          "providerLabel": "Proveedor de traducción",
+          "providerModelLabel": "Modelo de traducción",
+          "providerModelPlaceholder": "Usar el valor predeterminado del proveedor",
           "step3Chip": "Paso 3",
           "step3Title": "Ejecutar pipeline",
           "pipeline": "Uniremos: obtener -> segmentar -> transcribir -> alinear -> traducir (opcional) -> entregar SRT.",
@@ -423,10 +424,10 @@
           "step4Title": "Salida",
           "generatedSrt": "SRT generado",
           "downloads": "Descargas",
-          "translationsEmpty": "No translations yet.",
-          "translationCardTitle": "Translated {lang}",
-          "translationCardFallback": "Translated subtitle",
-          "downloadsNote": "Habilitaremos las descargas cuando termine el pipeline.",
+          "translationsEmpty": "Aún no hay traducciones.",
+          "translationCardTitle": "Traducido {lang}",
+          "translationCardFallback": "Subtítulo traducido",
+          "downloadsNote": "Habilitaremos las descargas cuando termine la cadena.",
           "fetchPill": "Obtener stream",
           "transcribePill": "Transcribir",
           "alignPill": "Alinear + marcas de tiempo",
@@ -439,7 +440,7 @@
           "progress": "Progreso",
           "downloadSrt": "Descargar SRT",
           "downloadVtt": "Descargar VTT",
-          "downloadTranslation": "Download {lang}"
+          "downloadTranslation": "Descargar {lang}"
         },
         "options": {
           "addTargets": "Agregar idiomas destino en Configurar"
@@ -450,7 +451,7 @@
           "ok": "OK",
           "fetching": "Obteniendo stream...",
           "transcribing": "Transcribiendo con Whisper ({model})",
-          "transcriptionDone": "Transcription complete. Preparing downloads...",
+          "transcriptionDone": "Transcripción completa. Preparando descargas...",
           "aligning": "Alineando y limpiando marcas de tiempo",
           "translating": "Traduciendo a {target}",
           "skipTranslate": "Saltando traducción",
@@ -458,26 +459,26 @@
           "sample": "1\n00:00:00,000 --> 00:00:02,000\n[Subtítulo de ejemplo generado por Whisper]\n",
           "done": "Listo. Preparado para descargar.",
           "previewPlan": "Pipeline: obtener -> transcribir -> alinear -> traducir -> entregar.",
-          "noOutput": "Sin salida aún.",
+          "noOutput": "No hay resultados aún.",
           "translateFallbackTarget": "destinos",
-          "failedPrefix": "Failed: "
+          "failedPrefix": "Falló: "
         },
         "hash": {
-          "mismatch": "Hash mismatch: linked {linked} vs pasted {stream}. Cache uploads disabled.",
-          "linked": "Linked: {linked} | Stream: {stream}{cache}",
-          "waiting": "Waiting for stream hash...",
-          "cacheDisabled": " (cache disabled)"
+          "mismatch": "Discrepancia de hash: vinculado {linked} vs pegado {stream}. Carga en caché deshabilitada.",
+          "linked": "Vinculado: {linked} | Stream: {stream}{cache}",
+          "waiting": "Esperando hash de stream...",
+          "cacheDisabled": "La caché está deshabilitada para esta ejecución."
         },
         "logs": {
-          "noStream": "Paste a stream URL first.",
-          "noTargets": "Select at least one target language or disable translation.",
-          "sendingRequest": "Sending request to Cloudflare Workers AI...",
-          "finished": "Finished. Downloads are ready.",
-          "cacheSkipped": "Cache uploads were skipped due to hash mismatch.",
+          "noStream": "Pega primero una URL de stream.",
+          "noTargets": "Selecciona al menos un idioma destino o desactiva la traducción.",
+          "sendingRequest": "Enviando solicitud a Cloudflare Workers AI...",
+          "finished": "Listo. Las descargas están preparadas.",
+          "cacheSkipped": "Las cargas a caché se omitieron por discrepancia de hash.",
           "errorPrefix": "Error: "
         },
         "providers": {
-          "missing": "No provider configured"
+          "missing": "No hay proveedor configurado"
         }
       },
       "footnote": "La Toolbox está ligada a tu sesión y emisión actual. Mantén esta pestaña abierta durante el streaming para un traspaso fluido."

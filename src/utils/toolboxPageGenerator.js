@@ -4913,11 +4913,16 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
         clear: document.getElementById('clearInputs'),
         extDot: document.getElementById('ext-dot'),
         extLabel: document.getElementById('ext-label'),
-        extStatus: document.getElementById('ext-status')
+        extStatus: document.getElementById('ext-status'),
+        hashBadge: document.getElementById('hashBadge'),
+        hashBadgeDot: document.getElementById('hashBadgeDot'),
+        hashBadgeValue: document.getElementById('hashBadgeValue'),
+        hashBadgeNote: document.getElementById('hashBadgeNote')
       };
       const stepPills = {
         fetch: document.getElementById('stepFetch'),
         transcribe: document.getElementById('stepTranscribe'),
+        align: document.getElementById('stepAlign'),
         translate: document.getElementById('stepTranslate'),
         deliver: document.getElementById('stepDeliver')
       };
@@ -5292,6 +5297,31 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
         const streamHash = hashes.stream || '';
         const hasMismatch = linked && streamHash && linked !== streamHash;
         state.cacheBlocked = cacheBlocked || hasMismatch;
+        const badgeText = streamHash
+          ? `${linked || tt('toolbox.autoSubs.badges.pending', {}, 'pending')} | ${streamHash}`
+          : (linked || tt('toolbox.autoSubs.badges.pending', {}, 'pending'));
+        if (els.hashBadgeValue) {
+          els.hashBadgeValue.textContent = hasMismatch
+            ? `${linked || tt('toolbox.autoSubs.badges.pending', {}, 'pending')} ≠ ${streamHash}`
+            : badgeText;
+        }
+        if (els.hashBadge) {
+          els.hashBadge.classList.toggle('warn', hasMismatch || cacheBlocked);
+        }
+        if (els.hashBadgeDot) {
+          els.hashBadgeDot.className = 'status-dot ' + (hasMismatch ? 'warn' : 'ok');
+        }
+        if (els.hashBadgeNote) {
+          if (hasMismatch) {
+            els.hashBadgeNote.textContent = tt('toolbox.autoSubs.hash.mismatch', { linked, stream: streamHash }, 'Hash mismatch: linked ' + linked + ' vs pasted ' + streamHash + '. Cache uploads disabled.');
+          } else if (cacheBlocked) {
+            els.hashBadgeNote.textContent = tt('toolbox.autoSubs.hash.cacheDisabled', {}, 'Cache disabled for this run.');
+          } else if (streamHash) {
+            els.hashBadgeNote.textContent = tt('toolbox.autoSubs.hash.linked', { linked, stream: streamHash, cache: '' }, 'Linked: ' + linked + ' | Stream: ' + streamHash);
+          } else {
+            els.hashBadgeNote.textContent = tt('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...');
+          }
+        }
         if (hashEl) {
           if (hasMismatch) {
             hashEl.textContent = tt(
@@ -5342,6 +5372,9 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
         setInFlight(true);
         resetPills();
         markStep('fetch', 'check');
+        markStep('transcribe', 'warn');
+        markStep('align', 'warn');
+        markStep('translate', 'warn');
         setStatus(tt('toolbox.autoSubs.status.fetching', {}, 'Fetching stream...'));
         setProgress(10);
         appendLog(tt('toolbox.autoSubs.logs.sendingRequest', {}, 'Sending request to Cloudflare Workers AI...'));
@@ -5378,6 +5411,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
           handleHashStatus(data.hashes || {}, data.cacheBlocked);
           markStep('transcribe', 'check');
           setProgress(60);
+          markStep('align', 'check');
+          setProgress(80);
           setStatus(tt('toolbox.autoSubs.status.transcriptionDone', {}, 'Transcription complete. Preparing downloads...'));
           setPreview(data.original?.srt || '');
           setDownloads(data.original, data.translations || []);
@@ -5393,6 +5428,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
           const cacheSkipped = data.cacheBlocked ? ' ' + tt('toolbox.autoSubs.logs.cacheSkipped', {}, 'Cache uploads were skipped due to hash mismatch.') : '';
           appendLog(finishedMsg + cacheSkipped);
         } catch (error) {
+          markStep('transcribe', 'danger');
+          markStep('align', 'danger');
           markStep('translate', 'danger');
           setStatus(tt('toolbox.autoSubs.status.failedPrefix', {}, 'Failed: ') + error.message);
           appendLog(tt('toolbox.autoSubs.logs.errorPrefix', {}, 'Error: ') + error.message);
@@ -5534,7 +5571,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     diarization: false,
     translateToTarget: true,
     streamFilename: filename || '',
-    provider: providerOptions[0]?.key || 'gemini',
+    provider: (config?.mainProvider && String(config.mainProvider).toLowerCase()) || providerOptions[0]?.key || 'gemini',
     translationModel: config?.geminiModel || '',
     sendTimestampsToAI: config?.advancedSettings?.sendTimestampsToAI === true,
     singleBatchMode: config?.singleBatchMode === true
@@ -5562,6 +5599,10 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
       hash: t('toolbox.autoSubs.badges.hash', {}, 'Hash'),
       versionFallback: t('toolbox.autoSubs.badges.versionFallback', {}, 'n/a'),
       pending: t('toolbox.autoSubs.badges.pending', {}, 'pending')
+    },
+    hash: {
+      waiting: t('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...'),
+      cacheDisabled: t('toolbox.autoSubs.hash.cacheDisabled', {}, 'Cache disabled for this run.')
     },
     sections: {
       linkAndPrep: t('toolbox.autoSubs.sections.setup', {}, 'Link a stream & prep the model'),
@@ -5646,7 +5687,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     extension: {
       ready: t('toolbox.status.ready', {}, 'Ready'),
       notDetected: t('toolbox.autoSubs.extension.notDetected', {}, 'Extension not detected'),
-      readyWithVersion: t('toolbox.autoSubs.extension.readyVersion', {}, 'Ready (v{version})')
+      readyWithVersion: t('toolbox.autoSubs.extension.readyVersion', {}, 'Ready (v{version})'),
+      note: t('toolbox.autoSubs.extension.note', {}, 'Extension ping is status-only; local Whisper engine not available yet.')
     }
   };
 
@@ -5824,6 +5866,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
     .status-labels { display: flex; flex-direction: column; line-height: 1.15; }
     .label-eyebrow { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
     .status-badge strong { font-size: 14px; }
+    .status-badge .badge-note { display: block; font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+    .status-badge.warn { border-color: rgba(244,63,94,0.25); box-shadow: 0 12px 30px rgba(244,63,94,0.16); }
     .status-dot {
       width: 12px;
       height: 12px;
@@ -6237,13 +6281,15 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
           <div class="status-labels">
             <span class="label-eyebrow">${escapeHtml(copy.badges.extension)}</span>
             <a id="ext-label" class="ext-link" href="https://chromewebstore.google.com/detail/submaker-xsync/lpocanpndchjkkpgchefobjionncknjn" target="_blank" rel="noopener noreferrer">${escapeHtml(copy.badges.waitingExtension)}</a>
+            <small class="badge-note" id="ext-note">${escapeHtml(copy.extension.note)}</small>
           </div>
         </div>
-        <div class="status-badge">
-          <span class="status-dot ok"></span>
+        <div class="status-badge" id="hashBadge">
+          <span class="status-dot ok" id="hashBadgeDot"></span>
           <div class="status-labels">
             <span class="label-eyebrow">${escapeHtml(copy.badges.hash)}</span>
-            <strong>${escapeHtml(videoHash || copy.badges.pending)}</strong>
+            <strong id="hashBadgeValue">${escapeHtml(videoHash || copy.badges.pending)}</strong>
+            <small class="badge-note" id="hashBadgeNote">${escapeHtml(copy.hash.waiting)}</small>
           </div>
         </div>
       </div>
@@ -6333,6 +6379,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}) {
           <div class="chips" style="margin-top:10px;">
             <span class="pill check" id="stepFetch">- ${escapeHtml(copy.steps.pills.fetch)}</span>
             <span class="pill" id="stepTranscribe">- ${escapeHtml(copy.steps.pills.transcribe)}</span>
+            <span class="pill" id="stepAlign">- ${escapeHtml(copy.steps.pills.align)}</span>
             <span class="pill" id="stepTranslate">- ${escapeHtml(copy.steps.pills.translate)}</span>
             <span class="pill" id="stepDeliver">- ${escapeHtml(copy.steps.pills.deliver)}</span>
           </div>

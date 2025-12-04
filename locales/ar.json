@@ -385,7 +385,8 @@
           "notDetected": "لم يتم اكتشاف الامتداد",
           "ready": "جاهز",
           "readyVersion": "جاهز (v{version})",
-          "readyWithVersion": "جاهز (v{version})"
+          "readyWithVersion": "جاهز (v{version})",
+          "note": "إشارة الامتداد للتأكد من الحالة فقط؛ محرك Whisper المحلي غير متاح بعد."
         },
         "sections": {
           "setup": "ربط البث وتجهيز النموذج",
@@ -1564,38 +1565,38 @@
   "toolbox": {
     "autoSubs": {
       "steps": {
-        "singleBatch": "Single batch mode",
-        "sendTimestamps": "Send timestamps to AI",
-        "providerLabel": "Translation provider",
-        "providerModelLabel": "Translation model",
-        "providerModelPlaceholder": "Use provider default",
-        "translationsEmpty": "No translations yet.",
-        "translationCardTitle": "Translated {lang}",
-        "translationCardFallback": "Translated subtitle"
+        "singleBatch": "وضع دفعة واحدة",
+        "sendTimestamps": "إرسال الطوابع الزمنية إلى الذكاء الاصطناعي",
+        "providerLabel": "موفر الترجمة",
+        "providerModelLabel": "نموذج الترجمة",
+        "providerModelPlaceholder": "استخدم الإعداد الافتراضي للموفر",
+        "translationsEmpty": "لا توجد ترجمات بعد.",
+        "translationCardTitle": "ترجمة {lang}",
+        "translationCardFallback": "ترجمة الترجمة"
       },
       "actions": {
-        "downloadTranslation": "Download {lang}"
+        "downloadTranslation": "تحميل {lang}"
       },
       "status": {
-        "transcriptionDone": "Transcription complete. Preparing downloads...",
-        "failedPrefix": "Failed: "
+        "transcriptionDone": "اكتملت النسخة. جارٍ تجهيز التنزيلات...",
+        "failedPrefix": "فشل: "
       },
       "hash": {
-        "mismatch": "Hash mismatch: linked {linked} vs pasted {stream}. Cache uploads disabled.",
-        "linked": "Linked: {linked} | Stream: {stream}{cache}",
-        "waiting": "Waiting for stream hash...",
-        "cacheDisabled": " (cache disabled)"
+        "mismatch": "عدم تطابق الهاش: المرتبط {linked} مقابل الملصق {stream}. تم تعطيل رفع الذاكرة المؤقتة.",
+        "linked": "مرتبط: {linked} | البث: {stream}{cache}",
+        "waiting": "بانتظار هاش البث...",
+        "cacheDisabled": "تم تعطيل الذاكرة المؤقتة لهذه العملية."
       },
       "logs": {
-        "noStream": "Paste a stream URL first.",
-        "noTargets": "Select at least one target language or disable translation.",
-        "sendingRequest": "Sending request to Cloudflare Workers AI...",
-        "finished": "Finished. Downloads are ready.",
-        "cacheSkipped": "Cache uploads were skipped due to hash mismatch.",
-        "errorPrefix": "Error: "
+        "noStream": "ألصق رابط البث أولاً.",
+        "noTargets": "اختر لغة هدف واحدة على الأقل أو عطّل الترجمة.",
+        "sendingRequest": "جارٍ إرسال الطلب إلى Cloudflare Workers AI...",
+        "finished": "تم. التنزيلات جاهزة.",
+        "cacheSkipped": "تم تخطي الرفع إلى الذاكرة المؤقتة بسبب عدم تطابق الهاش.",
+        "errorPrefix": "خطأ: "
       },
       "providers": {
-        "missing": "No provider configured"
+        "missing": "لا يوجد موفر مُعد"
       }
     }
   }
