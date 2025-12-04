@@ -1690,6 +1690,44 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             color: var(--text-primary);
             text-align: center;
         }
+        .hash-mismatch-alert {
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(239,68,68,0.35);
+            background: rgba(239,68,68,0.08);
+            color: #7f1d1d;
+            font-weight: 700;
+            font-size: 14px;
+            box-shadow: 0 8px 22px rgba(239,68,68,0.12);
+            display: none;
+        }
+        .hash-mismatch-alert .alert-head {
+            color: #fff;
+            background: linear-gradient(135deg, #ef4444, #b91c1c);
+            padding: 6px 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 700;
+            box-shadow: 0 10px 18px rgba(185,28,28,0.18);
+            text-align: center;
+            margin: 0 auto 6px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+        }
+        .hash-mismatch-alert .alert-body {
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.4;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            text-align: center;
+            color: #7f1d1d;
+        }
 
         .status-message.error {
             background: rgba(239, 68, 68, 0.08);
@@ -1965,6 +2003,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                         <input type="text" id="streamUrl" placeholder="${escapeHtml(copy.step1.placeholder)}" value="">
                     </div>
                     <div class="status-message info" id="hashStatus" style="display: block;">${escapeHtml(t('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...'))}</div>
+                    <div class="hash-mismatch-alert" id="hashMismatchAlert" role="status" aria-live="polite"></div>
                     <button id="continueBtn" class="btn btn-primary">
                         <span>➡️</span> ${escapeHtml(copy.step1.continue)}
                     </button>
@@ -2141,10 +2180,44 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         })};
         const subtitleMenuTargets = ${JSON.stringify(targetLanguages.map(lang => ({ code: lang, name: getLanguageName(lang) || lang })))};
         const hashStatusEl = document.getElementById('hashStatus');
+        const hashMismatchEl = document.getElementById('hashMismatchAlert');
         const lockReasons = {
             needContinue: ${JSON.stringify(copy.locks.needContinue)},
             needSubtitle: ${JSON.stringify(copy.locks.needSubtitle)}
         };
+        const escapeHtmlClient = (value) => {
+            if (value === undefined || value === null) return '';
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        };
+        const HASH_MISMATCH_LINES = [
+            tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match before extraction can start.'),
+            tt('toolbox.embedded.step1.hashMismatchLine2', {}, 'Copy the stream link again in Stremio and paste it here to unlock the button.')
+        ];
+        function buildHashMismatchAlert(linkedHash, streamHash) {
+            const safeLinked = escapeHtmlClient(linkedHash || 'unknown');
+            const safeStream = escapeHtmlClient(streamHash || 'unknown');
+            const head = 'Hash mismatch detected: linked stream (' + safeLinked + ') vs pasted URL (' + safeStream + ').';
+            const body = HASH_MISMATCH_LINES
+                .filter(Boolean)
+                .map(line => '<div>' + escapeHtmlClient(line) + '</div>')
+                .join('');
+            return '<div class="alert-head">' + head + '</div>' + (body ? '<div class="alert-body">' + body + '</div>' : '');
+        }
+        function setHashMismatchAlert(message) {
+            if (!hashMismatchEl) return;
+            if (!message) {
+                hashMismatchEl.style.display = 'none';
+                hashMismatchEl.innerHTML = '';
+                return;
+            }
+            hashMismatchEl.innerHTML = message;
+            hashMismatchEl.style.display = 'block';
+        }
 
         function md5hex(str) {
             function rotateLeft(lValue, iShiftBits) { return (lValue << iShiftBits) | (lValue >>> (32 - iShiftBits)); }
@@ -2363,13 +2436,16 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             STATE.cacheBlocked = cacheFlag;
             hashStatusEl.classList.remove('warn', 'success', 'error');
             if (hasMismatch) {
-                hashStatusEl.textContent = 'Hash 1 != Hash 2';
+                hashStatusEl.textContent = 'Hash mismatch detected.';
                 hashStatusEl.classList.add('warn');
+                setHashMismatchAlert(buildHashMismatchAlert(linked, stream));
             } else if (stream) {
                 hashStatusEl.textContent = 'Hash 1 = Hash 2';
                 hashStatusEl.classList.add('success');
+                setHashMismatchAlert('');
             } else {
                 hashStatusEl.textContent = tt('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...');
+                setHashMismatchAlert('');
             }
         }
 

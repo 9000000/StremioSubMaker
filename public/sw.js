@@ -218,38 +218,54 @@ self.addEventListener('activate', (event) => {
  * Fetch event: Handle requests with appropriate caching strategy
  */
 self.addEventListener('fetch', (event) => {
-    const { request } = event;
-    const url = new URL(request.url);
+    event.respondWith((async () => {
+        const { request } = event;
+        const url = new URL(request.url);
 
-    // Skip cross-origin requests
-    if (url.origin !== self.location.origin) {
-        return;
-    }
+        // Skip cross-origin requests
+        if (url.origin !== self.location.origin) {
+            return fetch(request);
+        }
 
-    // Dynamic pages that deliberately set Vary:* (toolbox, upload, addon) should never be cached
-    if (shouldBypassCaching(url)) {
-        return event.respondWith(
-            fetch(request, { cache: 'no-store' }).catch(() => new Response(
+        // If the *page* making this request is a bypass page (file-upload/toolbox/addon),
+        // skip all SW caching for its subresources to avoid Vary:* / no-store noise.
+        try {
+            if (event.clientId) {
+                const client = await self.clients.get(event.clientId);
+                if (client) {
+                    const clientUrl = new URL(client.url);
+                    if (shouldBypassCaching(clientUrl)) {
+                        return fetch(request, { cache: 'no-store' });
+                    }
+                }
+            }
+        } catch (_) {}
+
+        // Dynamic pages that deliberately set Vary:* (toolbox, upload, addon) should never be cached
+        if (shouldBypassCaching(url)) {
+            return fetch(request, { cache: 'no-store' }).catch(() => new Response(
                 'Offline - dynamic page not cached',
                 { status: 503, statusText: 'Service Unavailable' }
-            ))
-        );
-    }
+            ));
+        }
 
-    // API calls: Network-first strategy
-    if (url.pathname.startsWith('/api/')) {
-        return event.respondWith(handleApiRequest(request));
-    }
+        // API calls: Network-first strategy
+        if (url.pathname.startsWith('/api/')) {
+            return handleApiRequest(request);
+        }
 
-    // HTML pages: Network-first strategy
-    if (url.pathname === '/' || url.pathname === '/configure' || url.pathname.endsWith('.html')) {
-        return event.respondWith(handleHtmlRequest(request));
-    }
+        // HTML pages: Network-first strategy
+        if (url.pathname === '/' || url.pathname === '/configure' || url.pathname.endsWith('.html')) {
+            return handleHtmlRequest(request);
+        }
 
-    // Static assets: Cache-first strategy
-    if (isStaticAsset(url.pathname)) {
-        return event.respondWith(handleStaticAsset(request));
-    }
+        // Static assets: Cache-first strategy
+        if (isStaticAsset(url.pathname)) {
+            return handleStaticAsset(request);
+        }
+
+        return fetch(request);
+    })());
 });
 
 /**
@@ -340,6 +356,11 @@ async function handleHtmlRequest(request) {
 async function handleStaticAsset(request) {
     const url = new URL(request.url);
     const cacheName = getVersionedCacheName(APP_VERSION);
+
+    // Only cache GETs; other methods are invalid for Cache API
+    if (request.method && request.method.toUpperCase() !== 'GET') {
+        return fetch(request, { cache: 'no-store' });
+    }
 
     if (NON_CACHEABLE_ASSETS.has(url.pathname)) {
         try {

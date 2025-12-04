@@ -2446,21 +2446,39 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       font-size: 13px;
     }
     #hash-mismatch-alert {
-      padding: 8px 10px;
-      font-size: 13px;
-      font-weight: 600;
-      width: min(680px, 100%);
-      box-shadow: 0 6px 16px rgba(239,68,68,0.12);
-      gap: 4px;
+      margin: 8px auto 0;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(239,68,68,0.35);
+      background: rgba(239,68,68,0.08);
+      color: var(--danger);
+      font-weight: 700;
+      font-size: 14px;
+      text-align: center;
+      width: min(780px, 100%);
+      box-shadow: 0 8px 22px rgba(239,68,68,0.12);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
     }
     #hash-mismatch-alert .alert-head {
-      font-size: 11px;
-      padding: 4px 10px;
+      color: #fff;
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+      padding: 6px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 10px 18px rgba(185,28,28,0.18);
     }
     #hash-mismatch-alert .alert-body {
       font-size: 13px;
       font-weight: 600;
-      line-height: 1.35;
+      line-height: 1.4;
+      color: var(--danger);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
     .log-header {
       display: inline-flex;
@@ -2816,6 +2834,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
               </select>
               <p class="mode-helper">${modeHelperHtml}</p>
               <button id="extract-btn" type="button" class="secondary">${escapeHtml(copy.step1.extractButton)}</button>
+              <p id="hash-mismatch-inline" class="hash-inline">${escapeHtml(copy.step1.hashMismatchInline)}</p>
             </div>
           <div class="log-header" aria-hidden="true">
             <span class="pulse"></span>
@@ -2823,6 +2842,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
             <span>${escapeHtml(copy.step1.logSub)}</span>
           </div>
           <div class="log" id="extract-log" aria-live="polite"></div>
+          <div class="log-alert" id="hash-mismatch-alert" style="display:none;" role="status" aria-live="polite"></div>
 
           <div class="result-box">
             <div class="result-head">
@@ -5100,6 +5120,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         log: document.getElementById('logArea'),
         streamUrl: document.getElementById('streamUrl'),
         hashStatus: document.getElementById('hashStatus'),
+        hashMismatchAlert: document.getElementById('auto-hash-mismatch'),
         modeSelect: document.getElementById('autoSubsMode'),
         modeDetails: document.getElementById('modeDetails'),
         sourceLang: document.getElementById('detectedLang'),
@@ -5149,6 +5170,39 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         autoSubsInFlight: false,
         step1Confirmed: false
       };
+      const escapeHtmlClient = (value) => {
+        if (value === undefined || value === null) return '';
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      };
+      const HASH_MISMATCH_LINES = [
+        tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match before extraction can start.'),
+        tt('toolbox.embedded.step1.hashMismatchLine2', {}, 'Copy the stream link again in Stremio and paste it here to unlock the button.')
+      ];
+      function buildHashMismatchAlert(linkedHash, streamHash) {
+        const safeLinked = escapeHtmlClient(linkedHash || 'unknown');
+        const safeStream = escapeHtmlClient(streamHash || 'unknown');
+        const head = 'Hash mismatch detected: linked stream (' + safeLinked + ') vs pasted URL (' + safeStream + ').';
+        const body = HASH_MISMATCH_LINES
+          .filter(Boolean)
+          .map(line => '<div>' + escapeHtmlClient(line) + '</div>')
+          .join('');
+        return '<div class="alert-head">' + head + '</div>' + (body ? '<div class="alert-body">' + body + '</div>' : '');
+      }
+      function setHashMismatchAlert(message) {
+        if (!els.hashMismatchAlert) return;
+        if (!message) {
+          els.hashMismatchAlert.style.display = 'none';
+          els.hashMismatchAlert.innerHTML = '';
+          return;
+        }
+        els.hashMismatchAlert.innerHTML = message;
+        els.hashMismatchAlert.style.display = 'block';
+      }
       const lockReasons = {
         needContinue: (copy?.locks && copy.locks.needContinue) || tt('toolbox.autoSubs.locks.needContinue', {}, 'Click Continue to unlock the next steps.'),
         needTarget: (copy?.locks && copy.locks.needTarget) || tt('toolbox.autoSubs.locks.needTarget', {}, 'Select a target or disable translation to unlock Run.')
@@ -5731,7 +5785,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         if (hashEl) {
           hashEl.classList.remove('warn', 'danger', 'success');
           if (hasMismatch) {
-            hashEl.textContent = 'Hash 1 != Hash 2';
+            hashEl.textContent = 'Hash mismatch detected.';
             hashEl.classList.add('danger');
           } else if (streamHash) {
             hashEl.textContent = 'Hash 1 = Hash 2';
@@ -5739,6 +5793,11 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           } else {
             hashEl.textContent = tt('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...');
           }
+        }
+        if (hasMismatch) {
+          setHashMismatchAlert(buildHashMismatchAlert(linked, streamHash));
+        } else {
+          setHashMismatchAlert('');
         }
       }
 
@@ -6558,6 +6617,44 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     .translation-settings-toggle .caret { font-weight: 800; }
     .translation-settings-content { padding: 12px; border-top: 1px solid var(--border); display: none; }
     .translation-settings.open .translation-settings-content { display: block; }
+    .hash-mismatch-alert {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(239,68,68,0.35);
+      background: rgba(239,68,68,0.08);
+      color: var(--danger);
+      font-weight: 700;
+      font-size: 14px;
+      box-shadow: 0 8px 22px rgba(239,68,68,0.12);
+      display: none;
+    }
+    .hash-mismatch-alert .alert-head {
+      color: #fff;
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+      padding: 6px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 10px 18px rgba(185,28,28,0.18);
+      text-align: center;
+      margin: 0 auto 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+    }
+    .hash-mismatch-alert .alert-body {
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.4;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: center;
+      color: var(--danger);
+    }
 
     .section-joined .joined-grid {
       position: relative;
@@ -6853,6 +6950,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             <label for="streamUrl">${escapeHtml(copy.steps.streamLabel)}</label>
             <input type="text" id="streamUrl" placeholder="${escapeHtml(copy.steps.streamPlaceholder)}">
             <div class="notice" id="hashStatus" style="margin-top:10px;">${escapeHtml(copy.videoMeta.waiting)}</div>
+            <div class="hash-mismatch-alert" id="auto-hash-mismatch" role="status" aria-live="polite"></div>
             <div class="controls" style="margin-top:12px;">
               <button class="btn secondary" id="prefillFromVideo">${escapeHtml(copy.steps.prefill)}</button>
               <button class="btn" id="autoContinue"><span>➡️</span> ${escapeHtml(copy.actions.continue)}</button>
