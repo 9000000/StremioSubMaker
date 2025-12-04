@@ -1753,6 +1753,7 @@ app.get('/api/stream-activity', async (req, res) => {
 
     try {
         const resolvedConfig = await resolveConfigGuarded(configStr, req, res, '[API] stream-activity config', t);
+        if (!resolvedConfig) return;
         if (resolvedConfig?.__sessionTokenError === true) {
             t = getTranslatorFromRequest(req, res, resolvedConfig);
             return res.status(401).json({ error: t('server.errors.invalidConfig', {}, 'Invalid or expired config') });
@@ -1826,6 +1827,7 @@ app.post('/api/gemini-models', async (req, res) => {
         // Allow fetching models using the user's saved config (session token)
         if (!geminiApiKey && configStr) {
             resolvedConfig = await resolveConfigGuarded(configStr, req, res, '[API] gemini-models config', t);
+            if (!resolvedConfig) return;
             if (isInvalidSessionConfig(resolvedConfig)) {
                 t = getTranslatorFromRequest(req, res, resolvedConfig);
                 return res.status(401).json({ error: t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token') });
@@ -1877,6 +1879,7 @@ app.post('/api/models/:provider', async (req, res) => {
         const getProviderConfigFromSession = async () => {
             if (!configStr) return null;
             resolvedConfig = resolvedConfig || await resolveConfigGuarded(configStr, req, res, '[API] models config', t);
+            if (!resolvedConfig) return null;
             if (isInvalidSessionConfig(resolvedConfig)) {
                 return { __invalidSession: true };
             }
@@ -2570,6 +2573,7 @@ app.post('/api/translate-file', fileTranslationLimiter, validateRequest(fileTran
 
         // Parse config
         const config = await resolveConfigGuarded(configStr, req, res, '[API] translate-file config', t);
+        if (!config) return;
         if (isInvalidSessionConfig(config)) {
             t = getTranslatorFromRequest(req, res, config);
             return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
@@ -3049,6 +3053,7 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
 
         const { config: configStr, fileId, language } = req.params;
         const config = await resolveConfigGuarded(configStr, req, res, '[Download] config', t);
+        if (!config) return;
         if (isInvalidSessionConfig(config)) {
             log.warn(() => `[Download] Blocked subtitle download due to invalid session token ${redactToken(configStr)}`);
             const errorSubtitle = createSessionTokenErrorSubtitle(null, null, config?.uiLanguage || 'en');
@@ -3144,6 +3149,7 @@ app.get('/addon/:config/error-subtitle/:errorType.srt', async (req, res) => {
 
         // Resolve config to check if this is a session token error
         const config = await resolveConfigGuarded(configStr, req, res, '[Error Subtitle] config', t);
+        if (!config) return;
         t = getTranslatorFromRequest(req, res, config);
 
         // Build base URL for reinstall links
@@ -3200,6 +3206,7 @@ app.get('/addon/:config/translate-selector/:videoId/:targetLang', searchLimiter,
 
         const { config: configStr, videoId, targetLang } = req.params;
         const config = await resolveConfigGuarded(configStr, req, res, '[Translation Selector] config', t);
+        if (!config) return;
         if (isInvalidSessionConfig(config)) {
             log.warn(() => `[Translation Selector] Blocked due to invalid session token ${redactToken(configStr)}`);
             t = getTranslatorFromRequest(req, res, config);
@@ -3245,6 +3252,7 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleF
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const { config: configStr, sourceFileId, targetLang } = req.params;
         const config = await resolveConfigGuarded(configStr, req, res, '[Translation] config', t);
+        if (!config) return;
         if (isInvalidSessionConfig(config)) {
             log.warn(() => `[Translation] Blocked translation due to invalid session token ${redactToken(configStr)}`);
             const errorSubtitle = createSessionTokenErrorSubtitle(null, null, config?.uiLanguage || 'en');
@@ -3418,6 +3426,7 @@ app.get('/addon/:config/learn/:sourceFileId/:targetLang', normalizeSubtitleForma
 
         const { config: configStr, sourceFileId, targetLang } = req.params;
         const baseConfig = await resolveConfigGuarded(configStr, req, res, '[Learn] config', t);
+        if (!baseConfig) return;
         if (isInvalidSessionConfig(baseConfig)) {
             log.warn(() => `[Learn] Blocked request due to invalid session token ${redactToken(configStr)}`);
             const errorSubtitle = createSessionTokenErrorSubtitle(null, null, baseConfig?.uiLanguage || 'en');
@@ -3560,7 +3569,8 @@ app.get('/addon/:config/sub-toolbox/:videoId', async (req, res) => {
         const { config: configStr, videoId } = req.params;
         const { filename } = req.query;
         // Validate config to ensure token is valid before redirect
-        await resolveConfigGuarded(configStr, req, res, '[Sub Toolbox] config', t);
+        const resolvedConfig = await resolveConfigGuarded(configStr, req, res, '[Sub Toolbox] config', t);
+        if (!resolvedConfig) return;
         log.debug(() => `[Sub Toolbox] Request for video ${videoId}, filename: ${filename || 'n/a'}`);
         res.redirect(302, `/sub-toolbox?config=${encodeURIComponent(configStr)}&videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(filename || '')}`);
     } catch (error) {
@@ -3582,6 +3592,7 @@ app.get('/sub-toolbox', async (req, res) => {
         }
 
         const config = await resolveConfigGuarded(configStr, req, res, '[Sub Toolbox Page] config', t);
+        if (!config) return;
         t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, configStr);
 
@@ -3608,7 +3619,8 @@ app.get('/addon/:config/embedded-subtitles/:videoId', async (req, res) => {
 
         const { config: configStr, videoId } = req.params;
         const { filename } = req.query;
-        await resolveConfigGuarded(configStr, req, res, '[Embedded Subs Addon] config', t);
+        const resolvedConfig = await resolveConfigGuarded(configStr, req, res, '[Embedded Subs Addon] config', t);
+        if (!resolvedConfig) return;
 
         log.debug(() => `[Embedded Subs] Addon redirect for video ${videoId}, filename: ${filename}`);
 
@@ -3631,6 +3643,7 @@ app.get('/embedded-subtitles', async (req, res) => {
         }
 
         const config = await resolveConfigGuarded(configStr, req, res, '[Embedded Subs Page] config', t);
+        if (!config) return;
         t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, configStr);
         log.debug(() => `[Embedded Subs Page] Loading extractor for video ${videoId}`);
@@ -3657,7 +3670,9 @@ app.get('/addon/:config/auto-subtitles/:videoId', async (req, res) => {
 
         const { config: configStr, videoId } = req.params;
         const { filename } = req.query;
-        await resolveConfigGuarded(configStr, req, res, '[Auto Subs Addon] config', t);
+        const resolvedConfig = await resolveConfigGuarded(configStr, req, res, '[Auto Subs Addon] config', t);
+        // If storage was unavailable, the response has already been handled
+        if (!resolvedConfig) return;
 
         log.debug(() => `[Auto Subs] Addon redirect for video ${videoId}, filename: ${filename}`);
 
@@ -3683,6 +3698,8 @@ app.get('/auto-subtitles', async (req, res) => {
         setNoStore(res);
 
         const config = await resolveConfigGuarded(configStr, req, res, '[Auto Subs Page] config', t);
+        // If storage is unavailable, response was already sent
+        if (!config) return;
         t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, configStr);
 
@@ -3732,6 +3749,8 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
         }
 
         const config = await resolveConfigGuarded(configStr, req, res, '[Auto Subs API] config', t);
+        // If storage is unavailable, respondStorageUnavailable already replied
+        if (!config) return;
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[Auto Subs API] Rejected due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, config);
@@ -3935,6 +3954,7 @@ app.get('/addon/:config/sync-subtitles/:videoId', async (req, res) => {
         const { config: configStr, videoId } = req.params;
         const { filename } = req.query;
         const config = await resolveConfigGuarded(configStr, req, res, '[Sync Subtitles] config', t);
+        if (!config) return;
 
         log.debug(() => `[Sync Subtitles] Request for video ${videoId}, filename: ${filename}`);
 
@@ -3963,6 +3983,7 @@ app.get('/subtitle-sync', async (req, res) => {
         }
 
         const config = await resolveConfigGuarded(configStr, req, res, '[Subtitle Sync Page] config', t);
+        if (!config) return;
         t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, configStr);
 
@@ -3997,6 +4018,7 @@ app.get('/addon/:config/xsync/:videoHash/:lang/:sourceSubId', async (req, res) =
 
         const { config: configStr, videoHash, lang, sourceSubId } = req.params;
         const config = await resolveConfigGuarded(configStr, req, res, '[xSync Download] config', t);
+        if (!config) return;
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[xSync Download] Rejected due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, config);
@@ -4055,6 +4077,7 @@ app.post('/api/save-synced-subtitle', userDataWriteLimiter, async (req, res) => 
 
         // Validate config
         const config = await resolveConfigGuarded(configStr, req, res, '[Save Synced] config');
+        if (!config) return;
 
         // Reject writes when session token is missing/invalid to prevent cross-user pollution of shared sync cache
         if (!config || config.__sessionTokenError === true) {
@@ -4097,6 +4120,7 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId', async (req, res) =
         setNoStore(res);
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const config = await resolveConfigGuarded(configStr, req, res, '[xEmbed Download] config', t);
+        if (!config) return;
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[xEmbed Download] Rejected due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, config);
@@ -4142,6 +4166,7 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId/original', async (re
         setNoStore(res);
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
         const config = await resolveConfigGuarded(configStr, req, res, '[xEmbed Original] config', t);
+        if (!config) return;
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[xEmbed Original] Rejected due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, config);
@@ -4205,6 +4230,7 @@ app.post('/api/save-embedded-subtitle', userDataWriteLimiter, async (req, res) =
         }
 
         const config = await resolveConfigGuarded(configStr, req, res, '[Save Embedded] config', t);
+        if (!config) return;
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[Save Embedded] Rejected write due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, config);
@@ -4286,6 +4312,7 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
         const safeSourceLanguage = normalizedSourceLang || 'und';
 
         const baseConfig = await resolveConfigGuarded(configStr, req, res, '[Embedded Translate] config', t);
+        if (!baseConfig) return;
         if (!baseConfig || baseConfig.__sessionTokenError === true) {
             log.warn(() => '[Embedded Translate] Rejected due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, baseConfig);
@@ -5279,6 +5306,7 @@ app.get('/addon/:config/manifest.json', async (req, res) => {
 
         log.debug(() => `[Manifest] Parsing config for manifest request`);
         const config = await resolveConfigGuarded(req.params.config, req, res, '[Manifest] config', t);
+        if (!config) return;
         t = getTranslatorFromRequest(req, res, config);
         ensureConfigHash(config, req.params.config);
 
@@ -5397,6 +5425,7 @@ app.use('/addon/:config', async (req, res, next) => {
 
                 // Cache miss: fetch config (only happens when creating new router)
                 const config = await resolveConfigGuarded(configStr, req, res, '[Router] config');
+                if (!config) return null;
 
                 // Defensive validation
                 if (!config || typeof config !== 'object') {
@@ -5472,6 +5501,7 @@ app.use('/addon/:config', async (req, res, next) => {
             log.debug(() => `[Router] Serving cached router for ${redactToken(configStr)}, targets: ${router.__targetLanguages || 'unknown'}, age: ${Date.now() - (router.__createdAt || 0)}ms`);
         }
 
+        if (!router) return; // Storage unavailable response already sent upstream
         router(req, res, next);
     } catch (error) {
         if (respondStorageUnavailable(res, error, '[Router]')) return;
