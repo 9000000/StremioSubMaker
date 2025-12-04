@@ -756,6 +756,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       text-decoration: none;
       pointer-events: none;
       cursor: default;
+      font-weight: 800;
     }
     .status-dot {
       width: 12px;
@@ -1540,7 +1541,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       hashMismatchLine2: t(
         'toolbox.embedded.step1.hashMismatchLine2',
         {},
-        'Copy the stream link directly from Stremio to unlock extraction.'
+        ''
       ),
       logHeader: t('toolbox.embedded.step1.logHeader', {}, 'Live log'),
       logSub: t('toolbox.embedded.step1.logSub', {}, 'Auto-filled while extraction runs.'),
@@ -2130,6 +2131,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       text-decoration: none;
       pointer-events: none;
       cursor: default;
+      font-weight: 800;
     }
     .status-badge .ext-link {
       font-size: 14px;
@@ -2142,6 +2144,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       text-decoration: none;
       pointer-events: none;
       cursor: default;
+      font-weight: 800;
     }
     .hero {
       border-radius: 18px;
@@ -4994,8 +4997,15 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     }
 
     // Event bindings
+    let lastStreamValue = (els.streamUrl?.value || '').trim();
     if (els.streamUrl) {
       const handleStreamInput = () => {
+        const current = (els.streamUrl?.value || '').trim();
+        const changed = current !== lastStreamValue;
+        lastStreamValue = current;
+        if (changed && !state.extractionInFlight) {
+          resetExtractionState(true);
+        }
         updateHashMismatchState({ log: false });
       };
       ['input', 'change', 'blur'].forEach(evt => {
@@ -5171,7 +5181,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         dlSrt: document.getElementById('downloadSrt'),
         dlVtt: document.getElementById('downloadVtt'),
         translations: document.getElementById('translationDownloads'),
-        prefill: document.getElementById('prefillFromVideo'),
         videoMetaTitle: document.getElementById('video-meta-title'),
         videoMetaSubtitle: document.getElementById('video-meta-subtitle'),
         extDot: document.getElementById('ext-dot'),
@@ -5999,16 +6008,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       function bindEvents() {
         els.startBtn?.addEventListener('click', runAutoSubs);
         els.previewBtn?.addEventListener('click', previewPlan);
-        els.prefill?.addEventListener('click', () => {
-          const preferredStream = initialStreamUrl || (isLikelyStreamUrl(BOOTSTRAP.filename) ? BOOTSTRAP.filename : '');
-          if (preferredStream) {
-            els.streamUrl.value = preferredStream;
-          } else if (BOOTSTRAP.videoId) {
-            els.streamUrl.value = 'stremio://' + BOOTSTRAP.videoId;
-          }
-          if (state.step1Confirmed) resetStepFlow(lockReasons.needContinue);
-          updateHashStatusFromInput();
-        });
         if (els.streamUrl) {
           const handleEdit = () => {
             if (state.step1Confirmed) resetStepFlow(lockReasons.needContinue);
@@ -6027,6 +6026,47 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         els.provider?.addEventListener('change', renderProviderModels);
         els.targetLang?.addEventListener('change', () => refreshStepLocks());
         els.continueBtn?.addEventListener('click', () => {
+          const stream = (els.streamUrl?.value || '').trim();
+          const linkedHash = PAGE.videoHash || '';
+          const fallback = { filename: PAGE.filename, videoId: PAGE.videoId };
+          const invalidMsg = tt('toolbox.logs.invalidUrl', {}, 'Invalid stream URL. Paste a full http/https link.');
+          const missingMsg = tt('toolbox.autoSubs.logs.noStream', {}, 'Paste a stream URL first.');
+          const mismatchMsg = HASH_MISMATCH_LINES[0] || tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match before extraction can start.');
+
+          const resetWithReason = (reason) => {
+            resetStepFlow(reason || lockReasons.needContinue);
+            if (reason) setStatus(reason);
+          };
+
+          if (!stream) {
+            appendLog(missingMsg);
+            resetWithReason(missingMsg);
+            updateHashStatusFromInput();
+            return;
+          }
+          if (!isLikelyStreamUrl(stream)) {
+            appendLog(invalidMsg);
+            resetWithReason(invalidMsg);
+            updateHashStatusFromInput();
+            return;
+          }
+
+          let derived = { hash: '', filename: '', videoId: '', source: 'stream-url' };
+          try {
+            derived = deriveStreamHashFromUrl(stream, fallback);
+          } catch (_) {
+            derived = { hash: '', filename: '', videoId: '', source: 'stream-url' };
+          }
+          const hasMismatch = linkedHash && derived.hash && linkedHash !== derived.hash;
+          if (hasMismatch) {
+            const alert = buildHashMismatchAlert(linkedHash, derived.hash);
+            setHashMismatchAlert(alert);
+            appendLog(mismatchMsg);
+            resetWithReason(mismatchMsg);
+            updateHashStatusFromInput();
+            return;
+          }
+
           state.step1Confirmed = true;
           refreshStepLocks();
           updateHashStatusFromInput();
@@ -6173,9 +6213,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       three: t('toolbox.autoSubs.steps.step3Chip', {}, 'Step 3'),
       four: t('toolbox.autoSubs.steps.step4Chip', {}, 'Step 4'),
       inputTitle: t('toolbox.autoSubs.steps.step1Title', {}, 'Input audio or video'),
-      streamLabel: t('toolbox.autoSubs.steps.streamLabel', {}, 'Stream / file URL'),
+      streamLabel: t('toolbox.autoSubs.steps.streamLabel', {}, 'Stream URL:'),
       streamPlaceholder: t('toolbox.autoSubs.steps.streamPlaceholder', {}, 'https://example.com/video.mkv'),
-      prefill: t('toolbox.autoSubs.steps.prefill', {}, 'Use provided stream id'),
       langModelTitle: t('toolbox.autoSubs.steps.step2Title', {}, 'Mode & audio'),
       modeLabel: t('toolbox.autoSubs.steps.modeLabel', {}, 'Auto-subtitles mode'),
       modeHelper: t('toolbox.autoSubs.steps.modeHelper', {}, 'Cloudflare Workers AI runs remotely. Local xSync is coming soon.'),
@@ -6662,6 +6701,12 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       font-size: 14px;
       box-shadow: 0 8px 22px rgba(239,68,68,0.12);
       display: none;
+      width: 100%;
+      box-sizing: border-box;
+      text-align: center;
+      align-self: stretch;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
     .hash-mismatch-alert .alert-head {
       color: #fff;
@@ -6673,11 +6718,14 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       box-shadow: 0 10px 18px rgba(185,28,28,0.18);
       text-align: center;
       margin: 0 auto 6px;
-      display: inline-flex;
+      display: flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
       width: 100%;
+      flex-wrap: wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
     .hash-mismatch-alert .alert-body {
       font-size: 13px;
@@ -6688,6 +6736,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       gap: 4px;
       text-align: center;
       color: var(--danger);
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
     .section-joined .joined-grid {
@@ -7025,7 +7075,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             <input type="text" id="streamUrl" placeholder="${escapeHtml(copy.steps.streamPlaceholder)}">
             <div class="hash-mismatch-alert" id="auto-hash-mismatch" role="status" aria-live="polite"></div>
             <div class="controls" style="margin-top:12px;">
-              <button class="btn secondary" id="prefillFromVideo">${escapeHtml(copy.steps.prefill)}</button>
               <button class="btn" id="autoContinue"><span>➡️</span> ${escapeHtml(copy.actions.continue)}</button>
             </div>
           </div>

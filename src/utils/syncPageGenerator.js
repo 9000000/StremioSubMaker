@@ -3533,8 +3533,46 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
 
         // Step 1: Continue button
         document.getElementById('continueBtn').addEventListener('click', async () => {
-            const streamUrl = document.getElementById('streamUrl').value.trim();
+            const streamUrlInput = document.getElementById('streamUrl');
+            const streamUrl = (streamUrlInput?.value || '').trim();
+            const linkedHash = CONFIG.videoHash || deriveVideoHashFromParts(CONFIG.streamFilename, CONFIG.videoId);
+            const requiredMsg = tt('sync.step3.status.urlRequired', {}, 'Autosync requires a valid http(s) stream URL. Please paste it in Step 1.');
+            const invalidMsg = tt('sync.step3.status.invalidStream', {}, 'Autosync requires a valid http(s) stream URL. Manual offsets can run without it.');
+            const mismatchMsg = HASH_MISMATCH_LINES[0] || tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match before extraction can start.');
+            const resetFlow = (reason) => resetStepFlow(reason || lockReasons.needContinue);
+
+            let derived = { hash: '', filename: '', videoId: '', source: 'stream-url' };
+            try {
+                derived = streamUrl
+                    ? deriveStreamHashFromUrl(streamUrl, { filename: CONFIG.streamFilename, videoId: CONFIG.videoId })
+                    : derived;
+            } catch (_) {
+                derived = { hash: '', filename: '', videoId: '', source: 'stream-url' };
+            }
+
             updateHashStatusFromInput();
+
+            if (!streamUrl) {
+                STATE.streamUrl = null;
+                showStatus('syncStatus', requiredMsg, 'error');
+                resetFlow(requiredMsg);
+                return;
+            }
+
+            if (!isHttpUrl(streamUrl)) {
+                STATE.streamUrl = null;
+                showStatus('syncStatus', invalidMsg, 'error');
+                resetFlow(invalidMsg);
+                return;
+            }
+
+            if (linkedHash && derived.hash && linkedHash !== derived.hash) {
+                STATE.streamUrl = null;
+                setHashMismatchAlert(buildHashMismatchAlert(linkedHash, derived.hash));
+                showStatus('syncStatus', mismatchMsg, 'error');
+                resetFlow(mismatchMsg);
+                return;
+            }
 
             STATE.step1Confirmed = true;
             enableSection('step2Section');
@@ -3542,18 +3580,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                 enableSection('step3Section');
             } else {
                 lockSection('step3Section', lockReasons.needSubtitle);
-            }
-
-            if (!streamUrl) {
-                STATE.streamUrl = null;
-                showStatus('syncStatus', tt('sync.step3.status.noStream', {}, 'No stream linked. Manual offsets are fine, but autosync will need an http(s) stream URL.'), 'info');
-                return;
-            }
-
-            if (!isHttpUrl(streamUrl)) {
-                STATE.streamUrl = null;
-                showStatus('syncStatus', tt('sync.step3.status.invalidStream', {}, 'Autosync requires a valid http(s) stream URL. Manual offsets can run without it.'), 'error');
-                return;
             }
 
             // Store stream URL for extension
