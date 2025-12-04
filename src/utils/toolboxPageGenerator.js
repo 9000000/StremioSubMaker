@@ -4811,7 +4811,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 `;
 }
 
-function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, streamUrl = '') {
+async function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, streamUrl = '') {
   const links = buildToolLinks(configStr, videoId, filename);
   const devMode = config.devMode === true;
   const t = getTranslator(config?.uiLanguage || 'en');
@@ -4829,6 +4829,9 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
     code,
     name: getLanguageName(code) || code
   }));
+  const parsedVideo = parseStremioId(videoId);
+  const episodeTag = formatEpisodeTag(parsedVideo);
+  const linkedTitle = await fetchLinkedTitleServer(videoId);
   const providerOptions = (() => {
     const options = [];
     const providers = config.providers || {};
@@ -4904,7 +4907,8 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
         dlVtt: document.getElementById('downloadVtt'),
         translations: document.getElementById('translationDownloads'),
         prefill: document.getElementById('prefillFromVideo'),
-        clear: document.getElementById('clearInputs'),
+        videoMetaTitle: document.getElementById('video-meta-title'),
+        videoMetaSubtitle: document.getElementById('video-meta-subtitle'),
         extDot: document.getElementById('ext-dot'),
         extLabel: document.getElementById('ext-label'),
         extStatus: document.getElementById('ext-status'),
@@ -4927,6 +4931,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
         cacheBlocked: false,
         autoSubsInFlight: false
       };
+      let videoMetaRequestId = 0;
       const urlSchemePattern = new RegExp('^[a-z][a-z0-9+.-]*://', 'i');
       const isLikelyStreamUrl = (val) => urlSchemePattern.test(val || '');
       const bootstrapStreamUrl = BOOTSTRAP.streamUrl || '';
@@ -5151,6 +5156,67 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
 
       function setProgress(pct) {
         if (els.progress) els.progress.style.width = Math.min(100, Math.max(0, pct || 0)) + '%';
+      }
+
+      function cleanDisplayNameClient(raw) {
+        if (!raw) return '';
+        const lastSegment = String(raw).split(/[/\\]/).pop() || '';
+        const withoutExt = lastSegment.replace(/\.[^.]+$/, '');
+        const spaced = withoutExt.replace(/[_\\.]+/g, ' ').replace(/\s+/g, ' ').trim();
+        return spaced || withoutExt || lastSegment;
+      }
+
+      function formatEpisodeTagDisplay(videoId) {
+        const parts = (videoId || '').split(':');
+        if (parts.length >= 3) {
+          const season = parseInt(parts[1], 10);
+          const episode = parseInt(parts[2], 10);
+          const s = Number.isFinite(season) ? 'S' + String(season).padStart(2, '0') : '';
+          const e = Number.isFinite(episode) ? 'E' + String(episode).padStart(2, '0') : '';
+          if (s || e) return (s + e).trim();
+        }
+        return '';
+      }
+
+      async function fetchLinkedTitle(videoId) {
+        const trimmed = (videoId || '').trim();
+        if (!trimmed) return '';
+        const parts = trimmed.split(':');
+        const imdbId = (parts[0] || '').replace(/^tt/i, 'tt');
+        if (!imdbId.startsWith('tt')) return '';
+        const metaType = parts.length >= 3 ? 'series' : 'movie';
+        const metaUrl = 'https://v3-cinemeta.strem.io/meta/' + metaType + '/' + encodeURIComponent(imdbId) + '.json';
+        try {
+          const resp = await fetch(metaUrl);
+          if (!resp.ok) throw new Error('meta fetch failed');
+          const data = await resp.json();
+          return data?.meta?.name || data?.meta?.english_name || data?.meta?.nameTranslated?.en || '';
+        } catch (_) {
+          return '';
+        }
+      }
+
+      function renderVideoMeta(source = {}) {
+        if (!els.videoMetaTitle || !els.videoMetaSubtitle) return;
+        const episodeLabel = formatEpisodeTagDisplay(source.videoId);
+        const fallbackTitle = cleanDisplayNameClient(source.filename) || cleanDisplayNameClient(source.videoId) || copy.videoMeta.none;
+        const resolvedTitle = source.title || fallbackTitle || copy.videoMeta.none;
+        const details = [];
+        if (source.title) details.push('Title: ' + source.title);
+        else if (source.videoId) details.push('Video ID: ' + source.videoId);
+        if (episodeLabel) details.push('Episode: ' + episodeLabel);
+        if (source.filename) details.push('File: ' + cleanDisplayNameClient(source.filename));
+        els.videoMetaTitle.textContent = resolvedTitle;
+        els.videoMetaSubtitle.textContent = details.join(' - ') || copy.videoMeta.waiting;
+      }
+
+      async function hydrateVideoMeta(source = {}) {
+        renderVideoMeta(source);
+        if (!source.videoId || source.title) return;
+        const requestId = ++videoMetaRequestId;
+        const fetched = await fetchLinkedTitle(source.videoId);
+        if (requestId !== videoMetaRequestId || !fetched) return;
+        renderVideoMeta({ ...source, title: fetched });
       }
 
       function resetPills() {
@@ -5445,6 +5511,11 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
         if (els.providerModel && BOOTSTRAP.defaults?.translationModel) {
           els.providerModel.value = BOOTSTRAP.defaults.translationModel;
         }
+        hydrateVideoMeta({
+          title: BOOTSTRAP.linkedTitle || '',
+          videoId: PAGE.videoId,
+          filename: PAGE.filename
+        });
         hydrateTargets();
         renderProviders();
         updateHashStatusFromInput();
@@ -5460,15 +5531,6 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
           } else if (BOOTSTRAP.videoId) {
             els.streamUrl.value = 'stremio://' + BOOTSTRAP.videoId;
           }
-          updateHashStatusFromInput();
-        });
-        els.clear?.addEventListener('click', () => {
-          if (els.streamUrl) els.streamUrl.value = '';
-          setPreview(tt('toolbox.autoSubs.status.noOutput', {}, 'No output yet.'));
-          setDownloads(null, []);
-          setStatus(tt('toolbox.autoSubs.status.awaiting', {}, 'Awaiting input...'));
-          resetPills();
-          setProgress(0);
           updateHashStatusFromInput();
         });
         els.streamUrl?.addEventListener('blur', updateHashStatusFromInput);
@@ -5614,9 +5676,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
       inputTitle: t('toolbox.autoSubs.steps.step1Title', {}, 'Input audio or video'),
       streamLabel: t('toolbox.autoSubs.steps.streamLabel', {}, 'Stream / file URL'),
       streamPlaceholder: t('toolbox.autoSubs.steps.streamPlaceholder', {}, 'https://example.com/video.mkv'),
-      streamHelp: t('toolbox.autoSubs.steps.streamNote', {}, 'We\'ll fetch and extract audio; protected/DRM streams won\'t work.'),
       prefill: t('toolbox.autoSubs.steps.prefill', {}, 'Use provided stream id'),
-      clear: t('toolbox.autoSubs.steps.clear', {}, 'Clear'),
       langModelTitle: t('toolbox.autoSubs.steps.step2Title', {}, 'Language + model'),
       sourceLabel: t('toolbox.autoSubs.steps.sourceLabel', {}, 'Source language (optional)'),
       autoDetect: t('toolbox.autoSubs.steps.autoDetect', {}, 'Auto-detect'),
@@ -5688,6 +5748,16 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
       readyWithVersion: t('toolbox.autoSubs.extension.readyVersion', {}, 'Ready (v{version})')
     }
   };
+  const metaDetails = [];
+  if (linkedTitle) metaDetails.push(t('toolbox.embedded.meta.title', { title: linkedTitle }, `Title: ${linkedTitle}`));
+  else if (videoId) metaDetails.push(t('toolbox.embedded.meta.videoId', { id: videoId }, `Video ID: ${videoId}`));
+  if (episodeTag) metaDetails.push(t('toolbox.embedded.meta.episode', { episode: episodeTag }, `Episode: ${episodeTag}`));
+  if (filename) {
+    const cleanedFile = cleanDisplayName(filename);
+    metaDetails.push(t('toolbox.embedded.meta.file', { file: cleanedFile }, `File: ${cleanedFile}`));
+  }
+  const initialVideoTitle = escapeHtml(linkedTitle || cleanDisplayName(filename) || cleanDisplayName(videoId) || copy.videoMeta.none);
+  const initialVideoSubtitle = escapeHtml(metaDetails.join(' - ') || copy.videoMeta.unavailable);
 
   return `
 <!DOCTYPE html>
@@ -6313,13 +6383,18 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
         <div class="step-card">
           <div class="step-title"><span class="step-chip">${escapeHtml(copy.steps.one)}</span><span>${escapeHtml(copy.steps.inputTitle)}</span></div>
           <div class="step-body">
+            <div class="linked-stream-wrapper">
+              <div class="video-meta" id="linked-stream-card">
+                <p class="video-meta-label">${escapeHtml(copy.videoMeta.label)}</p>
+                <p class="video-meta-title" id="video-meta-title">${initialVideoTitle}</p>
+                <p class="video-meta-subtitle" id="video-meta-subtitle">${initialVideoSubtitle}</p>
+              </div>
+            </div>
             <label for="streamUrl">${escapeHtml(copy.steps.streamLabel)}</label>
             <input type="text" id="streamUrl" placeholder="${escapeHtml(copy.steps.streamPlaceholder)}">
             <div class="notice" id="hashStatus" style="margin-top:10px;">${escapeHtml(copy.videoMeta.waiting)}</div>
-            <small style="color: var(--text-secondary); display:block; margin-top:6px;">${escapeHtml(copy.steps.streamHelp)}</small>
             <div class="controls" style="margin-top:12px;">
               <button class="btn secondary" id="prefillFromVideo">${escapeHtml(copy.steps.prefill)}</button>
-              <button class="btn ghost" id="clearInputs">${escapeHtml(copy.steps.clear)}</button>
             </div>
           </div>
         </div>
@@ -6437,6 +6512,7 @@ function generateAutoSubtitlePage(configStr, videoId, filename, config = {}, str
     filename: filename || '',
     streamUrl: initialStreamUrl,
     videoHash,
+    linkedTitle,
     defaults,
     providerOptions,
     targetLanguages,

@@ -3707,7 +3707,7 @@ app.get('/auto-subtitles', async (req, res) => {
 
         log.debug(() => `[Auto Subs Page] Loading auto-subtitling tool for video ${videoId}`);
 
-        const html = generateAutoSubtitlePage(
+        const html = await generateAutoSubtitlePage(
             configStr,
             videoId,
             filename,
