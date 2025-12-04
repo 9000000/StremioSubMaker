@@ -4077,6 +4077,14 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       thai: 'th', hindi: 'hi', tamil: 'ta', bulgarian: 'bg', ukrainian: 'uk',
       serbian: 'sr', hungarian: 'hu', swedish: 'sv', finnish: 'fi', danish: 'da'
     };
+    const BCP47_LANG_NORMALIZE_MAP = {
+      'en-us': 'en',
+      'en-gb': 'en',
+      'en-au': 'en',
+      'en-ca': 'en',
+      'en-nz': 'en',
+      'en-uk': 'en'
+    };
     function normalizeTrackLanguageCode(raw) {
       if (!raw) return null;
       const rawStr = String(raw).trim().toLowerCase();
@@ -4085,16 +4093,73 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       if (/^remux[_\\s-]?sub/.test(rawStr)) return null;
       if (/^track\\s*\\d+/.test(rawStr)) return null;
       if (/^subtitle\\s*\\d+/.test(rawStr)) return null;
-      const cleaned = rawStr.replace(/[^a-z-]/g, '');
+      const cleaned = rawStr.replace(/_/g, '-').replace(/[^a-z-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
       if (!cleaned) return null;
-      const base = cleaned.split('-')[0];
+      if (BCP47_LANG_NORMALIZE_MAP[cleaned]) return BCP47_LANG_NORMALIZE_MAP[cleaned];
+      const parts = cleaned.split('-').filter(Boolean);
+      const base = parts[0];
       if (!base) return null;
       if (TRACK_LANG_NORMALIZE_MAP[base]) return TRACK_LANG_NORMALIZE_MAP[base];
       if (LANGUAGE_NAME_ALIASES[base]) return LANGUAGE_NAME_ALIASES[base];
+      if (base === 'en' || base === 'eng') return 'en';
+      if (/^en[a-z]{2}$/.test(base)) return 'en';
+      if (parts.length > 1 && parts[0] === 'en') return 'en';
       if (base.length === 2) return base;
       if (base.length === 3 && TRACK_LANG_NORMALIZE_MAP[base]) return TRACK_LANG_NORMALIZE_MAP[base];
       if (base.length === 3) return base;
       return base.slice(0, 8);
+    }
+    function hasEnglishKeyword(raw) {
+      if (!raw) return false;
+      const lower = String(raw).toLowerCase();
+      return /\\benglish\\b/.test(lower) || /\\beng\\b/.test(lower) || /\\ben\\b/.test(lower);
+    }
+    function collectTrackLanguageHints(track = {}) {
+      const tags = track.tags || {};
+      const hints = [
+        track.language,
+        track.lang,
+        track.languageRaw,
+        track.languageCode,
+        track.languageIetf,
+        track.langCode,
+        track.languageTag,
+        track.langTag,
+        tags.language,
+        tags.LANGUAGE,
+        tags.lang,
+        tags.LANG,
+        tags.languageIetf,
+        tags.language_ietf,
+        track.originalLanguage,
+        track.sourceLanguage,
+        track.title,
+        tags.title,
+        track.name,
+        tags.name,
+        track.label,
+        track.originalLabel,
+        track.handlerName,
+        tags.handler_name,
+        tags.handlerName
+      ];
+      return hints
+        .map(v => (v === undefined || v === null ? '' : String(v)))
+        .filter(v => v.trim().length > 0);
+    }
+    function resolveTrackLanguage(track = {}) {
+      const hints = collectTrackLanguageHints(track);
+      let firstKnown = null;
+      for (const hint of hints) {
+        const normalized = normalizeTrackLanguageCode(hint) || detectLanguageFromLabel(hint);
+        if (normalized) {
+          const code = normalized.toLowerCase();
+          if (code === 'en') return 'en';
+          if (!firstKnown) firstKnown = code;
+        }
+      }
+      if (hints.some(hasEnglishKeyword)) return 'en';
+      return firstKnown || 'und';
     }
     function detectLanguageFromLabel(label) {
       if (!label) return null;
@@ -4131,7 +4196,10 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       if (/^remux[_\\s-]?sub/.test(lowered)) return 'und';
       if (/^track\\s*\\d+/.test(lowered)) return 'und';
       if (/^subtitle\\s*\\d+/.test(lowered)) return 'und';
-      return normalizeTrackLanguageCode(raw) || detectLanguageFromLabel(raw) || 'und';
+      const normalized = normalizeTrackLanguageCode(raw) || detectLanguageFromLabel(raw);
+      if (normalized) return normalized;
+      if (hasEnglishKeyword(raw)) return 'en';
+      return 'und';
     }
 
     async function persistOriginals(batchId) {
@@ -4354,28 +4422,19 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
             const contentBase64 = t.contentBase64 || '';
             const contentValue = (typeof t.content === 'string' || t.content instanceof Uint8Array || t.content instanceof ArrayBuffer) ? t.content : '';
             const byteLength = t.byteLength || (contentBytes ? contentBytes.length : (typeof contentValue === 'string' ? contentValue.length : 0));
-            const primaryLangRaw = (t.language || t.lang || t.languageRaw || t.languageCode || t.languageIetf || '').toString().trim();
-            const primaryLang = isGeneratedLangHint(primaryLangRaw) ? '' : primaryLangRaw;
-            const fallbackLangs = [
-              t.originalLanguage,
-              t.languageCode,
-              t.languageIetf,
-              t.langCode,
-              (!isGeneratedLabel(t.originalLabel) && t.originalLabel) || null,
-              (!isGeneratedLabel(t.label) && t.label) || null,
-              (!isGeneratedLabel(t.name) && t.name) || null,
-              t.title || null
-            ].filter(Boolean);
-            let rawLang = canonicalTrackLanguageCode(primaryLang);
-            if (rawLang === 'und') {
-              for (const candidate of fallbackLangs) {
-                const next = canonicalTrackLanguageCode(candidate);
-                if (next && next !== 'und') {
-                  rawLang = next;
-                  break;
-                }
-              }
-            }
+            const normalizedTrack = {
+              ...t,
+              language: isGeneratedLangHint(t.language) ? '' : t.language,
+              lang: isGeneratedLangHint(t.lang) ? '' : t.lang,
+              languageRaw: isGeneratedLangHint(t.languageRaw) ? '' : t.languageRaw,
+              languageCode: isGeneratedLangHint(t.languageCode) ? '' : t.languageCode,
+              languageIetf: isGeneratedLangHint(t.languageIetf) ? '' : t.languageIetf,
+              langCode: isGeneratedLangHint(t.langCode) ? '' : t.langCode,
+              label: isGeneratedLabel(t.label) ? '' : t.label,
+              originalLabel: isGeneratedLabel(t.originalLabel) ? '' : t.originalLabel,
+              name: isGeneratedLabel(t.name) ? '' : t.name
+            };
+            const rawLang = resolveTrackLanguage(normalizedTrack);
             return {
               id: t.id || idx,
               label: t.label || ('Track ' + (idx + 1)),
