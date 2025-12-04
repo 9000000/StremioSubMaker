@@ -2311,23 +2311,15 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             const hasMismatch = linked && stream && linked !== stream;
             const cacheFlag = stream ? (cacheBlocked || hasMismatch) : false;
             STATE.cacheBlocked = cacheFlag;
-            hashStatusEl.classList.toggle('warn', hasMismatch);
+            hashStatusEl.classList.remove('warn', 'success', 'error');
             if (hasMismatch) {
-                hashStatusEl.textContent = tt(
-                    'toolbox.autoSubs.hash.mismatch',
-                    { linked, stream },
-                    'Hash mismatch: linked ' + linked + ' vs pasted ' + stream + '. Cache uploads disabled.'
-                );
+                hashStatusEl.textContent = 'Hash 1 != Hash 2';
+                hashStatusEl.classList.add('warn');
             } else if (stream) {
-                const cacheLabel = cacheFlag ? tt('toolbox.autoSubs.hash.cacheDisabled', {}, ' (cache disabled)') : '';
-                hashStatusEl.textContent = tt(
-                    'toolbox.autoSubs.hash.linked',
-                    { linked, stream, cache: cacheLabel },
-                    'Linked: ' + linked + ' | Stream: ' + stream + cacheLabel
-                );
+                hashStatusEl.textContent = 'Hash 1 = Hash 2';
+                hashStatusEl.classList.add('success');
             } else {
                 hashStatusEl.textContent = tt('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...');
-                hashStatusEl.classList.remove('warn');
             }
         }
 

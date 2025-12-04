@@ -2474,6 +2474,26 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       color: var(--text);
       font-weight: 700;
     }
+    .notice.success {
+      background: rgba(16,185,129,0.12);
+      border-color: rgba(16,185,129,0.35);
+      color: #0f5132;
+    }
+    .notice.warn, .notice.danger {
+      background: rgba(239,68,68,0.12);
+      border-color: rgba(239,68,68,0.35);
+      color: #7f1d1d;
+    }
+    .notice.success {
+      background: rgba(16,185,129,0.12);
+      border-color: rgba(16,185,129,0.35);
+      color: #0f5132;
+    }
+    .notice.warn, .notice.danger {
+      background: rgba(239,68,68,0.12);
+      border-color: rgba(239,68,68,0.35);
+      color: #7f1d1d;
+    }
     .aio-warning {
       margin-top: 12px;
       font-size: 13px;
@@ -3698,26 +3718,15 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       const linked = linkedHash || getVideoHash() || '';
       const stream = streamHash || state.streamHashInfo?.hash || '';
       const hasMismatch = linked && stream && linked !== stream;
-      const cacheLabel = (state.cacheBlocked || hasMismatch)
-        ? tt('toolbox.autoSubs.hash.cacheDisabled', {}, ' (cache disabled)')
-        : '';
+      els.hashStatus.classList.remove('warn', 'danger', 'success');
       if (hasMismatch) {
-        els.hashStatus.textContent = tt(
-          'toolbox.autoSubs.hash.mismatch',
-          { linked, stream },
-          'Hash mismatch: linked ' + linked + ' vs pasted ' + stream + '. Cache uploads disabled.'
-        );
-        els.hashStatus.classList.add('warn');
-      } else if (stream) {
-        els.hashStatus.textContent = tt(
-          'toolbox.autoSubs.hash.linked',
-          { linked, stream, cache: cacheLabel },
-          'Linked: ' + linked + ' | Stream: ' + stream + cacheLabel
-        );
-        els.hashStatus.classList.remove('warn');
+        els.hashStatus.textContent = 'Hash 1 != Hash 2';
+        els.hashStatus.classList.add('danger');
+      } else if (linked && stream) {
+        els.hashStatus.textContent = 'Hash 1 = Hash 2';
+        els.hashStatus.classList.add('success');
       } else {
         els.hashStatus.textContent = tt('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...');
-        els.hashStatus.classList.remove('warn');
       }
     }
 
@@ -5372,24 +5381,15 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           els.hashBadgeDot.className = 'status-dot ok';
         }
         if (hashEl) {
+          hashEl.classList.remove('warn', 'danger', 'success');
           if (hasMismatch) {
-            hashEl.textContent = tt(
-              'toolbox.autoSubs.hash.mismatch',
-              { linked, stream: streamHash },
-              'Hash mismatch: linked ' + linked + ' vs pasted ' + streamHash + '. Cache uploads disabled.'
-            );
-            hashEl.classList.add('warn');
+            hashEl.textContent = 'Hash 1 != Hash 2';
+            hashEl.classList.add('danger');
           } else if (streamHash) {
-            const cacheLabel = cacheFlag ? tt('toolbox.autoSubs.hash.cacheDisabled', {}, ' (cache disabled)') : '';
-            hashEl.textContent = tt(
-              'toolbox.autoSubs.hash.linked',
-              { linked, stream: streamHash, cache: cacheLabel },
-              'Linked: ' + linked + ' | Stream: ' + streamHash + cacheLabel
-            );
-            hashEl.classList.remove('warn');
+            hashEl.textContent = 'Hash 1 = Hash 2';
+            hashEl.classList.add('success');
           } else {
             hashEl.textContent = tt('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...');
-            hashEl.classList.remove('warn');
           }
         }
       }
