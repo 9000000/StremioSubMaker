@@ -886,23 +886,33 @@ async function fetchAssemblySrt(apiKey, transcriptId, logger = null) {
     return text || '';
 }
 
-function assemblyWordsToSegments(words = [], fallbackText = '') {
+function normalizeAssemblyTimeSec(raw) {
+    const n = Number(raw ?? 0);
+    if (!Number.isFinite(n)) return 0;
+    // AssemblyAI returns milliseconds; some clients might already send seconds (floats).
+    if (n >= 1000) return n / 1000;
+    if (Number.isInteger(n) && n > 10) return n / 1000; // integer but small -> likely ms
+    return n; // assume already in seconds (float)
+}
+
+function formatAssemblySpeakerLabel(label) {
+    if (label === null || label === undefined) return '';
+    const raw = String(label).trim();
+    if (!raw) return '';
+    return /^speaker/i.test(raw) ? raw : `Speaker ${raw}`;
+}
+
+function assemblyWordsToSegments(words = [], fallbackText = '', opts = {}) {
+    const includeSpeakers = opts.includeSpeakers === true;
     if (!Array.isArray(words) || words.length === 0) {
         if (fallbackText) return [{ start: 0, end: Math.max(2, Math.min(8, fallbackText.split(' ').length / 2)), text: fallbackText }];
         return [];
     }
-    const normalizeTimeSec = (raw) => {
-        const n = Number(raw ?? 0);
-        if (!Number.isFinite(n)) return 0;
-        // AssemblyAI returns milliseconds; some clients might already send seconds (floats).
-        if (n >= 1000) return n / 1000;
-        if (Number.isInteger(n) && n > 10) return n / 1000; // integer but small -> likely ms
-        return n; // assume already in seconds (float)
-    };
     const segments = [];
     let buffer = [];
     let segStart = null;
     let lastEnd = null;
+    let bufferSpeaker = null;
     const flush = () => {
         if (!buffer.length) return;
         const text = buffer.join(' ').trim();
@@ -911,18 +921,29 @@ function assemblyWordsToSegments(words = [], fallbackText = '') {
             return;
         }
         const endTime = lastEnd || (segStart || 0) + 2;
+        const speakerLabel = includeSpeakers ? formatAssemblySpeakerLabel(bufferSpeaker) : '';
+        const line = speakerLabel ? `${speakerLabel}: ${text}` : text;
         segments.push({
             start: Math.max(0, segStart || 0),
             end: endTime,
-            text
+            text: line
         });
         buffer = [];
         segStart = null;
         lastEnd = null;
+        bufferSpeaker = null;
     };
     words.forEach((word) => {
-        const startSec = normalizeTimeSec(word.start ?? word.start_time ?? word.offset_start_ms ?? 0);
-        const endSec = normalizeTimeSec(word.end ?? word.end_time ?? word.offset_end_ms ?? 0);
+        const startSec = normalizeAssemblyTimeSec(word.start ?? word.start_time ?? word.offset_start_ms ?? 0);
+        const endSec = normalizeAssemblyTimeSec(word.end ?? word.end_time ?? word.offset_end_ms ?? 0);
+        const wordSpeaker = includeSpeakers ? (word.speaker ?? word.speaker_label ?? word.speaker_id ?? null) : null;
+        const speakerChanged = includeSpeakers && buffer.length && wordSpeaker !== null && bufferSpeaker !== null && wordSpeaker !== bufferSpeaker;
+        if (speakerChanged) {
+            flush();
+        }
+        if (includeSpeakers && bufferSpeaker === null && wordSpeaker !== null) {
+            bufferSpeaker = wordSpeaker;
+        }
         if (segStart === null) segStart = startSec;
         lastEnd = endSec || startSec;
         buffer.push((word.text || word.word || '').toString());
@@ -935,6 +956,26 @@ function assemblyWordsToSegments(words = [], fallbackText = '') {
     });
     flush();
     return segments;
+}
+
+function assemblySpeakerSegments(transcriptionData = {}) {
+    const utterances = Array.isArray(transcriptionData?.utterances) ? transcriptionData.utterances : [];
+    if (utterances.length) {
+        return utterances.map((utt) => {
+            const start = normalizeAssemblyTimeSec(utt.start ?? utt.start_time ?? utt.offset_start_ms ?? 0);
+            const end = normalizeAssemblyTimeSec(utt.end ?? utt.end_time ?? utt.offset_end_ms ?? start + 2);
+            const speaker = formatAssemblySpeakerLabel(utt.speaker ?? utt.speaker_label ?? utt.speaker_id ?? utt.speakerLabel);
+            const textBody = (utt.text || utt.transcript || '').toString().trim();
+            const text = speaker ? `${speaker}: ${textBody}` : textBody;
+            if (!text) return null;
+            return {
+                start: Math.max(0, start),
+                end: Math.max(end || start + 2, start + 0.5),
+                text
+            };
+        }).filter(Boolean);
+    }
+    return assemblyWordsToSegments(transcriptionData?.words || [], transcriptionData?.text || '', { includeSpeakers: true });
 }
 
 async function transcribeWithAssemblyAi(streamUrl, opts = {}, logger = null) {
@@ -982,7 +1023,13 @@ async function transcribeWithAssemblyAi(streamUrl, opts = {}, logger = null) {
             speaker_labels: true
         }, logger);
         transcriptionData = await pollAssemblyTranscript(apiKey, transcriptId, logger);
-        let srt = await fetchAssemblySrt(apiKey, transcriptId, logger);
+        const diarizedSegments = assemblySpeakerSegments(transcriptionData);
+        let srt = diarizedSegments.length ? segmentsToSrt(diarizedSegments) : '';
+        const assemblySrt = await fetchAssemblySrt(apiKey, transcriptId, logger);
+        if (assemblySrt) {
+            const hasSpeakerLabels = /speaker\s*[0-9a-z]/i.test(assemblySrt);
+            srt = (hasSpeakerLabels || !diarizedSegments.length) ? assemblySrt : srt;
+        }
         if (!srt) {
             const segments = assemblyWordsToSegments(transcriptionData?.words || [], transcriptionData?.text || '');
             srt = segmentsToSrt(segments);
