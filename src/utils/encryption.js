@@ -251,6 +251,11 @@ function encryptUserConfig(config) {
       encrypted.geminiApiKey = encrypt(encrypted.geminiApiKey);
     }
 
+    // Encrypt AssemblyAI API key
+    if (encrypted.assemblyAiApiKey) {
+      encrypted.assemblyAiApiKey = encrypt(encrypted.assemblyAiApiKey);
+    }
+
     // Encrypt subtitle provider credentials
     if (encrypted.subtitleProviders) {
       // OpenSubtitles username/password
@@ -321,6 +326,12 @@ function decryptUserConfig(config) {
     if (decrypted.geminiApiKey && (isConfigEncrypted || isEncrypted(decrypted.geminiApiKey))) {
       log.debug(() => '[Encryption] Decrypting Gemini API key');
       decrypted.geminiApiKey = decrypt(decrypted.geminiApiKey, true);
+    }
+
+    // Decrypt AssemblyAI API key
+    if (decrypted.assemblyAiApiKey && (isConfigEncrypted || isEncrypted(decrypted.assemblyAiApiKey))) {
+      log.debug(() => '[Encryption] Decrypting AssemblyAI API key');
+      decrypted.assemblyAiApiKey = decrypt(decrypted.assemblyAiApiKey, true);
     }
 
     // Decrypt subtitle provider credentials

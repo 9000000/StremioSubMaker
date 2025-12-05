@@ -21,7 +21,11 @@ const DEFAULT_API_KEYS = {
 
   // Gemini API Key
   // Get your own at: https://makersuite.google.com/app/apikey
-  GEMINI: ''
+  GEMINI: '',
+
+  // AssemblyAI API Key
+  // Get your own at: https://www.assemblyai.com/dashboard
+  ASSEMBLYAI: ''
 };
 
 module.exports = DEFAULT_API_KEYS;

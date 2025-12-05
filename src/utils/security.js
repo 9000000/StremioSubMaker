@@ -106,6 +106,7 @@ function sanitizeConfig(config) {
   // List of sensitive field names to redact
   const sensitiveFields = [
     'geminiApiKey',
+    'assemblyAiApiKey',
     'apiKey',
     'password',
     'secret',

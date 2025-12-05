@@ -303,9 +303,6 @@
           "dontShow": "No mostrar esto de nuevo",
           "gotIt": "Entendido"
         },
-        "hero": {
-          "notice": "Si usas AIOStreams PROXY para Real-Debrid, cierra completamente todos los streams antes de ejecutar esta herramienta."
-        },
         "videoMeta": {
           "label": "Stream vinculado",
           "none": "Sin stream vinculado",
@@ -380,6 +377,10 @@
         "heroSubtitle": "Genera subtítulos con Whisper y luego tradúcelos",
         "badges": {
           "hash": "Hash",
+          "decode": "Decodificación",
+          "decodeWorking": "Decodificando con FFmpeg",
+          "decodeReady": "Decodificación lista",
+          "decodeError": "Decodificación fallida",
           "versionFallback": "n/a",
           "pending": "pendiente"
         },
@@ -405,6 +406,12 @@
           "clear": "Limpiar",
           "step2Chip": "Paso 2",
           "step2Title": "Idioma y modelo",
+          "modeLabel": "Modo de subtítulos automáticos",
+          "modeHelper": "Cloudflare se ejecuta a través de la extensión xSync. El servidor no buscará tu stream.",
+          "modeHelperAssembly": "AssemblyAI sube desde este servidor (sin extensión).",
+          "modeLocal": "Local (xSync)",
+          "modeRemote": "Cloudflare Workers AI",
+          "modeAssembly": "AssemblyAI",
           "sourceLabel": "Idioma de origen (opcional)",
           "autoDetect": "Detección automática",
           "targetLabel": "Idioma de destino",
@@ -414,6 +421,8 @@
           "modelMedium": "medium (equilibrado)",
           "modelTurbo": "Whisper Large V3 Turbo",
           "translateOutput": "Traducir a los idiomas destino",
+          "sendFullVideo": "Enviar video completo a AssemblyAI (\u22645GB)",
+          "sendFullVideoHelper": "Si el stream supera 5GB, volveremos automáticamente a extraer el audio.",
           "singleBatch": "Modo de lote único",
           "sendTimestamps": "Enviar marcas de tiempo a la IA",
           "providerLabel": "Proveedor de traducción",
@@ -475,6 +484,7 @@
           "noStream": "Pega primero una URL de stream.",
           "noTargets": "Selecciona al menos un idioma destino o desactiva la traducción.",
           "sendingRequest": "Enviando solicitud a Cloudflare Workers AI...",
+          "assemblyMissingKey": "El modo AssemblyAI requiere una clave API. Agrégala en Configurar.",
           "finished": "Listo. Las descargas están preparadas.",
           "cacheSkipped": "Las cargas a caché se omitieron por discrepancia de hash.",
           "errorPrefix": "Error: "
@@ -761,6 +771,8 @@
         "learnRequired": "Selecciona al menos un idioma de Learn Mode",
         "geminiKeyRequired": "Se requiere la clave de Gemini",
         "geminiModelRequired": "Selecciona un modelo de Gemini",
+        "assemblyAiKeyRequired": "Se requiere la clave API de AssemblyAI para el modo AssemblyAI",
+        "assemblyAiKeyInvalid": "La clave API de AssemblyAI no es válida",
         "mainProviderEnable": "Activa {provider} para usarlo como Proveedor principal",
         "mainProviderKeyRequired": "Se requiere clave API para {provider}",
         "mainProviderModelRequired": "Selecciona un modelo para {provider}",
@@ -890,6 +902,16 @@
           "rateWarningBody": "Si usas una API key gratuita, Gemini 2.5 Pro puede activar rate limits (HTTP 429). Probablemente solo podrás traducir un subtítulo a la vez."
         }
       },
+      "otherApiKeys": {
+        "title": "Otras claves API",
+        "assembly": {
+          "label": "Clave API de AssemblyAI",
+          "helper": "Usada para Subtítulos Automáticos vía AssemblyAI.",
+          "placeholder": "Ingresa tu clave API de AssemblyAI",
+          "validateTitle": "Validar clave API de AssemblyAI",
+          "validateCta": "Probar"
+        }
+      },
       "noTranslationCard": {
         "title": "Idiomas",
         "label": "Idiomas de subtítulos",
@@ -955,6 +977,10 @@
       },
       "otherSettings": {
         "title": "Otros ajustes",
+        "autosubsKeys": {
+          "label": "Claves API de autosubs",
+          "description": "Muestra la sección de la clave de AssemblyAI para subtítulos automáticos."
+        },
         "subToolbox": {
           "label": "Activar \"Sub Toolbox\" (Alpha)",
           "description": "Muestra Sub Toolbox en la lista de subtítulos de Stremio para acceder a todas las herramientas. (Lee las instrucciones tras activarlo)",

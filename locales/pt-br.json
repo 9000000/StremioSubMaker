@@ -303,9 +303,6 @@
           "dontShow": "Não mostrar novamente",
           "gotIt": "Entendi"
         },
-        "hero": {
-          "notice": "Se você usa AIOStreams PROXY para Real-Debrid, feche completamente todos os streams antes de executar esta ferramenta."
-        },
         "videoMeta": {
           "label": "Stream vinculado",
           "none": "Nenhum stream vinculado",
@@ -380,6 +377,10 @@
         "heroSubtitle": "Gerar legendas com Whisper e traduzir",
         "badges": {
           "hash": "Hash",
+          "decode": "Decodificação",
+          "decodeWorking": "Decodificando com FFmpeg",
+          "decodeReady": "Decodificação pronta",
+          "decodeError": "Falha na decodificação",
           "versionFallback": "n/a",
           "pending": "pendente"
         },
@@ -405,6 +406,12 @@
           "clear": "Limpar",
           "step2Chip": "Passo 2",
           "step2Title": "Idioma + modelo",
+          "modeLabel": "Modo de legendas automáticas",
+          "modeHelper": "Cloudflare roda via extensão xSync. O servidor não buscará seu stream.",
+          "modeHelperAssembly": "AssemblyAI faz o upload a partir deste servidor (sem extensão).",
+          "modeLocal": "Local (xSync)",
+          "modeRemote": "Cloudflare Workers AI",
+          "modeAssembly": "AssemblyAI",
           "sourceLabel": "Idioma de origem (opcional)",
           "autoDetect": "Auto-detectar",
           "targetLabel": "Idioma de destino",
@@ -414,6 +421,8 @@
           "modelMedium": "medium (equilibrado)",
           "modelTurbo": "Whisper Large V3 Turbo",
           "translateOutput": "Traduzir para idiomas de destino",
+          "sendFullVideo": "Enviar vídeo completo para a AssemblyAI (\u22645GB)",
+          "sendFullVideoHelper": "Se o stream ultrapassar 5GB, faremos fallback para extração de áudio automaticamente.",
           "singleBatch": "Modo de lote único",
           "sendTimestamps": "Enviar timestamps para a IA",
           "providerLabel": "Fornecedor de tradução",
@@ -475,6 +484,7 @@
           "noStream": "Cole uma URL de stream primeiro.",
           "noTargets": "Selecione ao menos um idioma de destino ou desative a tradução.",
           "sendingRequest": "Enviando requisição para Cloudflare Workers AI...",
+          "assemblyMissingKey": "O modo AssemblyAI exige uma chave de API. Adicione em Configurar.",
           "finished": "Pronto. Downloads disponíveis.",
           "cacheSkipped": "Uploads para cache foram pulados por incompatibilidade de hash.",
           "errorPrefix": "Erro: "
@@ -761,6 +771,8 @@
         "learnRequired": "Por favor, selecione pelo menos um idioma de aprendizado (Learn)",
         "geminiKeyRequired": "Chave da API Gemini é obrigatória",
         "geminiModelRequired": "Por favor, selecione um modelo Gemini",
+        "assemblyAiKeyRequired": "A chave da API AssemblyAI é obrigatória para o modo AssemblyAI",
+        "assemblyAiKeyInvalid": "A chave da API AssemblyAI é inválida",
         "mainProviderEnable": "Habilite {provider} para usá-lo como Provedor Principal",
         "mainProviderKeyRequired": "Chave da API necessária para {provider}",
         "mainProviderModelRequired": "Selecione um modelo para {provider}",
@@ -890,6 +902,16 @@
           "rateWarningBody": "Se estiver usando uma chave de API gratuita, o Gemini 2.5 Pro pode acionar limites de taxa (HTTP 429). Você provavelmente só conseguirá traduzir uma legenda por vez."
         }
       },
+      "otherApiKeys": {
+        "title": "Outras chaves de API",
+        "assembly": {
+          "label": "Chave da API AssemblyAI",
+          "helper": "Usada para Legendas Automáticas via AssemblyAI.",
+          "placeholder": "Insira sua chave da API AssemblyAI",
+          "validateTitle": "Validar chave da API AssemblyAI",
+          "validateCta": "Testar"
+        }
+      },
       "noTranslationCard": {
         "title": "Idiomas",
         "label": "Idiomas de Legendas",
@@ -955,6 +977,10 @@
       },
       "otherSettings": {
         "title": "Outras Configurações",
+        "autosubsKeys": {
+          "label": "Chaves de API de autosubs",
+          "description": "Mostrar a seção de chave da AssemblyAI para legendas automáticas."
+        },
         "subToolbox": {
           "label": "Habilitar \"Sub Toolbox\" (Alpha)",
           "description": "Mostra a entrada Sub Toolbox nas legendas do Stremio para acesso via navegador a todas as ferramentas. (Leia as instruções após habilitar)",

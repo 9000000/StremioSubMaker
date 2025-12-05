@@ -303,9 +303,6 @@
           "dontShow": "لا تظهر هذا مرة أخرى",
           "gotIt": "حسنًا"
         },
-        "hero": {
-          "notice": "إذا كنت تستخدم AIOStreams PROXY مع Real-Debrid فأغلق كل البثوث تمامًا قبل استخدام هذه الأداة."
-        },
         "videoMeta": {
           "label": "البث المرتبط",
           "none": "لا يوجد بث مرتبط",
@@ -405,6 +402,12 @@
           "clear": "مسح",
           "step2Chip": "الخطوة 2",
           "step2Title": "اللغة + النموذج",
+          "modeLabel": "وضع الترجمات التلقائية",
+          "modeHelper": "Cloudflare يعمل عبر إضافة xSync. الخادم لن يجلب البث الخاص بك.",
+          "modeHelperAssembly": "AssemblyAI يرفع من هذا الخادم (لا حاجة للإضافة).",
+          "modeLocal": "محلي (xSync)",
+          "modeRemote": "Cloudflare Workers AI",
+          "modeAssembly": "AssemblyAI",
           "sourceLabel": "لغة المصدر (اختياري)",
           "autoDetect": "كشف تلقائي",
           "targetLabel": "لغة الهدف",
@@ -414,6 +417,8 @@
           "modelMedium": "medium (متوازن)",
           "modelTurbo": "Whisper Large V3 Turbo",
           "translateOutput": "ترجم إلى لغات الهدف",
+          "sendFullVideo": "إرسال الفيديو الكامل إلى AssemblyAI (\u22645GB)",
+          "sendFullVideoHelper": "إذا تجاوز البث 5GB، سنعود تلقائياً لاستخراج الصوت.",
           "step3Chip": "الخطوة 3",
           "step3Title": "تشغيل المسار",
           "pipeline": "سنقوم بالربط: جلب -> تجزئة -> تفريغ صوتي -> محاذاة -> ترجمة (اختياري) -> تسليم SRT.",
@@ -453,6 +458,10 @@
           "previewPlan": "المسار: جلب -> تفريغ صوتي -> محاذاة -> ترجمة -> تسليم.",
           "noOutput": "لا توجد مخرجات بعد.",
           "translateFallbackTarget": "الأهداف"
+        },
+        "logs": {
+          "assemblyMissingKey": "يتطلب وضع AssemblyAI مفتاح API. أضفه في الإعدادات.",
+          "errorPrefix": "خطأ: "
         }
       },
       "footnote": "صندوق الأدوات مرتبط بجلستك والبث الحالي. اترك علامة التبويب هذه مفتوحة أثناء البث لأفضل تجربة."
@@ -733,6 +742,8 @@
         "learnRequired": "يرجى اختيار لغة تعلم واحدة على الأقل",
         "geminiKeyRequired": "مفتاح Gemini API مطلوب",
         "geminiModelRequired": "يرجى اختيار نموذج Gemini",
+        "assemblyAiKeyRequired": "مطلوب مفتاح AssemblyAI API لوضع AssemblyAI",
+        "assemblyAiKeyInvalid": "مفتاح AssemblyAI API غير صالح",
         "mainProviderEnable": "مكّن {provider} لاستخدامه كمزود رئيسي",
         "mainProviderKeyRequired": "مفتاح API مطلوب لـ {provider}",
         "mainProviderModelRequired": "اختر نموذجاً لـ {provider}",
@@ -862,6 +873,16 @@
           "rateWarningBody": "إذا كنت تستخدم مفتاح API مجاني، قد يطلق Gemini 2.5 Pro حدود المعدل (HTTP 429). على الأرجح ستتمكن فقط من ترجمة ترجمة واحدة في كل مرة."
         }
       },
+      "otherApiKeys": {
+        "title": "مفاتيح API أخرى",
+        "assembly": {
+          "label": "مفتاح AssemblyAI API",
+          "helper": "يُستخدم للترجمات التلقائية عبر AssemblyAI.",
+          "placeholder": "أدخل مفتاح AssemblyAI API الخاص بك",
+          "validateTitle": "التحقق من مفتاح AssemblyAI API",
+          "validateCta": "اختبار"
+        }
+      },
       "noTranslationCard": {
         "title": "اللغات",
         "label": "لغات الترجمة",
@@ -927,6 +948,10 @@
       },
       "otherSettings": {
         "title": "إعدادات أخرى",
+        "autosubsKeys": {
+          "label": "مفاتيح API للترجمات التلقائية",
+          "description": "عرض قسم مفتاح AssemblyAI للترجمات التلقائية."
+        },
         "subToolbox": {
           "label": "تمكين \"صندوق أدوات الترجمة\" (ألفا)",
           "description": "يظهر إدخال صندوق أدوات الترجمة في ترجمات Stremio للوصول عبر المتصفح إلى جميع الأدوات. (اقرأ التعليمات بعد التمكين)",

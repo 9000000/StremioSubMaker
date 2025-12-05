@@ -15,6 +15,9 @@ const Joi = require('joi');
 const path = require('path');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const { pipeline } = require('stream/promises');
 const ffmpegPath = require('ffmpeg-static');
 
 const { parseConfig, getDefaultConfig, buildManifest, normalizeConfig, getLanguageSelectionLimits, getDefaultProviderParameters, mergeProviderParameters } = require('./src/utils/config');
@@ -289,6 +292,10 @@ function deriveStreamHashFromUrlServer(streamUrl, fallback = {}) {
 }
 
 const AUTOSUB_MAX_AUDIO_BYTES = parseInt(process.env.AUTOSUB_MAX_AUDIO_BYTES, 10) || 120 * 1024 * 1024; // 120MB cap
+const ASSEMBLY_MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024; // 5GB hard limit (AssemblyAI)
+const ASSEMBLY_FETCH_TIMEOUT_MS = parseInt(process.env.ASSEMBLY_FETCH_TIMEOUT_MS, 10) || 8 * 60 * 1000;
+const ASSEMBLY_POLL_INTERVAL_MS = parseInt(process.env.ASSEMBLY_POLL_INTERVAL_MS, 10) || 5000;
+const ASSEMBLY_POLL_TIMEOUT_MS = parseInt(process.env.ASSEMBLY_POLL_TIMEOUT_MS, 10) || 12 * 60 * 1000;
 const AUTOSUB_FETCH_TIMEOUT_MS = parseInt(process.env.AUTOSUB_FETCH_TIMEOUT_MS, 10) || 45_000;
 const AUTOSUB_CF_TIMEOUT_MS = parseInt(process.env.AUTOSUB_CF_TIMEOUT_MS, 10) || 60_000;
 
@@ -632,6 +639,346 @@ async function transcribeWithCloudflare(audioBuffer, opts = {}) {
         segmentCount: Array.isArray(segments) ? segments.length : null,
         raw: result
     };
+}
+
+async function downloadFullStreamToFile(streamUrl, options = {}, logger = null) {
+    const logStep = (message, level = 'info') => {
+        try {
+            if (typeof logger === 'function') logger(message, level);
+        } catch (_) { /* ignore logger errors */ }
+    };
+    const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : ASSEMBLY_MAX_UPLOAD_BYTES;
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : ASSEMBLY_FETCH_TIMEOUT_MS;
+    const tempPath = path.join(os.tmpdir(), `submaker_assembly_${Date.now()}_${Math.random().toString(16).slice(2)}.bin`);
+    let response = null;
+    let bytes = 0;
+    let writer = null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        logStep(`Downloading full stream locally (limit ${formatBytes(maxBytes)})`, 'info');
+        response = await fetch(streamUrl, { signal: controller.signal });
+        if (!response || !response.ok || !response.body) {
+            throw new Error(`Failed to fetch stream (${response ? response.status : 'no response'})`);
+        }
+        const declaredLength = Number(response.headers?.get('content-length'));
+        if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+            const err = new Error(`Stream exceeds ${formatBytes(maxBytes)} limit`);
+            err.code = 'SIZE_LIMIT';
+            throw err;
+        }
+        writer = fs.createWriteStream(tempPath);
+        for await (const chunk of response.body) {
+            bytes += chunk.length;
+            if (bytes > maxBytes) {
+                const err = new Error(`Stream exceeded ${formatBytes(maxBytes)} limit`);
+                err.code = 'SIZE_LIMIT';
+                throw err;
+            }
+            if (!writer.write(chunk)) {
+                await new Promise((resolve) => writer.once('drain', resolve));
+            }
+        }
+        await new Promise((resolve, reject) => {
+            writer.end(() => resolve());
+            writer.on('error', reject);
+        });
+        logStep(`Saved ${formatBytes(bytes)} to temp file for AssemblyAI upload`, 'info');
+        const contentType = response.headers?.get('content-type') || '';
+        const filename = (() => {
+            try {
+                const url = new URL(streamUrl);
+                const last = (url.pathname || '').split('/').pop() || 'video';
+                return last || 'video';
+            } catch (_) {
+                return 'video';
+            }
+        })();
+        return { path: tempPath, bytes, contentType, filename, source: 'video' };
+    } catch (error) {
+        if (writer) {
+            try { writer.destroy(); } catch (_) {}
+        }
+        try {
+            if (fs.existsSync(tempPath)) fs.unlink(tempPath, () => {});
+        } catch (_) { /* ignore cleanup errors */ }
+        if (error.name === 'AbortError') {
+            throw new Error(`Stream download timed out after ${Math.round(timeoutMs / 1000)}s`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function uploadToAssembly(apiKey, uploadSource = {}, logger = null) {
+    if (!apiKey) {
+        throw new Error('AssemblyAI API key is missing');
+    }
+    const logStep = (message, level = 'info') => {
+        try {
+            if (typeof logger === 'function') logger(message, level);
+        } catch (_) { /* ignore logger errors */ }
+    };
+    const headers = {
+        Authorization: apiKey
+    };
+    if (uploadSource.contentType) headers['Content-Type'] = uploadSource.contentType;
+    if (Number.isFinite(uploadSource.bytes)) headers['Content-Length'] = uploadSource.bytes;
+    const body = uploadSource.path ? fs.createReadStream(uploadSource.path) : uploadSource.buffer;
+    if (!body) throw new Error('No upload source provided for AssemblyAI');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ASSEMBLY_FETCH_TIMEOUT_MS);
+    let response;
+    let raw = '';
+    try {
+        logStep(`Uploading ${formatBytes(uploadSource.bytes || 0)} to AssemblyAI`, 'info');
+        response = await fetch('https://api.assemblyai.com/v2/upload', {
+            method: 'POST',
+            headers,
+            body,
+            signal: controller.signal,
+            duplex: uploadSource.path ? 'half' : undefined
+        });
+        raw = await response.text();
+    } catch (error) {
+        clearTimeout(timeout);
+        if (error.name === 'AbortError') {
+            throw new Error('AssemblyAI upload timed out');
+        }
+        throw error;
+    }
+    clearTimeout(timeout);
+
+    let data = null;
+    try {
+        data = raw ? JSON.parse(raw) : null;
+    } catch (_) {
+        data = null;
+    }
+
+    if (!response.ok || !data?.upload_url) {
+        const msg = data?.error || data?.message || raw || `AssemblyAI upload failed (${response?.status || 'no status'})`;
+        const err = new Error(msg);
+        err.responseBody = raw;
+        throw err;
+    }
+
+    return data.upload_url;
+}
+
+async function createAssemblyTranscript(apiKey, payload = {}, logger = null) {
+    const logStep = (message, level = 'info') => {
+        try {
+            if (typeof logger === 'function') logger(message, level);
+        } catch (_) { /* ignore logger errors */ }
+    };
+    const requestBody = {
+        punctuate: true,
+        format_text: true,
+        language_code: payload.language_code || payload.languageCode || undefined,
+        speaker_labels: payload.speaker_labels === true || payload.diarization === true,
+        words: true,
+        filter_profanity: false,
+        auto_chapters: false,
+        boost_param: null,
+        disfluencies: true,
+        audio_url: payload.audio_url
+    };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ASSEMBLY_FETCH_TIMEOUT_MS);
+    try {
+        const response = await fetch('https://api.assemblyai.com/v2/transcript', {
+            method: 'POST',
+            headers: {
+                Authorization: apiKey,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.id) {
+            const msg = data?.error || data?.message || `AssemblyAI transcript request failed (${response.status})`;
+            throw new Error(msg);
+        }
+        logStep(`AssemblyAI transcript id: ${data.id}`, 'info');
+        return data.id;
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            throw new Error('AssemblyAI transcript request timed out');
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function pollAssemblyTranscript(apiKey, transcriptId, logger = null) {
+    const logStep = (message, level = 'info') => {
+        try {
+            if (typeof logger === 'function') logger(message, level);
+        } catch (_) { /* ignore logger errors */ }
+    };
+    const start = Date.now();
+    while (Date.now() - start < ASSEMBLY_POLL_TIMEOUT_MS) {
+        const response = await fetch(`https://api.assemblyai.com/v2/transcript/${encodeURIComponent(transcriptId)}`, {
+            headers: { Authorization: apiKey }
+        });
+        const data = await response.json().catch(() => null);
+        const status = (data?.status || '').toLowerCase();
+        if (status === 'completed') {
+            logStep('AssemblyAI transcription completed', 'info');
+            return data;
+        }
+        if (status === 'error') {
+            const message = data?.error || data?.message || 'AssemblyAI returned an error status';
+            const err = new Error(message);
+            err.details = data;
+            throw err;
+        }
+        logStep(`AssemblyAI status: ${status || 'pending'}...`, 'info');
+        await new Promise((resolve) => setTimeout(resolve, ASSEMBLY_POLL_INTERVAL_MS));
+    }
+    throw new Error('AssemblyAI transcription timed out');
+}
+
+async function fetchAssemblySrt(apiKey, transcriptId, logger = null) {
+    const logStep = (message, level = 'info') => {
+        try {
+            if (typeof logger === 'function') logger(message, level);
+        } catch (_) { /* ignore logger errors */ }
+    };
+    const response = await fetch(`https://api.assemblyai.com/v2/transcript/${encodeURIComponent(transcriptId)}/srt`, {
+        headers: { Authorization: apiKey }
+    });
+    if (!response.ok) {
+        logStep(`AssemblyAI SRT fetch failed (${response.status})`, 'warn');
+        return '';
+    }
+    const text = await response.text();
+    logStep('Fetched SRT from AssemblyAI', 'info');
+    return text || '';
+}
+
+function assemblyWordsToSegments(words = [], fallbackText = '') {
+    if (!Array.isArray(words) || words.length === 0) {
+        if (fallbackText) return [{ start: 0, end: Math.max(2, Math.min(8, fallbackText.split(' ').length / 2)), text: fallbackText }];
+        return [];
+    }
+    const segments = [];
+    let buffer = [];
+    let segStart = null;
+    let lastEnd = null;
+    const flush = () => {
+        if (!buffer.length) return;
+        const text = buffer.join(' ').trim();
+        if (!text) {
+            buffer = [];
+            return;
+        }
+        const endTime = lastEnd || (segStart || 0) + 2;
+        segments.push({
+            start: Math.max(0, segStart || 0),
+            end: endTime,
+            text
+        });
+        buffer = [];
+        segStart = null;
+        lastEnd = null;
+    };
+    words.forEach((word) => {
+        const startMs = Number(word.start ?? word.start_time ?? word.offset_start_ms ?? 0);
+        const endMs = Number(word.end ?? word.end_time ?? word.offset_end_ms ?? 0);
+        const startSec = startMs > 1000 ? startMs / 1000 : startMs;
+        const endSec = endMs > 1000 ? endMs / 1000 : endMs;
+        if (segStart === null) segStart = startSec;
+        lastEnd = endSec || startSec;
+        buffer.push((word.text || word.word || '').toString());
+        const text = (word.text || word.word || '').toString();
+        const punctuationBreak = /[.?!]/.test(text.slice(-1));
+        const hardBreak = buffer.length >= 12 || ((lastEnd - segStart) >= 8);
+        if (punctuationBreak || hardBreak) {
+            flush();
+        }
+    });
+    flush();
+    return segments;
+}
+
+async function transcribeWithAssemblyAi(streamUrl, opts = {}, logger = null) {
+    const logStep = (message, level = 'info') => {
+        try {
+            if (typeof logger === 'function') logger(message, level);
+        } catch (_) { /* ignore logger errors */ }
+    };
+    const apiKey = (opts.apiKey || '').trim();
+    if (!apiKey) {
+        throw new Error('AssemblyAI API key is missing');
+    }
+    let upload = null;
+    let transcriptionData = null;
+    try {
+        if (opts.sendFullVideo === true) {
+            try {
+                upload = await downloadFullStreamToFile(streamUrl, { maxBytes: ASSEMBLY_MAX_UPLOAD_BYTES, timeoutMs: ASSEMBLY_FETCH_TIMEOUT_MS }, logger);
+                upload.source = 'video';
+            } catch (error) {
+                const fallbackMsg = error?.code === 'SIZE_LIMIT'
+                    ? `Full video exceeds ${formatBytes(ASSEMBLY_MAX_UPLOAD_BYTES)}; falling back to audio extraction`
+                    : `Full video fetch failed (${error.message}); falling back to audio extraction`;
+                logStep(fallbackMsg, 'warn');
+                upload = null;
+            }
+        }
+
+        if (!upload) {
+            const audio = await downloadStreamAudio(streamUrl, { maxBytes: AUTOSUB_MAX_AUDIO_BYTES, timeoutMs: Math.max(AUTOSUB_FETCH_TIMEOUT_MS, ASSEMBLY_FETCH_TIMEOUT_MS), filename: opts.filename }, logger);
+            upload = {
+                buffer: audio.buffer,
+                bytes: audio.bytes,
+                contentType: audio.contentType || 'audio/wav',
+                filename: audio.filename || 'audio.wav',
+                source: audio.source || 'audio'
+            };
+        }
+
+        const uploadUrl = await uploadToAssembly(apiKey, upload, logger);
+        const transcriptId = await createAssemblyTranscript(apiKey, {
+            audio_url: uploadUrl,
+            language_code: opts.sourceLanguage || opts.languageCode || '',
+            speaker_labels: opts.diarization === true
+        }, logger);
+        transcriptionData = await pollAssemblyTranscript(apiKey, transcriptId, logger);
+        let srt = await fetchAssemblySrt(apiKey, transcriptId, logger);
+        if (!srt) {
+            const segments = assemblyWordsToSegments(transcriptionData?.words || [], transcriptionData?.text || '');
+            srt = segmentsToSrt(segments);
+        }
+        const language = (transcriptionData?.language_code || transcriptionData?.language || transcriptionData?.detected_language || '').toString().toLowerCase();
+        return {
+            transcription: {
+                srt: srt || '',
+                languageCode: language || opts.sourceLanguage || 'und',
+                model: 'assemblyai',
+                assemblyId: transcriptId
+            },
+            meta: {
+                assemblyId: transcriptId,
+                uploadSource: upload?.source || 'audio',
+                uploadedBytes: upload?.bytes || null,
+                contentType: upload?.contentType || '',
+                usedFullVideo: upload?.source === 'video'
+            }
+        };
+    } finally {
+        if (upload && upload.path) {
+            try {
+                fs.unlink(upload.path, () => {});
+            } catch (_) { /* ignore cleanup errors */ }
+        }
+    }
 }
 
 function normalizeSyncLang(lang) {
@@ -2569,6 +2916,54 @@ app.post('/api/validate-gemini', async (req, res) => {
     }
 });
 
+// API endpoint to validate AssemblyAI API key
+app.post('/api/validate-assemblyai', async (req, res) => {
+    setNoStore(res);
+    try {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        const apiKey = (req.body?.apiKey || '').trim();
+        if (!apiKey) {
+            return res.status(400).json({
+                valid: false,
+                error: t('server.errors.apiKeyRequired', {}, 'API key is required')
+            });
+        }
+        const axios = require('axios');
+        const { httpAgent, httpsAgent } = require('./src/utils/httpAgents');
+        try {
+            const response = await axios.get('https://api.assemblyai.com/v2/account', {
+                headers: { Authorization: apiKey },
+                timeout: 10000,
+                httpAgent,
+                httpsAgent
+            });
+            if (response.status === 200) {
+                return res.json({
+                    valid: true,
+                    message: t('server.validation.apiKeyValid', {}, 'API key is valid')
+                });
+            }
+            return res.json({
+                valid: false,
+                error: t('server.validation.apiError', { reason: response.statusText || 'Unknown error' }, `API error: ${response.statusText || 'Unknown error'}`)
+            });
+        } catch (apiError) {
+            if (apiError.response?.status === 401 || apiError.response?.status === 403) {
+                return res.json({
+                    valid: false,
+                    error: t('server.errors.invalidApiKeyAuth', {}, 'Invalid API key - authentication failed')
+                });
+            }
+            throw apiError;
+        }
+    } catch (error) {
+        res.json({
+            valid: false,
+            error: (res.locals?.t || getTranslatorFromRequest(req, res))('server.validation.apiError', { reason: error.message }, `API error: ${error.message}`)
+        });
+    }
+});
+
 // API endpoint to create a session (production mode)
 // Apply rate limiting to prevent session flooding attacks
 app.post('/api/create-session', sessionCreationLimiter, enforceConfigPayloadSize, async (req, res) => {
@@ -4019,6 +4414,7 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
             sendTimestampsToAI = false,
             singleBatchMode = false,
             translationPrompt,
+            sendFullVideo = false,
             diarization = false
         } = req.body || {};
         logTrail = [];
@@ -4068,44 +4464,90 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
         }
 
         const providerKey = (translationProvider || config.mainProvider || 'gemini').toString().toLowerCase();
+        let transcription = null;
+        const transcriptDiagnostics = {};
+        if (engineKey === 'assemblyai') {
+            if (!config.assemblyAiApiKey) {
+                logStep('AssemblyAI API key missing in config', 'error');
+                return res.status(400).json({
+                    error: t('server.errors.apiKeyRequired', {}, 'API key is required'),
+                    logTrail
+                });
+            }
+            try {
+                logStep(`Running AssemblyAI transcription (sendFullVideo=${sendFullVideo === true})`, 'info');
+                const assemblyResult = await transcribeWithAssemblyAi(streamUrl, {
+                    apiKey: config.assemblyAiApiKey,
+                    sourceLanguage,
+                    diarization,
+                    sendFullVideo: sendFullVideo === true,
+                    filename,
+                    videoId
+                }, (message, level) => logStep(message, level));
+                transcription = assemblyResult?.transcription || null;
+                transcriptDiagnostics.audioBytes = assemblyResult?.meta?.uploadedBytes || null;
+                transcriptDiagnostics.audioSource = assemblyResult?.meta?.uploadSource || 'assemblyai';
+                transcriptDiagnostics.contentType = assemblyResult?.meta?.contentType || '';
+                transcriptDiagnostics.assemblyId = assemblyResult?.meta?.assemblyId || '';
+                transcriptDiagnostics.usedFullVideo = assemblyResult?.meta?.usedFullVideo === true;
+            } catch (error) {
+                logStep(`AssemblyAI transcription failed: ${error.message || error}`, 'error');
+                return res.status(500).json({
+                    error: t('server.errors.transcriptionFailed', {}, `Automatic subtitles failed: ${error.message}`),
+                    logTrail
+                });
+            }
+        } else {
+            // Client-supplied transcription (xSync extension, Cloudflare Workers AI)
+            const transcriptPayload = (req.body && typeof req.body.transcript === 'object') ? req.body.transcript : {};
+            const transcriptSrt = (typeof transcriptPayload.srt === 'string' && transcriptPayload.srt.trim())
+                ? transcriptPayload.srt
+                : ((typeof req.body?.transcriptSrt === 'string' && req.body.transcriptSrt.trim()) ? req.body.transcriptSrt : '');
+            const transcriptLang = (transcriptPayload.languageCode || transcriptPayload.language || req.body?.transcriptLanguage || sourceLanguage || '').toString().trim();
+            const cfStatus = Number.isFinite(transcriptPayload.cfStatus) ? transcriptPayload.cfStatus : (Number.isFinite(req.body?.cfStatus) ? req.body.cfStatus : null);
+            const cfBody = (transcriptPayload.cfBody || req.body?.cfBody || '').toString();
+            const audioMeta = (typeof transcriptPayload.audio === 'object') ? transcriptPayload.audio : {};
+            const audioBytes = Number.isFinite(transcriptPayload.audioBytes) ? transcriptPayload.audioBytes
+                : Number.isFinite(audioMeta.bytes) ? audioMeta.bytes
+                : (Array.isArray(audioMeta.windows) ? audioMeta.windows.reduce((sum, w) => sum + (Number(w.bytes) || 0), 0) : null);
+            const audioSource = transcriptPayload.audioSource || audioMeta.source || 'extension';
+            const audioContentType = transcriptPayload.contentType || audioMeta.contentType || 'audio/wav';
+            const transcriptModel = transcriptPayload.model || model || '@cf/openai/whisper';
 
-        // Client-supplied transcription (server no longer fetches/contacts Cloudflare)
-        const transcriptPayload = (req.body && typeof req.body.transcript === 'object') ? req.body.transcript : {};
-        const transcriptSrt = (typeof transcriptPayload.srt === 'string' && transcriptPayload.srt.trim())
-            ? transcriptPayload.srt
-            : ((typeof req.body?.transcriptSrt === 'string' && req.body.transcriptSrt.trim()) ? req.body.transcriptSrt : '');
-        const transcriptLang = (transcriptPayload.languageCode || transcriptPayload.language || req.body?.transcriptLanguage || sourceLanguage || '').toString().trim();
-        const cfStatus = Number.isFinite(transcriptPayload.cfStatus) ? transcriptPayload.cfStatus : (Number.isFinite(req.body?.cfStatus) ? req.body.cfStatus : null);
-        const cfBody = (transcriptPayload.cfBody || req.body?.cfBody || '').toString();
-        const audioMeta = (typeof transcriptPayload.audio === 'object') ? transcriptPayload.audio : {};
-        const audioBytes = Number.isFinite(transcriptPayload.audioBytes) ? transcriptPayload.audioBytes
-            : Number.isFinite(audioMeta.bytes) ? audioMeta.bytes
-            : (Array.isArray(audioMeta.windows) ? audioMeta.windows.reduce((sum, w) => sum + (Number(w.bytes) || 0), 0) : null);
-        const audioSource = transcriptPayload.audioSource || audioMeta.source || 'extension';
-        const audioContentType = transcriptPayload.contentType || audioMeta.contentType || 'audio/wav';
-        const transcriptModel = transcriptPayload.model || model || '@cf/openai/whisper';
+            if (!transcriptSrt) {
+                logStep('Client transcript missing; server-side fetch/transcribe is disabled for auto-subs', 'error');
+                return res.status(400).json({
+                    error: t('server.errors.autoSubsClientRequired', {}, 'Automatic subtitles now require a client-provided transcript (xSync extension).'),
+                    logTrail
+                });
+            }
+            logStep(
+                `Using client transcript (${formatBytes(Buffer.byteLength(transcriptSrt, 'utf8'))}) from ${audioSource}`,
+                'info'
+            );
+            if (cfStatus) {
+                logStep(`Cloudflare transcription status ${cfStatus}${cfBody ? ' | Snippet: ' + cfBody.toString().slice(0, 200).replace(/\s+/g, ' ') : ''}`, cfStatus >= 500 ? 'warn' : 'info');
+            }
+            transcription = {
+                srt: transcriptSrt,
+                languageCode: transcriptLang || 'und',
+                model: transcriptModel,
+                cfStatus: cfStatus || null
+            };
+            transcriptDiagnostics.audioBytes = audioBytes;
+            transcriptDiagnostics.audioSource = audioSource;
+            transcriptDiagnostics.contentType = audioContentType;
+            transcriptDiagnostics.cfStatus = cfStatus || null;
+            transcriptDiagnostics.cfBody = cfBody || '';
+        }
 
-        if (!transcriptSrt) {
-            logStep('Client transcript missing; server-side fetch/transcribe is disabled for auto-subs', 'error');
-            return res.status(400).json({
-                error: t('server.errors.autoSubsClientRequired', {}, 'Automatic subtitles now require a client-provided transcript (xSync extension).'),
+        if (!transcription || !transcription.srt) {
+            logStep('Transcription returned no content', 'error');
+            return res.status(500).json({
+                error: t('server.errors.transcriptionEmpty', {}, 'Transcription returned no content'),
                 logTrail
             });
         }
-        logStep(
-            `Using client transcript (${formatBytes(Buffer.byteLength(transcriptSrt, 'utf8'))}) from ${audioSource}`,
-            'info'
-        );
-        if (cfStatus) {
-            logStep(`Cloudflare transcription status ${cfStatus}${cfBody ? ' | Snippet: ' + cfBody.toString().slice(0, 200).replace(/\s+/g, ' ') : ''}`, cfStatus >= 500 ? 'warn' : 'info');
-        }
-        const transcription = {
-            srt: transcriptSrt,
-            languageCode: transcriptLang || 'und',
-            model: transcriptModel,
-            cfStatus: cfStatus || null
-        };
-
         const originalSrt = (transcription && transcription.srt) ? transcription.srt : '';
         if (!originalSrt || !originalSrt.trim()) {
             logStep('Transcription returned no content', 'error');
@@ -4115,21 +4557,25 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
             });
         }
         const originalLang = normalizeSyncLang(sourceLanguage || transcription.languageCode || 'und');
-        const modelKey = safeModelKey(model || transcription.model);
+        const chosenModel = transcription?.model || model || (engineKey === 'assemblyai' ? 'assemblyai' : '@cf/openai/whisper');
+        const modelKey = safeModelKey(chosenModel);
         const originalSourceId = `autosub_${modelKey}_orig`;
         logStep('Aligning segments and generating SRT/VTT outputs', 'info');
         const originalVtt = srtPairToWebVTT(originalSrt);
 
+        const providerLabel = engineKey === 'assemblyai' ? 'assemblyai' : 'cloudflare-workers';
         const baseMetadata = {
             source: 'auto-subtitles',
-            provider: 'cloudflare-workers',
-            model: transcription.model || model || '@cf/openai/whisper',
+            provider: providerLabel,
+            model: chosenModel,
             streamHash: streamHashInfo.hash || '',
             linkedHash,
             cacheBlocked,
             diarization: diarization === true,
             createdAt: Date.now()
         };
+        if (transcriptDiagnostics.assemblyId) baseMetadata.assemblyId = transcriptDiagnostics.assemblyId;
+        if (transcriptDiagnostics.usedFullVideo) baseMetadata.usedFullVideo = true;
 
         let originalDownloadUrl = null;
         if (!cacheBlocked) {
@@ -4234,13 +4680,15 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
             },
             translations,
             diagnostics: {
-                engine: 'cloudflare',
-                cfStatus: transcription?.cfStatus || null,
-                model: transcription?.model || model || '@cf/openai/whisper',
-                audioBytes: audioBytes || null,
-                audioSource: audioSource || '',
-                contentType: audioContentType || '',
-                translationTargets: normalizedTargets
+                engine: engineKey === 'assemblyai' ? 'assemblyai' : 'cloudflare',
+                cfStatus: engineKey === 'assemblyai' ? null : (transcription?.cfStatus || transcriptDiagnostics.cfStatus || null),
+                model: chosenModel,
+                audioBytes: transcriptDiagnostics.audioBytes || null,
+                audioSource: transcriptDiagnostics.audioSource || '',
+                contentType: transcriptDiagnostics.contentType || '',
+                translationTargets: normalizedTargets,
+                assemblyId: transcriptDiagnostics.assemblyId || null,
+                usedFullVideo: transcriptDiagnostics.usedFullVideo === true
             }
         });
     } catch (error) {

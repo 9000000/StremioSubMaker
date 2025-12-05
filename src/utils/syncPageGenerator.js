@@ -1217,11 +1217,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             color: var(--text);
             font-weight: 700;
         }
-        .aio-warning {
-            margin-top: 12px;
-            font-size: 13px;
-            line-height: 1.5;
-        }
         .badge-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
         .status-badge {
             display: inline-flex;
@@ -1956,7 +1951,6 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                 <div class="page-icon">⏱️</div>
                 <h1 class="page-heading">${escapeHtml(copy.title)}</h1>
                 <p class="page-subtitle">${escapeHtml(copy.subtitle)}</p>
-                <p class="notice warn aio-warning">Do not use this tool at the same time you stream through an AIOStreams <strong>PROXY</strong> for Real-Debrid.</p>
             </div>
             <div class="badge-row">
                 ${renderRefreshBadge(t)}

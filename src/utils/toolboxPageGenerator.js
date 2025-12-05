@@ -1530,13 +1530,6 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       dontShow: t('toolbox.embedded.instructions.dontShow', {}, "Don't show this again"),
       gotIt: t('toolbox.embedded.instructions.gotIt', {}, 'Got it')
     },
-    hero: {
-      notice: t(
-        'toolbox.embedded.hero.notice',
-        {},
-        'Do not use this tool at the same time you stream through an AIOStreams <strong>PROXY</strong> for Real-Debrid.'
-      )
-    },
     videoMeta: {
       label: t('toolbox.embedded.videoMeta.label', {}, 'Linked stream'),
       none: t('toolbox.embedded.videoMeta.none', {}, 'No stream linked'),
@@ -1701,6 +1694,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     const creds = parseCfCreds(cfKey);
     return creds.accountId && creds.token ? creds : null;
   })();
+  const assemblyEnabled = Boolean(config.assemblyAiApiKey);
 
   const bootstrap = {
     configStr,
@@ -2708,16 +2702,6 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       border-color: rgba(239,68,68,0.35);
       color: #7f1d1d;
     }
-    .notice.aio-warning {
-      background: rgba(8,164,213,0.12);
-      border-color: rgba(8,164,213,0.25);
-      color: var(--text);
-    }
-    .aio-warning {
-      margin-top: 12px;
-      font-size: 13px;
-      line-height: 1.5;
-    }
     select.compact-select { width: min(240px, 100%); text-align: center; text-align-last: center; }
     select.target-select { width: min(420px, 100%); }
     .selected-track-box {
@@ -2857,7 +2841,6 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
           <div class="page-icon">🧲</div>
           <h1 class="page-heading">${escapeHtml(copy.meta.pageHeading)}</h1>
           <p class="page-subtitle">${escapeHtml(copy.meta.pageSubtitle)}</p>
-          <p class="notice warn aio-warning">${copy.hero.notice}</p>
         </div>
       <div class="badge-row">
         ${renderRefreshBadge(t)}
@@ -5292,7 +5275,11 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         step2Card: document.getElementById('autoStep2Card'),
         translationCard: document.getElementById('autoTranslationCard'),
         step3Card: document.getElementById('autoStep3Card'),
-        step4Card: document.getElementById('autoStep4Card')
+        step4Card: document.getElementById('autoStep4Card'),
+        assemblySendFullVideo: document.getElementById('assemblySendFullVideo'),
+        assemblyOptions: document.getElementById('assemblyOptions'),
+        modeHelperText: document.getElementById('modeHelperText'),
+        assemblyModeHelper: document.getElementById('assemblyModeHelper')
       };
       const stepPills = {
         fetch: document.getElementById('stepFetch'),
@@ -5882,6 +5869,15 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         if (els.modeDetails) {
           els.modeDetails.style.display = showDetails ? '' : 'none';
         }
+        if (els.assemblyOptions) {
+          els.assemblyOptions.style.display = mode === 'assemblyai' ? '' : 'none';
+        }
+        if (els.modeHelperText) {
+          const helper = mode === 'assemblyai'
+            ? (copy.steps.modeHelperAssembly || copy.steps.modeHelper)
+            : copy.steps.modeHelper;
+          els.modeHelperText.textContent = helper;
+        }
       }
 
       function toggleTranslationStep() {
@@ -5976,6 +5972,38 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             els.translations.appendChild(empty);
           }
         }
+      }
+
+      function processAutoSubResult(data, transcript, translateEnabled, targets, serverLogs = []) {
+        appendServerLogs(serverLogs);
+        handleHashStatus(data?.hashes || {}, data?.cacheBlocked);
+        markStep('align', 'check');
+        setProgress(80);
+        appendLog(tt('toolbox.autoSubs.logs.alignmentDone', {}, 'Alignment and timestamp generation complete.'), 'info');
+        setPreview((data?.original && data.original.srt) || transcript?.srt || '');
+        setDownloads(data?.original, data?.translations || []);
+        state.autoSubsCompleted = true;
+        if (translateEnabled && targets.length) {
+          markStep('translate', (data.translations || []).some(t => t.error) ? 'warn' : 'check');
+          const successCount = (data.translations || []).filter(t => !t.error).length;
+          const failedCount = (data.translations || []).filter(t => t.error).length;
+          const translateSummary = tt('toolbox.autoSubs.logs.translationSummary', {}, 'Translation finished.');
+          const translateParts = [];
+          if (successCount) translateParts.push(tt('toolbox.autoSubs.logs.translationSuccess', { count: successCount }, `${successCount} ready`));
+          if (failedCount) translateParts.push(tt('toolbox.autoSubs.logs.translationFailed', { count: failedCount }, `${failedCount} failed`));
+          const translateLog = [translateSummary, translateParts.join(', ')].filter(Boolean).join(' ');
+          appendLog(translateLog, failedCount ? 'warn' : 'success');
+        } else {
+          markStep('translate', 'warn');
+        }
+        markStep('deliver', 'check');
+        setProgress(100);
+        setStatus(tt('toolbox.autoSubs.status.done', {}, 'Done. Ready to download.'));
+        const finishedMsg = tt('toolbox.autoSubs.logs.finished', {}, 'Finished. Downloads are ready.');
+        const cacheSkipped = data?.cacheBlocked ? ' ' + tt('toolbox.autoSubs.logs.cacheSkipped', {}, 'Cache uploads were skipped due to hash mismatch.') : '';
+        appendLog(finishedMsg + cacheSkipped, 'success');
+        const totalTracks = 1 + (((data?.translations || []).filter(t => !t.error)).length);
+        appendLog(tt('toolbox.autoSubs.logs.readyToDeliver', { count: totalTracks }, `Ready to deliver ${totalTracks} track(s).`), 'success');
       }
 
       function resetOutputs() {
@@ -6095,23 +6123,28 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         });
       }
 
-      async function submitTranscriptToServer(transcript, stream, targets, translateEnabled) {
+      async function submitTranscriptToServer(transcript, stream, targets, translateEnabled, overrides = {}) {
         const payload = {
           configStr: PAGE.configStr,
           streamUrl: stream,
           videoId: PAGE.videoId,
           filename: PAGE.filename,
-          engine: 'remote',
-          model: transcript.model || els.model?.value || '@cf/openai/whisper',
-          sourceLanguage: transcript.languageCode || els.sourceLang?.value || '',
+          engine: overrides.engine || 'remote',
+          model: (transcript && (transcript.model || transcript.modelOverride)) || overrides.modelOverride || els.model?.value || '@cf/openai/whisper',
+          sourceLanguage: (transcript && (transcript.languageCode || transcript.language)) || overrides.sourceLanguageOverride || els.sourceLang?.value || '',
           targetLanguages: targets,
           translate: translateEnabled,
           translationProvider: els.provider?.value || '',
           translationModel: (els.providerModel?.value || '').trim(),
-          sendTimestampsToAI: (els.timestampsMode?.value || '') === 'send',
-          singleBatchMode: (els.batchMode?.value || '') === 'single',
-          translationPrompt: '',
-          transcript: {
+          sendTimestampsToAI: overrides.sendTimestampsToAI ?? ((els.timestampsMode?.value || '') === 'send'),
+          singleBatchMode: overrides.singleBatchMode ?? ((els.batchMode?.value || '') === 'single'),
+          translationPrompt: overrides.translationPrompt || ''
+        };
+        if (overrides.sendFullVideo === true) {
+          payload.sendFullVideo = true;
+        }
+        if (transcript && transcript.srt) {
+          payload.transcript = {
             srt: transcript.srt || '',
             languageCode: transcript.languageCode || transcript.language || '',
             cfStatus: transcript.cfStatus || transcript.status || null,
@@ -6120,8 +6153,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             audioBytes: transcript.audioBytes,
             audioSource: transcript.audioSource || 'extension',
             contentType: transcript.contentType || 'audio/wav'
-          }
-        };
+          };
+        }
 
         const resp = await fetch('/api/auto-subtitles/run', {
           method: 'POST',
@@ -6200,6 +6233,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
 
       async function runAutoSubs() {
         if (state.autoSubsInFlight) return;
+        const mode = (els.modeSelect?.value || '').toLowerCase();
+        const isAssembly = mode === 'assemblyai';
         if (!state.step1Confirmed) {
           const message = lockReasons.needContinue;
           appendLog(message, 'warn');
@@ -6220,16 +6255,23 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           setStatus(tt('toolbox.autoSubs.status.awaiting', {}, 'Awaiting input...'));
           return;
         }
-        const cfCreds = getCfCredentials();
-        if (!cfCreds) {
-          const msg = 'Cloudflare Workers AI credentials missing in config; extension cannot transcribe.';
+        if (!isAssembly) {
+          const cfCreds = getCfCredentials();
+          if (!cfCreds) {
+            const msg = 'Cloudflare Workers AI credentials missing in config; extension cannot transcribe.';
+            appendLog(msg, 'error');
+            setStatus(msg);
+            return;
+          }
+          if (!state.extensionReady) {
+            const msg = tt('toolbox.autoSubs.extension.notDetected', {}, 'Extension not detected');
+            appendLog(msg, 'warn');
+            setStatus(msg);
+            return;
+          }
+        } else if (!BOOTSTRAP.assemblyEnabled) {
+          const msg = tt('toolbox.autoSubs.logs.assemblyMissingKey', {}, 'AssemblyAI mode requires an API key. Add it in Configure.');
           appendLog(msg, 'error');
-          setStatus(msg);
-          return;
-        }
-        if (!state.extensionReady) {
-          const msg = tt('toolbox.autoSubs.extension.notDetected', {}, 'Extension not detected');
-          appendLog(msg, 'warn');
           setStatus(msg);
           return;
         }
@@ -6261,78 +6303,78 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         setStatus(tt('toolbox.autoSubs.status.fetching', {}, 'Fetching stream...'));
         setProgress(8);
 
-        const messageId = 'autosub_' + Date.now();
-        const waitForTranscript = waitForAutoSubResponse(messageId);
-        window.postMessage({
-          type: 'SUBMAKER_AUTOSUB_REQUEST',
-          source: 'webpage',
-          messageId,
-          data: {
-            streamUrl: stream,
-            filename: PAGE.filename || '',
-            model: els.model?.value || '@cf/openai/whisper',
-            sourceLanguage: els.sourceLang?.value || '',
-            diarization: false,
-            cfAccountId: cfCreds.accountId,
-            cfToken: cfCreds.token
-          }
-        }, '*');
-        appendLog('Sent auto-sub request to extension (Cloudflare path)', 'info');
-
         let transcript = null;
         let serverLogs = [];
         try {
-          transcript = await waitForTranscript;
-          if (!transcript || transcript === true) {
-            throw new Error('Extension returned no transcript');
-          }
-          markStep('fetch', 'check');
-          markStep('transcribe', 'check');
-          setProgress(60);
-          appendLog(tt('toolbox.autoSubs.logs.transcriptionDone', {}, 'Transcription completed.'), 'success');
-          setPreview(transcript.srt || '');
-          setStatus(tt('toolbox.autoSubs.status.transcriptionDone', {}, 'Transcription complete. Preparing downloads...'));
-
-          const { resp, data } = await submitTranscriptToServer(transcript, stream, targets, translateEnabled);
-          serverLogs = Array.isArray(data?.logTrail) ? data.logTrail : [];
-          if (!resp.ok || data.success !== true) {
-            const cfStatusLabel = data?.cfStatus ? ` [Cloudflare ${data.cfStatus}]` : '';
-            const msg = data?.error || data?.message || data?.details || `Request failed (${resp.status})`;
-            const err = new Error([msg + cfStatusLabel, data?.cfBody ? `Cloudflare response: ${String(data.cfBody).slice(0, 200)}` : ''].filter(Boolean).join(' '));
-            err.serverLogs = serverLogs;
-            err.cfBody = data?.cfBody || '';
-            err.cfStatus = data?.cfStatus;
-            throw err;
-          }
-          appendServerLogs(serverLogs);
-          handleHashStatus(data.hashes || {}, data.cacheBlocked);
-          markStep('align', 'check');
-          setProgress(80);
-          appendLog(tt('toolbox.autoSubs.logs.alignmentDone', {}, 'Alignment and timestamp generation complete.'), 'info');
-          setPreview(data.original?.srt || transcript.srt || '');
-          setDownloads(data.original, data.translations || []);
-          state.autoSubsCompleted = true;
-          if (translateEnabled && targets.length) {
-            markStep('translate', (data.translations || []).some(t => t.error) ? 'warn' : 'check');
-            const successCount = (data.translations || []).filter(t => !t.error).length;
-            const failedCount = (data.translations || []).filter(t => t.error).length;
-            const translateSummary = tt('toolbox.autoSubs.logs.translationSummary', {}, 'Translation finished.');
-            const translateParts = [];
-            if (successCount) translateParts.push(tt('toolbox.autoSubs.logs.translationSuccess', { count: successCount }, `${successCount} ready`));
-            if (failedCount) translateParts.push(tt('toolbox.autoSubs.logs.translationFailed', { count: failedCount }, `${failedCount} failed`));
-            const translateLog = [translateSummary, translateParts.join(', ')].filter(Boolean).join(' ');
-            appendLog(translateLog, failedCount ? 'warn' : 'success');
+          if (isAssembly) {
+            markStep('fetch', 'warn');
+            markStep('transcribe', 'warn');
+            setStatus(tt('toolbox.autoSubs.status.transcribing', { model: 'AssemblyAI' }, 'Transcribing with AssemblyAI'));
+            const { resp, data } = await submitTranscriptToServer(null, stream, targets, translateEnabled, {
+              engine: 'assemblyai',
+              modelOverride: 'assemblyai',
+              sourceLanguageOverride: els.sourceLang?.value || '',
+              sendFullVideo: els.assemblySendFullVideo?.checked === true
+            });
+            serverLogs = Array.isArray(data?.logTrail) ? data.logTrail : [];
+            if (!resp.ok || data.success !== true) {
+              const msg = data?.error || data?.message || data?.details || `Request failed (${resp.status})`;
+              const err = new Error(msg);
+              err.serverLogs = serverLogs;
+              throw err;
+            }
+            transcript = data.original || null;
+            markStep('fetch', 'check');
+            markStep('transcribe', 'check');
+            setProgress(60);
+            appendLog(tt('toolbox.autoSubs.logs.transcriptionDone', {}, 'Transcription completed.'), 'success');
+            setPreview(transcript?.srt || '');
+            setStatus(tt('toolbox.autoSubs.status.transcriptionDone', {}, 'Transcription complete. Preparing downloads...'));
+            processAutoSubResult(data, transcript, translateEnabled, targets, serverLogs);
           } else {
-            markStep('translate', 'warn');
+            const cfCreds = getCfCredentials();
+            const messageId = 'autosub_' + Date.now();
+            const waitForTranscript = waitForAutoSubResponse(messageId);
+            window.postMessage({
+              type: 'SUBMAKER_AUTOSUB_REQUEST',
+              source: 'webpage',
+              messageId,
+              data: {
+                streamUrl: stream,
+                filename: PAGE.filename || '',
+                model: els.model?.value || '@cf/openai/whisper',
+                sourceLanguage: els.sourceLang?.value || '',
+                diarization: false,
+                cfAccountId: cfCreds.accountId,
+                cfToken: cfCreds.token
+              }
+            }, '*');
+            appendLog('Sent auto-sub request to extension (Cloudflare path)', 'info');
+
+            transcript = await waitForTranscript;
+            if (!transcript || transcript === true) {
+              throw new Error('Extension returned no transcript');
+            }
+            markStep('fetch', 'check');
+            markStep('transcribe', 'check');
+            setProgress(60);
+            appendLog(tt('toolbox.autoSubs.logs.transcriptionDone', {}, 'Transcription completed.'), 'success');
+            setPreview(transcript.srt || '');
+            setStatus(tt('toolbox.autoSubs.status.transcriptionDone', {}, 'Transcription complete. Preparing downloads...'));
+
+            const { resp, data } = await submitTranscriptToServer(transcript, stream, targets, translateEnabled);
+            serverLogs = Array.isArray(data?.logTrail) ? data.logTrail : [];
+            if (!resp.ok || data.success !== true) {
+              const cfStatusLabel = data?.cfStatus ? ` [Cloudflare ${data.cfStatus}]` : '';
+              const msg = data?.error || data?.message || data?.details || `Request failed (${resp.status})`;
+              const err = new Error([msg + cfStatusLabel, data?.cfBody ? `Cloudflare response: ${String(data.cfBody).slice(0, 200)}` : ''].filter(Boolean).join(' '));
+              err.serverLogs = serverLogs;
+              err.cfBody = data?.cfBody || '';
+              err.cfStatus = data?.cfStatus;
+              throw err;
+            }
+            processAutoSubResult(data, transcript, translateEnabled, targets, serverLogs);
           }
-          markStep('deliver', 'check');
-          setProgress(100);
-          setStatus(tt('toolbox.autoSubs.status.done', {}, 'Done. Ready to download.'));
-          const finishedMsg = tt('toolbox.autoSubs.logs.finished', {}, 'Finished. Downloads are ready.');
-          const cacheSkipped = data.cacheBlocked ? ' ' + tt('toolbox.autoSubs.logs.cacheSkipped', {}, 'Cache uploads were skipped due to hash mismatch.') : '';
-          appendLog(finishedMsg + cacheSkipped, 'success');
-          const totalTracks = 1 + ((data.translations || []).filter(t => !t.error).length);
-          appendLog(tt('toolbox.autoSubs.logs.readyToDeliver', { count: totalTracks }, `Ready to deliver ${totalTracks} track(s).`), 'success');
         } catch (error) {
           markStep('transcribe', 'danger');
           markStep('align', 'danger');
@@ -6391,6 +6433,9 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         }
         if (els.timestampsMode) {
           els.timestampsMode.value = BOOTSTRAP.defaults?.sendTimestampsToAI ? 'send' : 'original';
+        }
+        if (els.assemblySendFullVideo) {
+          els.assemblySendFullVideo.checked = BOOTSTRAP.defaults?.assemblySendFullVideo === true;
         }
         hydrateVideoMeta({
           title: BOOTSTRAP.linkedTitle || '',
@@ -6584,20 +6629,23 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             '&filename=' + encodeURIComponent(payload.filename || '');
         },
         onEpisode: handleStreamUpdate,
-        notify: forwardMenuNotification
+      notify: forwardMenuNotification
       });
     })();
   }
 
+  const preferredMode = (config?.autoSubs?.defaultMode || 'cloudflare').toLowerCase();
+  const defaultMode = (preferredMode === 'assemblyai' && !assemblyEnabled) ? 'cloudflare' : preferredMode;
   const defaults = {
-    mode: 'cloudflare',
+    mode: defaultMode,
     whisperModel: config?.whisperModel || '@cf/openai/whisper',
     translateToTarget: true,
     streamFilename: filename || '',
     provider: (config?.mainProvider && String(config.mainProvider).toLowerCase()) || providerOptions[0]?.key || 'gemini',
     translationModel: config?.geminiModel || '',
     sendTimestampsToAI: config?.advancedSettings?.sendTimestampsToAI === true,
-    singleBatchMode: config?.singleBatchMode === true
+    singleBatchMode: config?.singleBatchMode === true,
+    assemblySendFullVideo: config?.autoSubs?.sendFullVideoToAssembly === true
   };
 
   const themeToggleLabel = t('fileUpload.themeToggle', {}, 'Toggle theme');
@@ -6652,8 +6700,10 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       langModelTitle: t('toolbox.autoSubs.steps.step2Title', {}, 'Mode & audio'),
       modeLabel: t('toolbox.autoSubs.steps.modeLabel', {}, 'Auto-subtitles mode'),
       modeHelper: t('toolbox.autoSubs.steps.modeHelper', {}, 'Cloudflare runs via the xSync extension. The server will not fetch your stream.'),
+      modeHelperAssembly: t('toolbox.autoSubs.steps.modeHelperAssembly', {}, 'AssemblyAI uploads from this server (no extension needed).'),
       modeLocal: t('toolbox.autoSubs.steps.modeLocal', {}, 'Local (xSync)'),
       modeRemote: t('toolbox.autoSubs.steps.modeRemote', {}, 'Cloudflare Workers AI'),
+      modeAssembly: t('toolbox.autoSubs.steps.modeAssembly', {}, 'AssemblyAI'),
       sourceLabel: t('toolbox.autoSubs.steps.sourceLabel', {}, 'Source audio language'),
       autoDetect: t('toolbox.autoSubs.steps.autoDetect', {}, 'Auto-detect'),
       modelLabel: t('toolbox.autoSubs.steps.modelLabel', {}, 'Whisper model'),
@@ -6662,6 +6712,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         turbo: t('toolbox.autoSubs.steps.modelTurbo', {}, 'Whisper Large V3 Turbo')
       },
       translateOutput: t('toolbox.autoSubs.steps.translateOutput', {}, 'Translate to target languages'),
+      assemblySendFullVideo: t('toolbox.autoSubs.steps.sendFullVideo', {}, 'Send full video to AssemblyAI (≤5GB)'),
+      assemblySendFullVideoHelper: t('toolbox.autoSubs.steps.sendFullVideoHelper', {}, 'If the stream is larger than 5GB, we will fall back to audio extraction automatically.'),
       translationStepChip: t('toolbox.autoSubs.steps.stepTwoFiveChip', {}, 'Step 2.5'),
       translationStepTitle: t('toolbox.autoSubs.steps.stepTwoFiveTitle', {}, 'Translation targets'),
       translationSettingsTitle: t('toolbox.autoSubs.steps.translationSettings', {}, 'Translation settings'),
@@ -6903,11 +6955,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       border: 1px solid rgba(8,164,213,0.25);
       color: var(--text);
       font-weight: 700;
-    }
-    .aio-warning {
-      margin-top: 12px;
-      font-size: 13px;
-      line-height: 1.5;
     }
     .badge-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
     .status-badge {
@@ -7529,7 +7576,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         <div class="page-icon">🤖</div>
         <h1 class="page-heading">${escapeHtml(copy.hero.title)}</h1>
         <p class="page-subtitle">${escapeHtml(copy.hero.subtitle)}</p>
-        <p class="notice warn aio-warning">Do not use this tool at the same time you stream through an AIOStreams <strong>PROXY</strong> for Real-Debrid.</p>
       </div>
       <div class="badge-row">
         ${renderRefreshBadge(t)}
@@ -7585,8 +7631,9 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             <select id="autoSubsMode">
               <option value="local" disabled>${escapeHtml(copy.steps.modeLocal)}</option>
               <option value="cloudflare" selected>${escapeHtml(copy.steps.modeRemote)}</option>
+              <option value="assemblyai"${assemblyEnabled ? '' : ' disabled'}>${escapeHtml(copy.steps.modeAssembly)}</option>
             </select>
-            <p class="muted mode-helper">${escapeHtml(copy.steps.modeHelper)}</p>
+            <p class="muted mode-helper" id="modeHelperText">${escapeHtml(copy.steps.modeHelper)}</p>
             <div id="modeDetails" class="mode-details">
               <div class="row">
                 <div>
@@ -7608,6 +7655,12 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
                 <label class="inline-checkbox">
                   <input type="checkbox" id="translateOutput" checked> ${escapeHtml(copy.steps.translateOutput)}
                 </label>
+              </div>
+              <div id="assemblyOptions" style="display:none; margin-top:8px;">
+                <label class="inline-checkbox">
+                  <input type="checkbox" id="assemblySendFullVideo"> ${escapeHtml(copy.steps.assemblySendFullVideo)}
+                </label>
+                <p class="muted" id="assemblyModeHelper" style="margin-top:4px;">${escapeHtml(copy.steps.assemblySendFullVideoHelper)}</p>
               </div>
             </div>
             <div class="controls" style="margin-top:12px;">
@@ -7743,6 +7796,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     videoHash,
     linkedTitle,
     cfClient,
+    assemblyEnabled,
     defaults,
     providerOptions,
     targetLanguages,

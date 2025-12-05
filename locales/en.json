@@ -303,9 +303,6 @@
           "dontShow": "Don't show this again",
           "gotIt": "Got it"
         },
-        "hero": {
-          "notice": "If you use AIOStreams PROXY for Real-Debrid, completely exit all streams before running this tool."
-        },
         "videoMeta": {
           "label": "Linked stream",
           "none": "No stream linked",
@@ -377,6 +374,10 @@
         "heroSubtitle": "Generate subtitles with Whisper then translate",
         "badges": {
           "hash": "Hash",
+          "decode": "Decode",
+          "decodeWorking": "FFmpeg decoding",
+          "decodeReady": "Decode ready",
+          "decodeError": "Decode failed",
           "versionFallback": "n/a",
           "pending": "pending"
         },
@@ -402,6 +403,12 @@
           "clear": "Clear",
           "step2Chip": "Step 2",
           "step2Title": "Language + model",
+          "modeLabel": "Auto-subtitles mode",
+          "modeHelper": "Cloudflare runs via the xSync extension. The server will not fetch your stream.",
+          "modeHelperAssembly": "AssemblyAI uploads from this server (no extension needed).",
+          "modeLocal": "Local (xSync)",
+          "modeRemote": "Cloudflare Workers AI",
+          "modeAssembly": "AssemblyAI",
           "sourceLabel": "Source language (optional)",
           "autoDetect": "Auto-detect",
           "targetLabel": "Target language",
@@ -411,6 +418,8 @@
           "modelMedium": "medium (balanced)",
           "modelTurbo": "Whisper Large V3 Turbo",
           "translateOutput": "Translate to target languages",
+          "sendFullVideo": "Send full video to AssemblyAI (\u22645GB)",
+          "sendFullVideoHelper": "If the stream is larger than 5GB, we will fall back to audio extraction automatically.",
           "singleBatch": "Single batch mode",
           "sendTimestamps": "Send timestamps to AI",
           "providerLabel": "Translation provider",
@@ -472,6 +481,7 @@
           "noStream": "Paste a stream URL first.",
           "noTargets": "Select at least one target language or disable translation.",
           "sendingRequest": "Sending request to Cloudflare Workers AI...",
+          "assemblyMissingKey": "AssemblyAI mode requires an API key. Add it in Configure.",
           "finished": "Finished. Downloads are ready.",
           "cacheSkipped": "Cache uploads were skipped due to hash mismatch.",
           "errorPrefix": "Error: "
@@ -758,6 +768,9 @@
         "learnRequired": "Please select at least one learn language",
         "geminiKeyRequired": "Gemini API key is required",
         "geminiModelRequired": "Please select a Gemini model",
+        "assemblyAiKeyRequired": "AssemblyAI API key is required for AssemblyAI mode",
+        "assemblyAiKeyInvalid": "AssemblyAI API key is invalid",
+        "validating": "Validating...",
         "mainProviderEnable": "Enable {provider} to use it as Main Provider",
         "mainProviderKeyRequired": "API key required for {provider}",
         "mainProviderModelRequired": "Select a model for {provider}",
@@ -887,6 +900,16 @@
           "rateWarningBody": "If using a free API key, Gemini 2.5 Pro may trigger rate limits (HTTP 429). You'll likely only be able to translate one subtitle at a time."
         }
       },
+      "otherApiKeys": {
+        "title": "Other API Keys",
+        "assembly": {
+          "label": "AssemblyAI API Key",
+          "helper": "Used for Automatic Subtitles via AssemblyAI.",
+          "placeholder": "Enter your AssemblyAI API key",
+          "validateTitle": "Validate AssemblyAI API key",
+          "validateCta": "Test"
+        }
+      },
       "noTranslationCard": {
         "title": "Languages",
         "label": "Subtitle Languages",
@@ -952,6 +975,10 @@
       },
       "otherSettings": {
         "title": "Other Settings",
+        "autosubsKeys": {
+          "label": "Autosubs API Keys",
+          "description": "Show the AssemblyAI key section for automatic subtitles."
+        },
         "subToolbox": {
           "label": "Enable \"Sub Toolbox\" (Alpha)",
           "description": "Shows the Sub Toolbox entry in Stremio subtitles for brower access to all tools. (Read instructions after enabling)",

@@ -264,7 +264,8 @@
         // Do not ship real keys in the client bundle
         SUBDL: '',
         SUBSOURCE: '',
-        GEMINI: ''
+        GEMINI: '',
+        ASSEMBLYAI: ''
     };
 
     // Popular languages for quick selection
@@ -617,6 +618,12 @@ Translate to {target_language}.`;
             learnOrder: 'source-top', // 'source-top' | 'target-top'
             learnPlacement: 'top',
             geminiApiKey: DEFAULT_API_KEYS.GEMINI,
+            assemblyAiApiKey: DEFAULT_API_KEYS.ASSEMBLYAI,
+            otherApiKeysEnabled: false,
+            autoSubs: {
+                defaultMode: 'cloudflare',
+                sendFullVideoToAssembly: false
+            },
             geminiModel: modelName,
             betaModeEnabled: false,
             devMode: false,
@@ -801,6 +808,18 @@ Translate to {target_language}.`;
         }
         const defaults = getDefaultProviderParameters();
         currentConfig.providerParameters = mergeProviderParameters(defaults, currentConfig.providerParameters);
+    }
+
+    function ensureAutoSubsDefaults() {
+        if (!currentConfig) {
+            currentConfig = getDefaultConfig();
+        }
+        const defaults = getDefaultConfig(currentConfig.geminiModel || 'gemini-flash-latest').autoSubs;
+        currentConfig.autoSubs = {
+            ...defaults,
+            ...(currentConfig.autoSubs || {})
+        };
+        currentConfig.otherApiKeysEnabled = currentConfig.otherApiKeysEnabled === true || !!currentConfig.assemblyAiApiKey;
     }
 
     function ensureUiLanguageDockExists() {
@@ -1047,6 +1066,7 @@ Translate to {target_language}.`;
         currentConfig.betaModeEnabled = currentConfig.betaModeEnabled === true;
         ensureProvidersInState();
         ensureProviderParametersInState();
+        ensureAutoSubsDefaults();
         const multiProviderToggleRequested = currentConfig.multiProviderEnabled === true && currentConfig.betaModeEnabled === true;
         currentConfig.multiProviderEnabled = multiProviderToggleRequested;
         const requestedMainProvider = currentConfig.mainProvider || 'gemini';
@@ -2112,6 +2132,28 @@ Translate to {target_language}.`;
             });
         }
 
+        // Other API keys visibility
+        const otherApiKeysToggle = document.getElementById('otherApiKeysEnabled');
+        if (otherApiKeysToggle) {
+            otherApiKeysToggle.addEventListener('change', (e) => {
+                toggleOtherApiKeysSection(e.target.checked);
+            });
+        }
+
+        const assemblyKeyInput = document.getElementById('assemblyAiApiKey');
+        if (assemblyKeyInput) {
+            assemblyKeyInput.addEventListener('input', () => {
+                if (assemblyKeyInput.value.trim()) {
+                    toggleOtherApiKeysSection(true);
+                }
+            });
+        }
+
+        const validateAssemblyAiBtn = document.getElementById('validateAssemblyAi');
+        if (validateAssemblyAiBtn) {
+            validateAssemblyAiBtn.addEventListener('click', validateAssemblyAiKey);
+        }
+
         // No-translation language search
         const noTranslationSearch = document.getElementById('noTranslationSearch');
         if (noTranslationSearch) {
@@ -3075,6 +3117,87 @@ Translate to {target_language}.`;
         }
     }
 
+    async function validateAssemblyAiKey(showNotification = true) {
+        const input = document.getElementById('assemblyAiApiKey');
+        const feedback = document.getElementById('assemblyAiValidationFeedback');
+        const error = document.getElementById('assemblyAiApiKeyError');
+        if (!input) return false;
+
+        const value = input.value.trim();
+        const requiredMsg = tConfig('config.validation.assemblyAiKeyRequired', {}, '⚠️ AssemblyAI API key is required for AssemblyAI mode');
+
+        if (!value) {
+            input.classList.add('invalid');
+            if (error) {
+                error.textContent = requiredMsg;
+                error.classList.add('show');
+            }
+            if (feedback) {
+                feedback.textContent = '';
+            }
+            if (showNotification) {
+                showAlert(requiredMsg, 'error');
+            }
+            return false;
+        }
+
+        input.classList.remove('invalid');
+        if (error) {
+            error.classList.remove('show');
+        }
+        if (feedback) {
+            feedback.textContent = tConfig('config.validation.validating', {}, 'Validating...');
+            feedback.classList.remove('error', 'success');
+        }
+
+        try {
+            const resp = await fetch('/api/validate-assemblyai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ apiKey: value })
+            });
+            const data = await resp.json().catch(() => ({}));
+            const valid = data?.valid === true;
+            const message = data?.message || (valid
+                ? tConfig('config.validation.apiKeyValid', {}, 'API key is valid')
+                : (data?.error || tConfig('config.validation.assemblyAiKeyInvalid', {}, 'AssemblyAI API key is invalid')));
+            if (valid) {
+                input.classList.add('valid');
+                if (feedback) {
+                    feedback.textContent = message;
+                    feedback.classList.remove('error');
+                    feedback.classList.add('success');
+                }
+                if (showNotification) {
+                    showAlert(message, 'success');
+                }
+                return true;
+            }
+            input.classList.add('invalid');
+            if (feedback) {
+                feedback.textContent = message;
+                feedback.classList.remove('success');
+                feedback.classList.add('error');
+            }
+            if (showNotification) {
+                showAlert(message, 'error');
+            }
+            return false;
+        } catch (err) {
+            const failMsg = err?.message || tConfig('config.validation.apiError', {}, 'API error');
+            input.classList.add('invalid');
+            if (feedback) {
+                feedback.textContent = failMsg;
+                feedback.classList.remove('success');
+                feedback.classList.add('error');
+            }
+            if (showNotification) {
+                showAlert(failMsg, 'error');
+            }
+            return false;
+        }
+    }
+
     function validateGeminiModel() {
         const select = document.getElementById('geminiModel');
         const error = document.getElementById('geminiModelError');
@@ -3507,6 +3630,9 @@ Translate to {target_language}.`;
             const geminiApiKeyError = document.getElementById('geminiApiKeyError');
             const geminiModelSelect = document.getElementById('geminiModel');
             const geminiModelError = document.getElementById('geminiModelError');
+            const assemblyAiInput = document.getElementById('assemblyAiApiKey');
+            const assemblyAiError = document.getElementById('assemblyAiApiKeyError');
+            const assemblyAiFeedback = document.getElementById('assemblyAiValidationFeedback');
             const sourceLanguagesError = document.getElementById('sourceLanguagesError');
             const targetLanguagesError = document.getElementById('targetLanguagesError');
             const learnLanguagesError = document.getElementById('learnLanguagesError');
@@ -3522,6 +3648,16 @@ Translate to {target_language}.`;
             }
             if (geminiModelError) {
                 geminiModelError.classList.remove('show');
+            }
+            if (assemblyAiInput) {
+                assemblyAiInput.classList.remove('invalid', 'valid');
+            }
+            if (assemblyAiError) {
+                assemblyAiError.classList.remove('show');
+            }
+            if (assemblyAiFeedback) {
+                assemblyAiFeedback.textContent = '';
+                assemblyAiFeedback.classList.remove('error', 'success');
             }
             if (sourceLanguagesError) {
                 sourceLanguagesError.classList.remove('show');
@@ -3678,6 +3814,28 @@ Translate to {target_language}.`;
             const matches = name.includes(term) || code.includes(term);
             item.classList.toggle('hidden', !matches);
         });
+    }
+
+    function toggleOtherApiKeysSection(enabled) {
+        const card = document.getElementById('otherApiKeysCard');
+        const toggle = document.getElementById('otherApiKeysEnabled');
+        const shouldShow = enabled === true;
+        if (toggle) {
+            toggle.checked = shouldShow;
+        }
+        if (card) {
+            card.style.display = shouldShow ? '' : 'none';
+            if (!shouldShow) {
+                const collapseBtn = card.querySelector('[data-collapse="other-api"]');
+                if (collapseBtn) {
+                    collapseBtn.classList.add('collapsed');
+                }
+                card.classList.add('collapsed');
+            }
+        }
+        if (currentConfig) {
+            currentConfig.otherApiKeysEnabled = shouldShow || !!currentConfig.assemblyAiApiKey;
+        }
     }
 
     async function autoFetchModels(apiKey) {
@@ -4198,6 +4356,16 @@ Translate to {target_language}.`;
 
         // Load Gemini API key
         document.getElementById('geminiApiKey').value = currentConfig.geminiApiKey || '';
+        const assemblyKeyInput = document.getElementById('assemblyAiApiKey');
+        if (assemblyKeyInput) {
+            assemblyKeyInput.value = currentConfig.assemblyAiApiKey || '';
+        }
+        const otherKeysToggle = document.getElementById('otherApiKeysEnabled');
+        const otherKeysEnabled = currentConfig.otherApiKeysEnabled === true || !!currentConfig.assemblyAiApiKey;
+        if (otherKeysToggle) {
+            otherKeysToggle.checked = otherKeysEnabled;
+        }
+        toggleOtherApiKeysSection(otherKeysEnabled);
 
         // Load Gemini model
         const modelSelect = document.getElementById('geminiModel');
@@ -4407,6 +4575,7 @@ Translate to {target_language}.`;
     async function handleSubmit(e) {
         e.preventDefault();
         ensureProvidersInState();
+        ensureAutoSubsDefaults();
 
         // Sync mobile mode state into currentConfig before building payload
         try {
@@ -4446,6 +4615,13 @@ Translate to {target_language}.`;
             noTranslationLanguages: currentConfig.noTranslationLanguages,
             uiLanguage: (currentConfig.uiLanguage || (navigator.language || 'en')).toString().toLowerCase(),
             geminiApiKey: document.getElementById('geminiApiKey').value.trim(),
+            assemblyAiApiKey: (function(){ const el = document.getElementById('assemblyAiApiKey'); return el ? el.value.trim() : ''; })(),
+            otherApiKeysEnabled: (function(){ const el = document.getElementById('otherApiKeysEnabled'); return el ? el.checked : currentConfig?.otherApiKeysEnabled === true; })(),
+            autoSubs: {
+                ...currentConfig.autoSubs,
+                defaultMode: currentConfig.autoSubs?.defaultMode || 'cloudflare',
+                sendFullVideoToAssembly: currentConfig.autoSubs?.sendFullVideoToAssembly === true
+            },
             // Save the selected model from the dropdown
             // Advanced settings can override this if enabled
             geminiModel: document.getElementById('geminiModel')?.value || 'gemini-flash-latest',

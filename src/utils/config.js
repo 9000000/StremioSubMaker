@@ -381,6 +381,10 @@ function normalizeConfig(config) {
     advancedSettings: {
       ...defaults.advancedSettings,
       ...(config.advancedSettings || {})
+    },
+    autoSubs: {
+      ...defaults.autoSubs,
+      ...(config.autoSubs || {})
     }
   };
 
@@ -509,6 +513,16 @@ function normalizeConfig(config) {
       };
     }
   }
+
+  // Normalize auto-subs defaults and feature flags
+  const allowedAutoModes = new Set(['cloudflare', 'assemblyai', 'local']);
+  const requestedMode = (mergedConfig.autoSubs?.defaultMode || defaults.autoSubs.defaultMode || 'cloudflare')
+    .toString()
+    .toLowerCase();
+  mergedConfig.autoSubs = mergedConfig.autoSubs || {};
+  mergedConfig.autoSubs.defaultMode = allowedAutoModes.has(requestedMode) ? requestedMode : defaults.autoSubs.defaultMode;
+  mergedConfig.autoSubs.sendFullVideoToAssembly = mergedConfig.autoSubs.sendFullVideoToAssembly === true;
+  mergedConfig.otherApiKeysEnabled = mergedConfig.otherApiKeysEnabled === true || !!mergedConfig.assemblyAiApiKey;
 
   if (mergedConfig.multiProviderEnabled) {
     const mainKey = mergedConfig.mainProvider || 'gemini';
@@ -764,6 +778,12 @@ function getDefaultConfig(modelName = null) {
     learnOrder: 'source-top',
     learnPlacement: 'top', // default: pin top language at top of screen
     geminiApiKey: '',
+    assemblyAiApiKey: DEFAULT_API_KEYS.ASSEMBLYAI || '',
+    otherApiKeysEnabled: false,
+    autoSubs: {
+      defaultMode: 'cloudflare',
+      sendFullVideoToAssembly: false
+    },
     // Use effective model (from parameter, env variable, or default)
     geminiModel: effectiveModel,
     multiProviderEnabled: false,

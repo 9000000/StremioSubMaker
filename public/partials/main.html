@@ -652,6 +652,44 @@
             </div>
         </div>
 
+        <!-- Other API Keys -->
+        <div class="card collapsed" id="otherApiKeysCard" data-card="other-api" style="display: none;">
+            <div class="card-header">
+                <div class="card-title-group">
+                    <div class="card-icon" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+                            <g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M14 18l-2 2 2 2-2 2h-4l-2-2 2-2-2-2 2-2h4z" />
+                                <circle cx="21" cy="11" r="6" />
+                                <path d="M21 8v3l2 1" stroke-width="1.8" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h2 class="card-title" data-i18n="config.otherApiKeys.title">Other API Keys</h2>
+                </div>
+                <button type="button" class="collapse-btn collapsed" data-collapse="other-api"></button>
+            </div>
+            <div class="card-content">
+                <div class="form-group">
+                    <label for="assemblyAiApiKey">
+                        <span data-i18n="config.otherApiKeys.assembly.label">AssemblyAI API Key</span>
+                        <span class="label-description" data-i18n="config.otherApiKeys.assembly.helper">Used for Automatic Subtitles via AssemblyAI.</span>
+                    </label>
+                    <div style="display: flex; gap: 0.5rem; align-items: start;">
+                        <input type="text" class="sensitive-input masked" id="assemblyAiApiKey"
+                            placeholder="Enter your AssemblyAI API key" data-i18n="config.otherApiKeys.assembly.placeholder" data-i18n-attr="placeholder"
+                            style="flex: 1;" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text">
+                        <button type="button" class="validate-api-btn" id="validateAssemblyAi" title="Validate AssemblyAI API key" data-i18n="config.otherApiKeys.assembly.validateTitle" data-i18n-attr="title">
+                            <span class="validate-icon">✓</span>
+                            <span class="validate-text" data-i18n="config.otherApiKeys.assembly.validateCta">Test</span>
+                        </button>
+                    </div>
+                    <div class="validation-feedback" id="assemblyAiValidationFeedback"></div>
+                    <div class="field-error" id="assemblyAiApiKeyError" data-i18n="config.validation.assemblyAiKeyRequired">API key is required for AssemblyAI mode</div>
+                </div>
+            </div>
+        </div>
+
         <!-- Source Languages -->
         <div class="card collapsed" id="sourceCard" data-card="source">
             <div class="card-header">
@@ -931,6 +969,14 @@
                 <button type="button" class="collapse-btn collapsed" data-collapse="cache"></button>
             </div>
             <div class="card-content">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="otherApiKeysEnabled">
+                        <span data-i18n="config.otherSettings.autosubsKeys.label">Autosubs API Keys</span>
+                        <span class="label-description" data-i18n="config.otherSettings.autosubsKeys.description">Show the AssemblyAI key section for automatic subtitles.</span>
+                    </label>
+                </div>
+
                 <div class="form-group">
                     <label>
                         <input type="checkbox" id="subToolboxEnabled">
