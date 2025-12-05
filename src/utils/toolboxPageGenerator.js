@@ -1553,11 +1553,10 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         {},
         'Hashes do not match. Extraction stays blocked until the pasted URL matches your linked stream.'
       ),
-      hashMismatchLine1: t('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match before extraction can start.'),
-      hashMismatchLine2: t(
-        'toolbox.embedded.step1.hashMismatchLine2',
+      hashMismatchLine1: t(
+        'toolbox.embedded.step1.hashMismatchLine1',
         {},
-        ''
+        'Hashes must match (Linked Stream and Stream URL) before extraction can start.'
       ),
       logHeader: t('toolbox.embedded.step1.logHeader', {}, 'Live log'),
       logSub: t('toolbox.embedded.step1.logSub', {}, 'Auto-filled while extraction runs.'),
@@ -1626,7 +1625,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
   const step1Helper = (copy.step1.helper && copy.step1.helper !== 'toolbox.embedded.step1.helper')
     ? copy.step1.helper
     : '';
-  const hashAlertLines = [copy.step1.hashMismatchLine1, copy.step1.hashMismatchLine2].filter(Boolean);
+  const hashAlertLines = [copy.step1.hashMismatchLine1].filter(Boolean);
   const providerOptions = (() => {
     const options = [];
     const providers = config.providers || {};
@@ -3037,7 +3036,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       ? hashMismatchStrings.alertLines.filter(Boolean)
       : (HASH_ALERT_DEFAULTS.length
         ? HASH_ALERT_DEFAULTS
-        : [tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match before extraction can start.')]);
+        : [tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match (Linked Stream and Stream URL) before extraction can start.')]);
     const HASH_MISMATCH_INLINE = hashMismatchStrings.inline || '';
     const RELOAD_HINT_FALLBACKS = {
       normal: tt('toolbox.embedded.step2.reloadHint', {}, 'Done! Reload the stream subtitle list in Stremio to see xEmbed (Language) entries.'),
@@ -5322,7 +5321,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           .replace(/'/g, '&#39;');
       };
       const HASH_MISMATCH_LINES = [
-        tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match before extraction can start.')
+        tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match (Linked Stream and Stream URL) before extraction can start.')
       ];
       function primeHashMismatchSpace() {
         const alertEl = els.hashMismatchAlert;
@@ -5373,7 +5372,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       const decodeLabels = {
         pending: copy?.badges?.pending || tt('toolbox.autoSubs.badges.pending', {}, 'pending'),
         working: copy?.badges?.decodeWorking || tt('toolbox.autoSubs.badges.decodeWorking', {}, 'FFmpeg decoding'),
-        ready: copy?.badges?.decodeReady || tt('toolbox.autoSubs.badges.decodeReady', {}, 'Decode ready'),
+        ready: tt('toolbox.autoSubs.badges.decodeReady', {}, 'Ready'),
         error: copy?.badges?.decodeError || tt('toolbox.autoSubs.badges.decodeError', {}, 'Decode failed')
       };
       function setDecodeBadge(tone, text, pulsing = false) {
@@ -5870,9 +5869,9 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         const { valueEl, dotEl, baseLabel } = getPillParts(pill);
         pill.classList.remove('check', 'warn', 'danger');
         pill.classList.add(state);
-        const okLabel = tt('toolbox.autoSubs.status.ok', {}, 'OK');
+        const okLabel = tt('toolbox.autoSubs.status.ok', {}, 'Ready');
         if (valueEl && baseLabel) {
-          valueEl.textContent = state === 'check' ? `${okLabel} ${baseLabel}` : `- ${baseLabel}`;
+          valueEl.textContent = state === 'check' ? okLabel : `- ${baseLabel}`;
         }
         if (dotEl) {
           const tone = state === 'check' ? 'ok' : state === 'danger' ? 'bad' : 'warn';
@@ -5990,8 +5989,15 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         if (els.assemblyOptions) {
           els.assemblyOptions.style.display = mode === 'assemblyai' ? '' : 'none';
         }
+        const isAssembly = mode === 'assemblyai';
+        const sourceLangRow = els.sourceLang ? els.sourceLang.closest('div') : null;
+        const modelRow = els.model ? els.model.closest('div') : null;
+        if (sourceLangRow) sourceLangRow.style.display = isAssembly ? 'none' : '';
+        if (modelRow) modelRow.style.display = isAssembly ? 'none' : '';
+        if (els.sourceLang) els.sourceLang.disabled = isAssembly;
+        if (els.model) els.model.disabled = isAssembly;
         if (els.modeHelperText) {
-          const helper = mode === 'assemblyai'
+          const helper = isAssembly
             ? (copy.steps.modeHelperAssembly || copy.steps.modeHelper)
             : copy.steps.modeHelper;
           els.modeHelperText.textContent = helper;
@@ -6256,12 +6262,13 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       }
 
       async function submitTranscriptToServer(transcript, stream, targets, translateEnabled, overrides = {}) {
+        const engine = overrides.engine || 'remote';
         const payload = {
           configStr: PAGE.configStr,
           streamUrl: stream,
           videoId: PAGE.videoId,
           filename: PAGE.filename,
-          engine: overrides.engine || 'remote',
+          engine,
           model: (transcript && (transcript.model || transcript.modelOverride)) || overrides.modelOverride || els.model?.value || '@cf/openai/whisper',
           sourceLanguage: (transcript && (transcript.languageCode || transcript.language)) || overrides.sourceLanguageOverride || els.sourceLang?.value || '',
           targetLanguages: targets,
@@ -6272,6 +6279,10 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           singleBatchMode: overrides.singleBatchMode ?? ((els.batchMode?.value || '') === 'single'),
           translationPrompt: overrides.translationPrompt || ''
         };
+        if (engine === 'assemblyai') {
+          delete payload.model;
+          if (!payload.sourceLanguage) delete payload.sourceLanguage;
+        }
         if (overrides.sendFullVideo === true) {
           payload.sendFullVideo = true;
         }
@@ -6449,8 +6460,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             setStatus(tt('toolbox.autoSubs.status.transcribing', { model: 'AssemblyAI' }, 'Transcribing with AssemblyAI'));
             const { resp, data } = await submitTranscriptToServer(null, stream, targets, translateEnabled, {
               engine: 'assemblyai',
-              modelOverride: 'assemblyai',
-              sourceLanguageOverride: els.sourceLang?.value || '',
+              sourceLanguageOverride: '',
               sendFullVideo: els.assemblySendFullVideo?.checked === true,
               diarization: true
             });
@@ -6625,7 +6635,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           const fallback = { filename: PAGE.filename, videoId: PAGE.videoId };
           const invalidMsg = tt('toolbox.logs.invalidUrl', {}, 'Invalid stream URL. Paste a full http/https link.');
           const missingMsg = tt('toolbox.autoSubs.logs.noStream', {}, 'Paste a stream URL first.');
-          const mismatchMsg = HASH_MISMATCH_LINES[0] || tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match before extraction can start.');
+          const mismatchMsg = HASH_MISMATCH_LINES[0] || tt('toolbox.embedded.step1.hashMismatchLine1', {}, 'Hashes must match (Linked Stream and Stream URL) before extraction can start.');
 
           const resetWithReason = (reason) => {
             resetStepFlow(reason || lockReasons.needContinue);

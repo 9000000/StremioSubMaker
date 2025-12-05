@@ -322,7 +322,7 @@
           "extractButton": "Extract Subtitles",
           "extractBlocked": "",
           "hashMismatchInline": "Hashes do not match. Extraction stays blocked until the pasted URL matches your linked stream.",
-        "hashMismatchLine1": "Hashes must match before extraction can start.",
+        "hashMismatchLine1": "Hashes must match (Linked Stream and Stream URL) before extraction can start.",
         "hashMismatchLine2": "",
         "logHeader": "Live log",
         "logSub": "Auto-filled while extraction runs.",

@@ -325,7 +325,7 @@
           "extractButton": "استخراج الترجمات",
           "extractBlocked": "",
           "hashMismatchInline": "تم العثور على تعارض في التجزئة. سيظل الاستخراج محظورًا حتى يطابق الرابط الملصق البث المرتبط.",
-          "hashMismatchLine1": "يجب أن تتطابق التجزئات قبل بدء الاستخراج.",
+          "hashMismatchLine1": "يجب أن تتطابق التجزئات (Linked Stream و Stream URL) قبل بدء الاستخراج.",
           "hashMismatchLine2": "انسخ رابط البث مباشرة من Stremio لإلغاء حظر الاستخراج.",
           "logHeader": "سجل مباشر",
           "logSub": "يُملأ تلقائيًا أثناء الاستخراج.",
