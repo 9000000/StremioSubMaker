@@ -5255,7 +5255,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     (function() {
       const els = {
         startBtn: document.getElementById('startAutoSubs'),
-        previewBtn: document.getElementById('previewSteps'),
         status: document.getElementById('statusText'),
         progress: document.getElementById('progressFill'),
         log: document.getElementById('logArea'),
@@ -6341,10 +6340,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         }
       }
 
-      function previewPlan() {
-        setStatus(tt('toolbox.autoSubs.status.previewPlan', {}, 'Pipeline: fetch -> transcribe -> align -> translate -> deliver.'));
-      }
-
       function initDefaults() {
         primeHashMismatchSpace();
         state.step1Confirmed = false;
@@ -6400,7 +6395,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
 
       function bindEvents() {
         els.startBtn?.addEventListener('click', runAutoSubs);
-        els.previewBtn?.addEventListener('click', previewPlan);
         if (els.streamUrl) {
           const handleEdit = () => {
             if (state.step1Confirmed) resetStepFlow(lockReasons.needContinue);
@@ -7666,7 +7660,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             <p style="margin:0 0 8px; color: var(--text-secondary);">${escapeHtml(copy.steps.pipelineDesc)}</p>
             <div class="controls">
               <button class="btn" id="startAutoSubs">${escapeHtml(copy.steps.start)}</button>
-              <button class="btn secondary" id="previewSteps">${escapeHtml(copy.steps.previewPlan)}</button>
             </div>
             <div class="progress" aria-label="${escapeHtml(copy.steps.progressAria)}">
               <div class="progress-fill" id="progressFill"></div>
