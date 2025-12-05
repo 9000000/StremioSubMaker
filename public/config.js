@@ -95,7 +95,14 @@
                 if (!key) return;
                 const attr = node.getAttribute('data-i18n-attr');
                 const fallbackAttr = node.getAttribute('data-i18n-fallback');
-                const attrList = (attr || '').split(',').map(a => a.trim()).filter(Boolean);
+                // Accept comma or whitespace separated attribute lists and drop anything invalid to avoid DOM errors
+                const rawAttrList = (attr || '')
+                    .split(',')
+                    .map(part => part.split(/\s+/))
+                    .flat()
+                    .map(a => a.trim())
+                    .filter(Boolean);
+                const attrList = rawAttrList.filter(name => /^[A-Za-z_][\w.\-:]*$/.test(name));
                 const fallback = fallbackAttr || (attrList.length ? node.getAttribute(attrList[0]) : node.textContent);
                 const varsAttr = node.getAttribute('data-i18n-vars');
                 let vars = {};
@@ -110,7 +117,13 @@
                 if (attrList.includes('innerHTML')) {
                     node.innerHTML = value;
                 } else if (attrList.length > 0) {
-                    attrList.forEach(name => node.setAttribute(name, value));
+                    attrList.forEach(name => {
+                        try {
+                            node.setAttribute(name, value);
+                        } catch (attrErr) {
+                            console.warn('[i18n] Skipping invalid data-i18n-attr', name, attrErr);
+                        }
+                    });
                 } else {
                     node.textContent = value;
                 }

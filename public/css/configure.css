@@ -366,6 +366,13 @@
         .ui-language-flag-row.collapsed .ui-lang-flag:not(.active) {
             display: none;
         }
+        /* Hide secondary flags by default; only show all when the dock is expanded */
+        .ui-language-dock:not(.expanded) .ui-language-flag-row .ui-lang-flag:not(.active) {
+            display: none;
+        }
+        .ui-language-dock.expanded .ui-language-flag-row .ui-lang-flag {
+            display: grid;
+        }
 
         .ui-lang-flag {
             width: 38px;
@@ -376,6 +383,9 @@
             font-size: 1.2rem;
             font-weight: 800;
             color: var(--text-primary);
+            /* Force emoji-capable fonts so regional indicators render as flags on desktop too */
+            font-family: "Twemoji Country Flags", "Twemoji Mozilla", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Noto Emoji", "Segoe UI Symbol", 'Inter', sans-serif;
+            font-variant-emoji: emoji;
             background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7)),
                 linear-gradient(145deg, rgba(8, 164, 213, 0.14), rgba(51, 185, 225, 0.12));
             border: 1px solid rgba(0, 0, 0, 0.08);
