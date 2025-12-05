@@ -5314,7 +5314,9 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         autoSubsMessageId: null,
         autoSubsResolver: null,
         autoSubsReject: null,
-        autoSubsTimer: null
+        autoSubsTimer: null,
+        lastAutoSubStatus: null,
+        lastDebugLog: null
       };
       const AUTO_SUB_TIMEOUT_MS = 15 * 60 * 1000;
       const escapeHtmlClient = (value) => {
@@ -6146,9 +6148,20 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         refreshAutoSubTimeout();
         const tone = (msg.level || '').toString().toLowerCase();
         const logTone = tone === 'error' ? 'error' : (tone === 'warn' ? 'warn' : 'info');
-        if (msg.status) {
-          appendLog(msg.status, logTone);
-          setStatus(msg.status);
+        const statusText = msg.status ? String(msg.status) : '';
+        const stageKey = msg.stage || '';
+        const prev = state.lastAutoSubStatus;
+        const isExactRepeat = statusText
+          && prev
+          && prev.text === statusText
+          && prev.stage === stageKey
+          && prev.level === logTone;
+        if (statusText) {
+          if (!isExactRepeat) {
+            appendLog(statusText, logTone);
+          }
+          setStatus(statusText);
+          state.lastAutoSubStatus = { text: statusText, stage: stageKey, level: logTone, ts: Date.now() };
         }
         if (typeof msg.progress === 'number') {
           const current = Number((els.progress?.style?.width || '0').replace('%', '')) || 0;
@@ -6233,6 +6246,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
 
         resetOutputs();
         state.autoSubsCompleted = false;
+        state.lastAutoSubStatus = null;
+        state.lastDebugLog = null;
         resetAutoSubWait();
         refreshStepLocks(lockReasons.needRun);
         clearLog();
@@ -6523,7 +6538,13 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             handleAutoSubResponseMessage(msg);
           } else if (msg.type === 'SUBMAKER_DEBUG_LOG' && state.autoSubsInFlight) {
             const logTone = (msg.level || '').toString().toLowerCase();
-            appendLog(msg.text || 'Extension log event', logTone === 'error' ? 'error' : (logTone === 'warn' ? 'warn' : 'info'));
+            const text = msg.text || 'Extension log event';
+            const prev = state.lastDebugLog;
+            const isRepeat = prev && prev.text === text && prev.level === logTone;
+            if (!isRepeat) {
+              appendLog(text, logTone === 'error' ? 'error' : (logTone === 'warn' ? 'warn' : 'info'));
+            }
+            state.lastDebugLog = { text, level: logTone };
           }
         });
         function sendPing() {
