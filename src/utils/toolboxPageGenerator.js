@@ -5233,6 +5233,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     const creds = parseCfCreds(cfKey);
     return creds.accountId && creds.token ? creds : null;
   })();
+  // AssemblyAI mode should only be selectable when a key is configured
+  const assemblyEnabled = Boolean(config.providers?.assemblyai?.apiKey || config.assemblyAiApiKey);
 
   function autoSubsRuntime(copy) {
     (function() {
