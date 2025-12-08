@@ -22,11 +22,22 @@ const { DEFAULT_TRANSLATION_PROMPT } = GeminiService;
 const crypto = require('crypto');
 const log = require('../utils/logger');
 
+// Extract normalized tokens from a language label/code (split on common separators)
+function tokenizeLanguageValue(value) {
+  return String(value || '')
+    .normalize('NFKD') // strip accents/diacritics for safer comparisons
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9+]+/g)
+    .filter(Boolean);
+}
+
 // RTL language detection (codes and human-readable names)
 function isRtlLanguage(lang) {
-  const value = String(lang || '').trim().toLowerCase();
-  if (!value) return false;
-  const rtlCodes = new Set([
+  const tokens = tokenizeLanguageValue(lang);
+  if (tokens.length === 0) return false;
+
+  const rtlTokens = new Set([
     'ar', 'ara', 'arabic',
     'he', 'heb', 'hebrew',
     'fa', 'fas', 'per', 'persian', 'farsi',
@@ -36,9 +47,15 @@ function isRtlLanguage(lang) {
     'dv', 'div', 'dhivehi',
     'yi', 'yid', 'yiddish'
   ]);
-  if (rtlCodes.has(value)) return true;
-  // Also catch longer descriptive labels like "arabic (saudi arabia)"
-  return Array.from(rtlCodes).some(code => value.includes(code));
+
+  // Match against individual tokens only (prevents false positives like "Turkish" matching "ur")
+  return tokens.some(token => {
+    // Avoid false positives like "Sichuan Yi" (Yi is LTR; Yiddish uses the same ISO-639-1 code)
+    if (token === 'yi') {
+      return tokens.length === 1 || tokens.includes('yid') || tokens.includes('yiddish');
+    }
+    return rtlTokens.has(token);
+  });
 }
 
 function wrapRtlText(text) {

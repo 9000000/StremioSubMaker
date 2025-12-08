@@ -2851,7 +2851,11 @@ Translate to {target_language}.`;
         }
 
         if (mainSelect) mainSelect.disabled = false;
-        if (secondaryToggle) secondaryToggle.disabled = false;
+        if (secondaryToggle) {
+            secondaryToggle.disabled = false;
+            // Keep the fallback toggle in sync with saved state before rebuilding options
+            secondaryToggle.checked = currentConfig.secondaryProviderEnabled === true;
+        }
         updateMainProviderOptions(currentConfig.mainProvider || 'gemini');
         toggleSecondaryProviderUI(currentConfig.secondaryProviderEnabled === true);
         updateSecondaryProviderOptions(currentConfig.secondaryProvider || '');
