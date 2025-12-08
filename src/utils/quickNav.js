@@ -465,6 +465,8 @@ function quickNavScript() {
       const notify = typeof opts.notify === 'function' ? opts.notify : null;
 
       let latest = null;
+      let latestSig = '';
+      let latestTs = 0;
       let es = null;
       let pollTimer = null;
       let pollErrorStreak = 0;
@@ -760,26 +762,45 @@ function quickNavScript() {
         if (!payload || !payload.videoId) return;
         const payloadSig = buildSignature(payload) || String(payload.updatedAt || '');
         if (!payloadSig) return;
-        const ts = Number(payload.updatedAt || 0);
+        const ts = Number(payload.updatedAt || Date.now());
 
         if (!hasBaseline) {
           hasBaseline = true;
           lastSeenTs = ts || Date.now();
           lastSig = payloadSig;
-          if (payloadSig === currentSig) return;
           latest = payload;
+          latestSig = payloadSig;
+          latestTs = ts || Date.now();
+          if (payloadSig === currentSig) return;
           showToast(payload);
           return;
         }
 
-        if (payloadSig === currentSig || payloadSig === lastSig) {
+        if (payloadSig === currentSig) {
           lastSeenTs = Math.max(lastSeenTs, ts || Date.now());
+          lastSig = payloadSig;
+          latest = null;
+          latestSig = '';
+          latestTs = ts || Date.now();
+          toast.classList.remove('show');
+          return;
+        }
+
+        if (payloadSig === lastSig) {
+          lastSeenTs = Math.max(lastSeenTs, ts || Date.now());
+          if (ts && ts > latestTs) {
+            latest = payload;
+            latestSig = payloadSig;
+            latestTs = ts;
+          }
           return;
         }
 
         lastSeenTs = ts || Date.now();
         lastSig = payloadSig;
         latest = payload;
+        latestSig = payloadSig;
+        latestTs = ts || Date.now();
         if (typeof opts.onEpisode === 'function') {
           try { opts.onEpisode(payload); } catch (_) {}
         }
@@ -796,6 +817,8 @@ function quickNavScript() {
         dismissBtn.addEventListener('click', () => {
           toast.classList.remove('show');
           latest = null;
+          latestSig = '';
+          latestTs = 0;
         });
       }
 
