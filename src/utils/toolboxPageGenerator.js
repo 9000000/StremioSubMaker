@@ -6012,6 +6012,15 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         applyPillState(pill, state);
       }
 
+      function markFetchComplete() {
+        markStep('fetch', 'check');
+        const pill = stepPills.fetch;
+        if (!pill) return;
+        const { valueEl } = getPillParts(pill);
+        const okLabel = tt('toolbox.autoSubs.status.ok', {}, 'OK');
+        if (valueEl) valueEl.textContent = okLabel;
+      }
+
       function getSelectedModelLabel() {
         const selected = (els.model && els.model.selectedOptions && els.model.selectedOptions[0])
           ? (els.model.selectedOptions[0].textContent || els.model.selectedOptions[0].value || '')
@@ -6243,14 +6252,16 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         appendServerLogs(serverLogs);
         handleHashStatus(data?.hashes || {}, data?.cacheBlocked);
         markStep('align', 'check');
-        setPillLabel('align', tt('toolbox.autoSubs.logs.alignmentDone', {}, 'Alignment and timestamp generation complete.'));
+        const okLabel = tt('toolbox.autoSubs.status.ok', {}, 'OK');
+        setPillLabel('align', okLabel);
         setProgress(80);
         appendLog(tt('toolbox.autoSubs.logs.alignmentDone', {}, 'Alignment and timestamp generation complete.'), 'info');
         setPreview((data?.original && data.original.srt) || transcript?.srt || '');
         setDownloads(data?.original, data?.translations || []);
         state.autoSubsCompleted = true;
         if (translateEnabled && targets.length) {
-          markStep('translate', (data.translations || []).some(t => t.error) ? 'warn' : 'check');
+          const hasTranslationErrors = (data.translations || []).some(t => t.error);
+          markStep('translate', hasTranslationErrors ? 'warn' : 'check');
           const successCount = (data.translations || []).filter(t => !t.error).length;
           const failedCount = (data.translations || []).filter(t => t.error).length;
           const translateSummary = tt('toolbox.autoSubs.logs.translationSummary', {}, 'Translation finished.');
@@ -6259,14 +6270,17 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           if (failedCount) translateParts.push(tt('toolbox.autoSubs.logs.translationFailed', { count: failedCount }, `${failedCount} failed`));
           const translateLog = [translateSummary, translateParts.join(', ')].filter(Boolean).join(' ');
           appendLog(translateLog, failedCount ? 'warn' : 'success');
-          setPillLabel('translate', translateParts.join(', ') || translateSummary);
+          if (hasTranslationErrors) {
+            setPillLabel('translate', translateParts.join(', ') || translateSummary);
+          } else {
+            setPillLabel('translate', okLabel);
+          }
         } else {
-          markStep('translate', 'warn');
-          const skipLabel = tt('toolbox.autoSubs.status.skipTranslate', {}, 'Skipping translation');
-          setPillLabel('translate', skipLabel);
+          markStep('translate', 'check');
+          setPillLabel('translate', okLabel);
         }
         markStep('deliver', 'check');
-        setPillLabel('deliver', tt('toolbox.autoSubs.status.done', {}, 'Done. Ready to download.'));
+        setPillLabel('deliver', okLabel);
         if (state.decodeStatus !== 'done') {
           markDecodeDone(copy?.badges?.decodeReady || decodeLabels.ready);
         }
@@ -6488,15 +6502,17 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         }
         if (msg.stage === 'fetch') {
           markDecodeWorking(copy?.badges?.decodeWorking || decodeLabels.working);
-          markStep('fetch', logTone === 'error' ? 'danger' : 'check');
+          markStep('fetch', logTone === 'error' ? 'danger' : 'warn');
           if (statusText) setPillLabel('fetch', statusText);
         } else if (msg.stage === 'transcribe') {
+          markFetchComplete();
           if (state.decodeStatus !== 'done') {
             markDecodeDone(copy?.badges?.decodeReady || decodeLabels.ready);
           }
           markStep('transcribe', logTone === 'error' ? 'danger' : 'warn');
           setPillLabel('transcribe', getTranscribeStatusLabel(statusText));
         } else if (msg.stage === 'package') {
+          markFetchComplete();
           markStep('align', 'warn');
           if (statusText) setPillLabel('align', statusText);
         } else if (msg.stage === 'error') {

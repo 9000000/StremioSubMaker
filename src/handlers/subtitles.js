@@ -2396,23 +2396,17 @@ function createSubtitleHandler(config) {
         log.warn(() => `[Subtitles] Failed to add Learn Mode entries: ${e.message}`);
       }
 
-      // Add xSync entries (synced subtitles from cache)
+      // Add xSync entries (synced subtitles from cache) - only for user-configured languages
       const xSyncEntries = [];
-      if (toolboxEnabled && videoHashes.length) {
+      const allowedLanguages = Array.from(expandedLangs).filter(Boolean);
+      if (toolboxEnabled && videoHashes.length && allowedLanguages.length) {
         const seenSync = new Set();
         const buildLangCandidates = (lang) => {
           const canonical = canonicalSyncLanguageCode(lang);
           return canonical ? [canonical] : [];
         };
         for (const hash of videoHashes) {
-          // Merge configured languages with any languages we previously synced for this hash
-          const cachedLangs = await syncCache.listSyncedLanguages(hash);
-          const configuredLangs = config.noTranslationMode
-            ? [...new Set(config.noTranslationLanguages || [])]
-            : [...new Set([...config.sourceLanguages, ...config.targetLanguages])];
-          const langUniverse = new Set([...(configuredLangs || []), ...(cachedLangs || [])].filter(Boolean));
-
-          for (const lang of langUniverse) {
+          for (const lang of allowedLanguages) {
             try {
               const langCandidates = buildLangCandidates(lang);
               let syncedSubs = [];
@@ -2424,7 +2418,7 @@ function createSubtitleHandler(config) {
               }
 
               if (syncedSubs && syncedSubs.length > 0) {
-                const langName = getLanguageName(lang) || getLanguageName(langCandidates[0]);
+                const langName = getLanguageName(lang) || getLanguageName(langCandidates[0]) || lang;
                 log.debug(() => `[Subtitles] Found ${syncedSubs.length} synced subtitle(s) for ${langName} (hash=${hash})`);
 
                 for (let i = 0; i < syncedSubs.length; i++) {
@@ -2453,7 +2447,7 @@ function createSubtitleHandler(config) {
       // Add xEmbed entries (translated embedded tracks from cache)
       const xEmbedEntries = [];
       const xEmbedOriginalEntries = [];
-      if (videoHashes.length) {
+      if (videoHashes.length && expandedLangs.size > 0) {
         try {
           const seenKeys = new Set();
           const seenOriginals = new Set();
@@ -2463,11 +2457,13 @@ function createSubtitleHandler(config) {
               if (!entry || !entry.trackId) continue;
               const targetCode = (entry.targetLanguageCode || entry.languageCode || '').toString().toLowerCase();
               if (!targetCode) continue;
+              const normalizedTarget = normalizeLanguageCode(targetCode);
+              if (!normalizedTarget || !expandedLangs.has(normalizedTarget)) continue; // only show for configured languages
               const dedupeKey = `${entry.trackId}_${targetCode}`;
               if (seenKeys.has(dedupeKey)) continue;
               seenKeys.add(dedupeKey);
 
-              const langName = getLanguageName(targetCode) || targetCode;
+              const langName = getLanguageName(normalizedTarget) || getLanguageName(targetCode) || targetCode;
               xEmbedEntries.push({
                 id: `xembed_${entry.cacheKey}`,
                 lang: `xEmbed (${langName})`,
@@ -2481,6 +2477,8 @@ function createSubtitleHandler(config) {
               if (!entry || !entry.trackId) continue;
               const sourceCode = (entry.languageCode || '').toString().toLowerCase();
               if (!sourceCode) continue;
+              const normalizedSource = normalizeLanguageCode(sourceCode);
+              if (!normalizedSource || !expandedLangs.has(normalizedSource)) continue; // only show for configured languages
               const dedupeKey = `${entry.trackId}_${sourceCode}`;
               if (seenOriginals.has(dedupeKey)) continue;
               seenOriginals.add(dedupeKey);
