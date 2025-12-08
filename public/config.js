@@ -4662,13 +4662,12 @@ Translate to {target_language}.`;
 
         ensureProviderParametersInState();
         const multiToggle = document.getElementById('enableMultiProviders');
-        if (multiToggle) {
-            const multiEnabled = currentConfig.multiProviderEnabled === true;
-            multiToggle.checked = multiEnabled;
-            toggleMultiProviderUI(multiEnabled);
-        }
+        const multiEnabled = currentConfig.multiProviderEnabled === true;
+        if (multiToggle) multiToggle.checked = multiEnabled;
         applyProvidersToForm(currentConfig.providers || {});
         applyProviderParametersToForm(currentConfig.providerParameters || {});
+        // Re-apply multi-provider UI AFTER provider state is hydrated so we don't clear secondary selections
+        toggleMultiProviderUI(multiEnabled);
         updateProviderAdvancedVisibility();
 
         // Load subtitle providers
