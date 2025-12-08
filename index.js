@@ -522,20 +522,55 @@ function wrapSrtText(text = '', maxLineLength = 42, maxLines = 2) {
 function shouldMergeAutoSubEntries(prev, next, opts = {}) {
     if (!prev || !next) return false;
     const gap = (next.startMs ?? 0) - (prev.endMs ?? 0);
-    const mergeGapMs = Number.isFinite(opts.mergeGapMs) ? opts.mergeGapMs : 700;
+    const mergeGapMs = Number.isFinite(opts.mergeGapMs) ? opts.mergeGapMs : 500;
     if (gap > mergeGapMs || gap < -500) return false;
     const prevText = (prev.text || '').trim();
     const nextText = (next.text || '').trim();
     if (!prevText || !nextText) return false;
     if (/[.!?…]['"]?$/.test(prevText)) return false;
+    // If next starts with a capitalized word, treat as a likely new sentence/speaker
+    if (/^[A-Z]/.test(nextText)) return false;
     if (/^[-–—♪]/.test(nextText)) return false;
     const combinedLength = (prevText + ' ' + nextText).length;
-    const maxChars = Number.isFinite(opts.maxMergedChars) ? opts.maxMergedChars : 220;
+    const maxChars = Number.isFinite(opts.maxMergedChars) ? opts.maxMergedChars : 180;
     if (combinedLength > maxChars) return false;
     const mergedDuration = Math.max(prev.endMs || 0, next.endMs || 0) - Math.min(prev.startMs || 0, next.startMs || 0);
-    const maxDuration = Number.isFinite(opts.maxMergedDurationMs) ? opts.maxMergedDurationMs : 14000;
+    const maxDuration = Number.isFinite(opts.maxMergedDurationMs) ? opts.maxMergedDurationMs : 9000;
     if (mergedDuration > maxDuration) return false;
     return true;
+}
+
+function splitLongEntry(entry, opts = {}) {
+    const maxChars = Number.isFinite(opts.maxEntryChars) ? opts.maxEntryChars : 160;
+    const maxDuration = Number.isFinite(opts.maxEntryDurationMs) ? opts.maxEntryDurationMs : 9000;
+    const duration = (entry.endMs || 0) - (entry.startMs || 0);
+    const text = (entry.text || '').trim();
+    if (!text || (text.length <= maxChars && duration <= maxDuration)) {
+        return [entry];
+    }
+
+    const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const parts = sentences.length ? sentences : text.split(/\s+(?=[A-Z])/).filter(Boolean);
+    if (!parts.length) return [entry];
+
+    const sliceCount = Math.max(1, parts.length);
+    const sliceDuration = Math.max(1200, Math.round(duration / sliceCount));
+    const result = [];
+    let cursor = entry.startMs || 0;
+    parts.forEach((part, idx) => {
+        const start = cursor;
+        let end = start + sliceDuration;
+        if (idx === parts.length - 1 || end > (entry.endMs || end)) {
+            end = entry.endMs || end;
+        }
+        cursor = end;
+        result.push({
+            startMs: start,
+            endMs: end,
+            text: part.trim()
+        });
+    });
+    return result;
 }
 
 function normalizeAutoSubSrt(srt = '', opts = {}) {
@@ -569,7 +604,8 @@ function normalizeAutoSubSrt(srt = '', opts = {}) {
             }
         }
 
-        const finalEntries = merged.map((entry, idx) => ({
+        const expanded = merged.flatMap((entry) => splitLongEntry(entry, opts));
+        const finalEntries = expanded.map((entry, idx) => ({
             id: idx + 1,
             timecode: `${formatTimestamp((entry.startMs || 0) / 1000)} --> ${formatTimestamp((entry.endMs || entry.startMs || 0) / 1000)}`,
             text: wrapSrtText(entry.text, opts.maxLineLength || 42, opts.maxLines || 2)
