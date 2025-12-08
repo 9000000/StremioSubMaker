@@ -8154,7 +8154,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
                 <span class="status-dot warn" id="stepFetchDot"></span>
                 <div class="status-labels">
                   <span class="label-eyebrow">${escapeHtml(copy.steps.pills.fetch)}</span>
-                  <strong class="pill-value">${escapeHtml('- ' + copy.steps.pills.fetch)}</strong>
+                  <strong class="pill-value">${escapeHtml(copy.badges.pending)}</strong>
                 </div>
               </div>
               <div class="status-badge pill-badge warn" id="decodeBadge" style="gap:8px;">
@@ -8168,28 +8168,28 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
                 <span class="status-dot warn" id="stepTranscribeDot"></span>
                 <div class="status-labels">
                   <span class="label-eyebrow">${escapeHtml(copy.steps.pills.transcribe)}</span>
-                  <strong class="pill-value">${escapeHtml('- ' + copy.steps.pills.transcribe)}</strong>
+                  <strong class="pill-value">${escapeHtml(copy.badges.pending)}</strong>
                 </div>
               </div>
               <div class="status-badge pill-badge warn" id="stepAlign" data-label="${escapeHtml(copy.steps.pills.align)}" style="gap:8px;">
                 <span class="status-dot warn" id="stepAlignDot"></span>
                 <div class="status-labels">
                   <span class="label-eyebrow">${escapeHtml(copy.steps.pills.align)}</span>
-                  <strong class="pill-value">${escapeHtml('- ' + copy.steps.pills.align)}</strong>
+                  <strong class="pill-value">${escapeHtml(copy.badges.pending)}</strong>
                 </div>
               </div>
               <div class="status-badge pill-badge warn" id="stepTranslate" data-label="${escapeHtml(copy.steps.pills.translate)}" style="gap:8px;">
                 <span class="status-dot warn" id="stepTranslateDot"></span>
                 <div class="status-labels">
                   <span class="label-eyebrow">${escapeHtml(copy.steps.pills.translate)}</span>
-                  <strong class="pill-value">${escapeHtml('- ' + copy.steps.pills.translate)}</strong>
+                  <strong class="pill-value">${escapeHtml(copy.badges.pending)}</strong>
                 </div>
               </div>
               <div class="status-badge pill-badge warn" id="stepDeliver" data-label="${escapeHtml(copy.steps.pills.deliver)}" style="gap:8px;">
                 <span class="status-dot warn" id="stepDeliverDot"></span>
                 <div class="status-labels">
                   <span class="label-eyebrow">${escapeHtml(copy.steps.pills.deliver)}</span>
-                  <strong class="pill-value">${escapeHtml('- ' + copy.steps.pills.deliver)}</strong>
+                  <strong class="pill-value">${escapeHtml(copy.badges.pending)}</strong>
                 </div>
               </div>
             </div>
