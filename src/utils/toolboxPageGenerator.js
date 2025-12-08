@@ -6342,13 +6342,14 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         if (hashEl) {
           hashEl.classList.remove('warn', 'danger', 'success');
           if (hasMismatch) {
-            hashEl.textContent = 'Hash mismatch detected.';
+            hashEl.textContent = tt('toolbox.autoSubs.hash.statusMismatch', {}, 'Hash mismatch detected.');
             hashEl.classList.add('danger');
           } else if (streamHash) {
-            hashEl.textContent = 'Hash 1 = Hash 2';
+            hashEl.textContent = tt('toolbox.autoSubs.hash.statusMatch', {}, 'Hashes match.');
             hashEl.classList.add('success');
           } else {
             hashEl.textContent = tt('toolbox.autoSubs.hash.waiting', {}, 'Waiting for stream hash...');
+            hashEl.classList.add('warn');
           }
         }
         if (hasMismatch) {
