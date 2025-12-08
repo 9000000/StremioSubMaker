@@ -2619,8 +2619,8 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     .linked-stream-wrapper {
       display: flex;
       justify-content: center;
+      align-items: center;
       margin: 10px auto 0;
-      flex-basis: 100%;
       width: 100%;
     }
     #linked-stream-card {
@@ -5255,6 +5255,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
   const cloudflareEnabled = Boolean(cfClient);
   // AssemblyAI mode should only be selectable when a key is configured
   const assemblyEnabled = Boolean(config.providers?.assemblyai?.apiKey || config.assemblyAiApiKey);
+  const assemblyApiKey = config.providers?.assemblyai?.apiKey || config.assemblyAiApiKey || '';
 
   function autoSubsRuntime(copy) {
     (function() {
@@ -5329,7 +5330,12 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         autoSubsReject: null,
         autoSubsTimer: null,
         lastAutoSubStatus: null,
-        lastDebugLog: null
+        lastDebugLog: null,
+        serverLogKeys: new Set(),
+        lastServerLogTs: 0,
+        liveLogSource: null,
+        liveLogPoll: null,
+        liveLogJobId: null
       };
       const AUTO_SUB_TIMEOUT_MS = 15 * 60 * 1000;
       const escapeHtmlClient = (value) => {
@@ -5764,16 +5770,90 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         }
       }
 
+      function resetServerLogState() {
+        if (state.serverLogKeys?.clear) state.serverLogKeys.clear();
+        state.lastServerLogTs = 0;
+      }
+
+      function stopAssemblyLiveLogs() {
+        if (state.liveLogSource) {
+          try { state.liveLogSource.close(); } catch (_) { /* ignore close errors */ }
+          state.liveLogSource = null;
+        }
+        if (state.liveLogPoll) {
+          clearInterval(state.liveLogPoll);
+          state.liveLogPoll = null;
+        }
+        state.liveLogJobId = null;
+      }
+
+      function handleServerLogEntry(entry) {
+        if (!entry) return;
+        const level = (entry.level || entry.tone || '').toString().toLowerCase();
+        const tone = level === 'error' ? 'error' : (level === 'warn' ? 'warn' : (level === 'success' ? 'success' : 'info'));
+        const msg = entry.message || entry.msg || '';
+        if (!msg) return;
+        const ts = Number(entry.ts) || Date.now();
+        const key = `${ts}|${tone}|${msg}`;
+        if (state.serverLogKeys?.has(key)) return;
+        if (state.serverLogKeys) state.serverLogKeys.add(key);
+        state.lastServerLogTs = Math.max(state.lastServerLogTs || 0, ts);
+        appendLog(msg, tone);
+      }
+
       function appendServerLogs(logs) {
         if (!Array.isArray(logs)) return;
-        logs.forEach((entry) => {
-          if (!entry) return;
-          const level = (entry.level || entry.tone || '').toString().toLowerCase();
-          const tone = level === 'error' ? 'error' : (level === 'warn' ? 'warn' : (level === 'success' ? 'success' : 'info'));
-          const msg = entry.message || entry.msg || '';
-          if (!msg) return;
-          appendLog(msg, tone);
-        });
+        logs.forEach((entry) => handleServerLogEntry(entry));
+      }
+
+      function startAssemblyLogPoll(jobId) {
+        if (!jobId) return () => {};
+        if (state.liveLogPoll) clearInterval(state.liveLogPoll);
+        const poll = async () => {
+          try {
+            const resp = await fetch('/api/auto-subtitles/logs?jobId=' + encodeURIComponent(jobId) + '&format=json&since=' + encodeURIComponent(state.lastServerLogTs || ''), { cache: 'no-store' });
+            if (!resp.ok) return;
+            const data = await resp.json().catch(() => null);
+            if (data && Array.isArray(data.logs)) {
+              appendServerLogs(data.logs);
+            }
+            if (data && data.done) {
+              stopAssemblyLiveLogs();
+            }
+          } catch (_) { /* ignore polling errors */ }
+        };
+        poll();
+        state.liveLogPoll = setInterval(poll, 1500);
+        return () => {
+          if (state.liveLogPoll) clearInterval(state.liveLogPoll);
+          state.liveLogPoll = null;
+        };
+      }
+
+      function startAssemblyLiveLogStream(jobId) {
+        stopAssemblyLiveLogs();
+        if (!jobId) return () => {};
+        state.liveLogJobId = jobId;
+        if (typeof EventSource === 'function') {
+          const source = new EventSource('/api/auto-subtitles/logs?jobId=' + encodeURIComponent(jobId) + '&replay=0');
+          state.liveLogSource = source;
+          source.onmessage = (event) => {
+            try {
+              const entry = JSON.parse(event.data);
+              if (entry) appendServerLogs([entry]);
+            } catch (_) { /* ignore parse errors */ }
+          };
+          source.addEventListener('done', () => {
+            stopAssemblyLiveLogs();
+          });
+          source.onerror = () => {
+            stopAssemblyLiveLogs();
+            startAssemblyLogPoll(jobId);
+          };
+          return () => stopAssemblyLiveLogs();
+        }
+        startAssemblyLogPoll(jobId);
+        return () => stopAssemblyLiveLogs();
       }
 
       function clearLog() {
@@ -6442,6 +6522,16 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           appendLog(msg, 'error');
           setStatus(msg);
           return;
+        } else if (!state.extensionReady) {
+          const msg = tt('toolbox.autoSubs.extension.notDetected', {}, 'Extension not detected');
+          appendLog(msg, 'warn');
+          setStatus(msg);
+          return;
+        } else if (!BOOTSTRAP.assemblyApiKey) {
+          const msg = tt('toolbox.autoSubs.logs.assemblyMissingKey', {}, 'AssemblyAI mode requires an API key. Add it in Configure.');
+          appendLog(msg, 'error');
+          setStatus(msg);
+          return;
         }
 
         const translateEnabled = els.translateToggle?.checked === true;
@@ -6455,6 +6545,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         }
 
         resetOutputs();
+        resetServerLogState();
+        stopAssemblyLiveLogs();
         state.autoSubsCompleted = false;
         state.lastAutoSubStatus = null;
         state.lastDebugLog = null;
@@ -6472,18 +6564,53 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         setStatus(tt('toolbox.autoSubs.status.fetching', {}, 'Fetching stream...'));
         setProgress(8);
 
+        const assemblyJobId = isAssembly ? ('autosub_' + Date.now() + '_' + Math.random().toString(16).slice(2, 10)) : '';
         let transcript = null;
         let serverLogs = [];
+        let stopLiveLogs = () => {};
         try {
           if (isAssembly) {
+            stopLiveLogs = startAssemblyLiveLogStream(assemblyJobId);
             markStep('fetch', 'warn');
             markStep('transcribe', 'warn');
             setStatus(tt('toolbox.autoSubs.status.transcribing', { model: 'AssemblyAI' }, 'Transcribing with AssemblyAI'));
-            const { resp, data } = await submitTranscriptToServer(null, stream, targets, translateEnabled, {
+            const messageId = assemblyJobId || ('autosub_' + Date.now());
+            const waitForTranscript = waitForAutoSubResponse(messageId);
+            window.postMessage({
+              type: 'SUBMAKER_AUTOSUB_REQUEST',
+              source: 'webpage',
+              messageId,
+              data: {
+                streamUrl: stream,
+                filename: PAGE.filename || '',
+                sourceLanguage: els.sourceLang?.value || '',
+                diarization: true,
+                useAssembly: true,
+                assemblyApiKey: BOOTSTRAP.assemblyApiKey || '',
+                sendFullVideo: els.assemblySendFullVideo?.checked === true
+              }
+            }, '*');
+            appendLog('Sent auto-sub request to extension (AssemblyAI path)', 'info');
+
+            transcript = await waitForTranscript;
+            if (!transcript || transcript === true) {
+              throw new Error('Extension returned no transcript');
+            }
+            markStep('fetch', 'check');
+            markStep('transcribe', 'check');
+            if (state.decodeStatus !== 'done') {
+              markDecodeDone(copy?.badges?.decodeReady || decodeLabels.ready);
+            }
+            setProgress(60);
+            appendLog(tt('toolbox.autoSubs.logs.transcriptionDone', {}, 'Transcription completed.'), 'success');
+            setPreview(transcript.srt || '');
+            setStatus(tt('toolbox.autoSubs.status.transcriptionDone', {}, 'Transcription complete. Preparing downloads...'));
+
+            const { resp, data } = await submitTranscriptToServer(transcript, stream, targets, translateEnabled, {
               engine: 'assemblyai',
-              sourceLanguageOverride: '',
               sendFullVideo: els.assemblySendFullVideo?.checked === true,
-              diarization: true
+              diarization: true,
+              jobId: assemblyJobId
             });
             serverLogs = Array.isArray(data?.logTrail) ? data.logTrail : [];
             if (!resp.ok || data.success !== true) {
@@ -6492,16 +6619,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
               err.serverLogs = serverLogs;
               throw err;
             }
-            transcript = data.original || null;
-            markStep('fetch', 'check');
-            markStep('transcribe', 'check');
-            if (state.decodeStatus !== 'done') {
-              markDecodeDone(copy?.badges?.decodeReady || decodeLabels.ready);
-            }
-            setProgress(60);
-            appendLog(tt('toolbox.autoSubs.logs.transcriptionDone', {}, 'Transcription completed.'), 'success');
-            setPreview(transcript?.srt || '');
-            setStatus(tt('toolbox.autoSubs.status.transcriptionDone', {}, 'Transcription complete. Preparing downloads...'));
             processAutoSubResult(data, transcript, translateEnabled, targets, serverLogs);
           } else {
             const cfCreds = getCfCredentials();
@@ -6564,10 +6681,11 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             appendLog(tt('toolbox.autoSubs.logs.cfBody', {}, 'Cloudflare response: ') + String(error.cfBody).slice(0, 400), 'warn');
           }
           appendLog(tt('toolbox.autoSubs.logs.errorPrefix', {}, 'Error: ') + (error.message || error), 'error');
-          if (state.decodeStatus !== 'done') {
-            markDecodeError(copy?.badges?.decodeError || decodeLabels.error);
-          }
+            if (state.decodeStatus !== 'done') {
+              markDecodeError(copy?.badges?.decodeError || decodeLabels.error);
+            }
         } finally {
+          stopLiveLogs();
           state.autoSubsCompleted = state.autoSubsCompleted === true;
           refreshStepLocks(lockReasons.needRun);
           resetAutoSubWait();
@@ -7743,8 +7861,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     .linked-stream-wrapper {
       display: flex;
       justify-content: center;
+      align-items: center;
       margin: 10px auto 0;
-      flex-basis: 100%;
       width: 100%;
     }
     .video-meta {
@@ -8068,7 +8186,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     defaults,
     providerOptions,
     targetLanguages,
-    sourceLanguages: config.sourceLanguages || []
+    sourceLanguages: config.sourceLanguages || [],
+    assemblyApiKey
   })};
     const PAGE = { configStr: BOOTSTRAP.configStr, videoId: BOOTSTRAP.videoId, filename: BOOTSTRAP.filename || '', videoHash: BOOTSTRAP.videoHash || '' };
     const SUBTITLE_MENU_TARGETS = ${JSON.stringify(subtitleMenuTargets)};

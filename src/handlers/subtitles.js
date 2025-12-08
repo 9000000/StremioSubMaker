@@ -4101,6 +4101,8 @@ module.exports = {
 
 // Max history items per user to fetch/store (soft limit for display)
 const MAX_HISTORY_ITEMS = 20;
+// Hard cap stored per user (keep extra to absorb rapid updates without churn)
+const MAX_HISTORY_STORE_ITEMS = 40;
 const historyMetrics = {
   skippedMissingHash: 0
 };
@@ -4110,6 +4112,11 @@ function sanitizeHistoryComponent(value) {
     .trim()
     .replace(/[^a-zA-Z0-9_-]/g, '_')
     .slice(0, 200);
+}
+
+function buildHistoryStoreKey(userHash) {
+  const safeHash = sanitizeHistoryComponent(userHash);
+  return `histset__${safeHash}`;
 }
 
 function buildHistoryKey(userHash, entryId) {
@@ -4178,6 +4185,21 @@ function normalizeHistoryUserHash(rawHash) {
   return trimmed;
 }
 
+function pruneHistoryEntries(entries = []) {
+  // Dedup by id and keep newest first
+  const deduped = new Map();
+  for (const entry of entries) {
+    if (!entry || !entry.id) continue;
+    const existing = deduped.get(entry.id);
+    if (!existing || (entry.createdAt || 0) > (existing.createdAt || 0)) {
+      deduped.set(entry.id, entry);
+    }
+  }
+  return Array.from(deduped.values())
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .slice(0, MAX_HISTORY_STORE_ITEMS);
+}
+
 function resolveHistoryUserHash(config = {}, explicitHash = '') {
   return normalizeHistoryUserHash(explicitHash)
     || normalizeHistoryUserHash(config.userHash)
@@ -4205,9 +4227,31 @@ async function saveRequestToHistory(userHash, entry) {
       return;
     }
     const adapter = await getStorageAdapter();
-    const key = buildHistoryKey(normalizedHash, entry.id);
-    // Store individual entry with TTL
-    await adapter.set(key, entry, StorageAdapter.CACHE_TYPES.HISTORY, StorageAdapter.DEFAULT_TTL[StorageAdapter.CACHE_TYPES.HISTORY]);
+    const storeKey = buildHistoryStoreKey(normalizedHash);
+    const ttlSeconds = StorageAdapter.DEFAULT_TTL[StorageAdapter.CACHE_TYPES.HISTORY];
+
+    // Load existing store (single hash per user)
+    let store = await adapter.get(storeKey, StorageAdapter.CACHE_TYPES.HISTORY);
+    let entries = {};
+    if (store && typeof store === 'object' && !Array.isArray(store)) {
+      entries = store.entries && typeof store.entries === 'object' ? store.entries : {};
+    }
+
+    const existing = entries[entry.id] || {};
+    const merged = { ...existing, ...entry };
+    if (!merged.createdAt) merged.createdAt = existing.createdAt || entry.createdAt || Date.now();
+    entries[entry.id] = merged;
+
+    // Prune and rebuild compact map
+    const pruned = pruneHistoryEntries(Object.values(entries));
+    const compactMap = Object.fromEntries(pruned.map(e => [e.id, e]));
+
+    await adapter.set(
+      storeKey,
+      { entries: compactMap, updatedAt: Date.now() },
+      StorageAdapter.CACHE_TYPES.HISTORY,
+      ttlSeconds
+    );
   } catch (err) {
     log.warn(() => [`[History] Error saving history entry:`, err.message]);
   }
@@ -4218,30 +4262,41 @@ async function getHistoryForUser(userHash) {
     const normalizedHash = normalizeHistoryUserHash(userHash);
     if (!normalizedHash) return [];
     const adapter = await getStorageAdapter();
-    // Fetch both new and legacy key patterns
+    const storeKey = buildHistoryStoreKey(normalizedHash);
+    const store = await adapter.get(storeKey, StorageAdapter.CACHE_TYPES.HISTORY);
+    const storeEntries = (store && store.entries && typeof store.entries === 'object') ? store.entries : {};
+    const storeArray = pruneHistoryEntries(Object.values(storeEntries));
+    if (storeArray.length > 0) {
+      return storeArray.slice(0, MAX_HISTORY_ITEMS);
+    }
+
+    // Legacy fallback: scan individual entry keys, then migrate into store
     const patterns = buildHistoryPatterns(normalizedHash);
     const keySets = await Promise.all(patterns.map(p => adapter.list(StorageAdapter.CACHE_TYPES.HISTORY, p)));
     const keys = Array.from(new Set((keySets || []).flat().filter(Boolean)));
 
     if (!keys || keys.length === 0) return [];
 
-    // Fetch all, dedupe by entry.id, keep the newest copy per id
     const fetched = await Promise.all(
       keys.map(k => adapter.get(k, StorageAdapter.CACHE_TYPES.HISTORY))
     );
 
-    const deduped = new Map();
-    for (const entry of fetched) {
-      if (!entry || !entry.id) continue;
-      const existing = deduped.get(entry.id);
-      if (!existing || (entry.createdAt || 0) > (existing.createdAt || 0)) {
-        deduped.set(entry.id, entry);
-      }
-    }
+    const deduped = pruneHistoryEntries(fetched);
+    const result = deduped.slice(0, MAX_HISTORY_ITEMS);
 
-    return Array.from(deduped.values())
-      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-      .slice(0, MAX_HISTORY_ITEMS);
+    try {
+      if (deduped.length > 0) {
+        const compactMap = Object.fromEntries(deduped.map(e => [e.id, e]));
+        await adapter.set(
+          storeKey,
+          { entries: compactMap, updatedAt: Date.now() },
+          StorageAdapter.CACHE_TYPES.HISTORY,
+          StorageAdapter.DEFAULT_TTL[StorageAdapter.CACHE_TYPES.HISTORY]
+        );
+      }
+    } catch (_) { /* best-effort migration */ }
+
+    return result;
   } catch (err) {
     log.error(() => [`[History] Error fetching history for ${userHash}:`, err.message]);
     return [];

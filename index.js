@@ -477,6 +477,21 @@ function segmentsToSrt(segments = []) {
     return lines.join('\n');
 }
 
+function stripSpeakerLabelPrefix(line = '') {
+    if (typeof line !== 'string' || line.length === 0) return line;
+    // Remove typical diarization prefixes like "Speaker 1:" or "[SPEAKER_00]"
+    const pattern = /^\s*(?:<v\s+[^>]+>\s*)?(?:\[\s*)?(?:speaker|spk|spkr)\s*[._\-\s]*[0-9a-z]*\s*[:.)\]-]?\s*/i;
+    if (!pattern.test(line)) return line;
+    const withoutClosingTag = line.replace(/<\/v>/gi, '').trimEnd();
+    return withoutClosingTag.replace(pattern, '').trimStart();
+}
+
+function stripSpeakerLabelsFromSrt(srt = '') {
+    if (typeof srt !== 'string' || !srt) return srt || '';
+    const lines = srt.split(/\r?\n/);
+    return lines.map(stripSpeakerLabelPrefix).join('\n');
+}
+
 function safeModelKey(model) {
     if (!model) return 'auto';
     return String(model).toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 64) || 'auto';
@@ -557,7 +572,8 @@ async function transcribeWithCloudflare(audioBuffer, opts = {}) {
     const segments = Array.isArray(result.segments) ? result.segments : [];
     const language = result.language || result.detected_language || result.detectedLanguage || '';
     const text = result.text || result.transcript || '';
-    const srt = segments.length ? segmentsToSrt(segments) : (text ? `1\n00:00:00,000 --> 00:00:05,000\n${text}\n` : '');
+    const srtRaw = segments.length ? segmentsToSrt(segments) : (text ? `1\n00:00:00,000 --> 00:00:05,000\n${text}\n` : '');
+    const srt = stripSpeakerLabelsFromSrt(srtRaw);
 
     return {
         srt: srt || '',
@@ -707,7 +723,7 @@ async function createAssemblyTranscript(apiKey, payload = {}, logger = null) {
     const requestBody = {
         punctuate: true,
         format_text: true,
-        // Force speaker labels so diarization is always enabled
+        // Request speaker labels to force diarization (labels are stripped from output)
         speaker_labels: true,
         filter_profanity: false,
         auto_chapters: false,
@@ -831,6 +847,7 @@ function formatAssemblySpeakerLabel(label) {
 
 function assemblyWordsToSegments(words = [], fallbackText = '', opts = {}) {
     const includeSpeakers = opts.includeSpeakers === true;
+    const useSpeakerTurns = opts.useSpeakerTurns !== false;
     if (!Array.isArray(words) || words.length === 0) {
         if (fallbackText) return [{ start: 0, end: Math.max(2, Math.min(8, fallbackText.split(' ').length / 2)), text: fallbackText }];
         return [];
@@ -863,12 +880,12 @@ function assemblyWordsToSegments(words = [], fallbackText = '', opts = {}) {
     words.forEach((word) => {
         const startSec = normalizeAssemblyTimeSec(word.start ?? word.start_time ?? word.offset_start_ms ?? 0);
         const endSec = normalizeAssemblyTimeSec(word.end ?? word.end_time ?? word.offset_end_ms ?? 0);
-        const wordSpeaker = includeSpeakers ? (word.speaker ?? word.speaker_label ?? word.speaker_id ?? null) : null;
-        const speakerChanged = includeSpeakers && buffer.length && wordSpeaker !== null && bufferSpeaker !== null && wordSpeaker !== bufferSpeaker;
+        const wordSpeaker = useSpeakerTurns ? (word.speaker ?? word.speaker_label ?? word.speaker_id ?? null) : null;
+        const speakerChanged = useSpeakerTurns && buffer.length && wordSpeaker !== null && bufferSpeaker !== null && wordSpeaker !== bufferSpeaker;
         if (speakerChanged) {
             flush();
         }
-        if (includeSpeakers && bufferSpeaker === null && wordSpeaker !== null) {
+        if (useSpeakerTurns && bufferSpeaker === null && wordSpeaker !== null) {
             bufferSpeaker = wordSpeaker;
         }
         if (segStart === null) segStart = startSec;
@@ -891,18 +908,16 @@ function assemblySpeakerSegments(transcriptionData = {}) {
         return utterances.map((utt) => {
             const start = normalizeAssemblyTimeSec(utt.start ?? utt.start_time ?? utt.offset_start_ms ?? 0);
             const end = normalizeAssemblyTimeSec(utt.end ?? utt.end_time ?? utt.offset_end_ms ?? start + 2);
-            const speaker = formatAssemblySpeakerLabel(utt.speaker ?? utt.speaker_label ?? utt.speaker_id ?? utt.speakerLabel);
             const textBody = (utt.text || utt.transcript || '').toString().trim();
-            const text = speaker ? `${speaker}: ${textBody}` : textBody;
-            if (!text) return null;
+            if (!textBody) return null;
             return {
                 start: Math.max(0, start),
                 end: Math.max(end || start + 2, start + 0.5),
-                text
+                text: textBody
             };
         }).filter(Boolean);
     }
-    return assemblyWordsToSegments(transcriptionData?.words || [], transcriptionData?.text || '', { includeSpeakers: true });
+    return assemblyWordsToSegments(transcriptionData?.words || [], transcriptionData?.text || '', { useSpeakerTurns: true });
 }
 
 async function transcribeWithAssemblyAi(streamUrl, opts = {}, logger = null) {
@@ -946,21 +961,24 @@ async function transcribeWithAssemblyAi(streamUrl, opts = {}, logger = null) {
         const transcriptId = await createAssemblyTranscript(apiKey, {
             audio_url: uploadUrl,
             language_code: opts.sourceLanguage || opts.languageCode || '',
-            // Always request speaker labels to preserve turn splits
+            // Always request speaker labels to preserve turn splits (labels are removed from the final text)
             speaker_labels: true
         }, logger);
         transcriptionData = await pollAssemblyTranscript(apiKey, transcriptId, logger);
         const diarizedSegments = assemblySpeakerSegments(transcriptionData);
         let srt = diarizedSegments.length ? segmentsToSrt(diarizedSegments) : '';
         const assemblySrt = await fetchAssemblySrt(apiKey, transcriptId, logger);
-        if (assemblySrt) {
-            const hasSpeakerLabels = /speaker\s*[0-9a-z]/i.test(assemblySrt);
-            srt = (hasSpeakerLabels || !diarizedSegments.length) ? assemblySrt : srt;
+        if (!srt && assemblySrt) {
+            srt = stripSpeakerLabelsFromSrt(assemblySrt);
         }
         if (!srt) {
             const segments = assemblyWordsToSegments(transcriptionData?.words || [], transcriptionData?.text || '');
             srt = segmentsToSrt(segments);
         }
+        if (!srt && assemblySrt) {
+            srt = stripSpeakerLabelsFromSrt(assemblySrt);
+        }
+        srt = stripSpeakerLabelsFromSrt(srt || '');
         const language = (transcriptionData?.language_code || transcriptionData?.language || transcriptionData?.detected_language || '').toString().toLowerCase();
         return {
             transcription: {
@@ -4574,9 +4592,146 @@ app.get('/auto-subtitles', async (req, res) => {
     }
 });
 
+// Live auto-subtitles log streaming (SSE + polling-friendly JSON)
+const LIVE_AUTOSUB_LOG_TTL_MS = 10 * 60 * 1000;
+const liveAutoSubLogChannels = new Map();
+function getAutoSubLogChannel(jobId) {
+    const id = (jobId && String(jobId).trim()) ? String(jobId).trim().slice(0, 128) : null;
+    if (!id) return null;
+    let channel = liveAutoSubLogChannels.get(id);
+    if (!channel) {
+        channel = {
+            logs: [],
+            listeners: new Set(),
+            done: false,
+            createdAt: Date.now(),
+            expiresAt: Date.now() + LIVE_AUTOSUB_LOG_TTL_MS
+        };
+        liveAutoSubLogChannels.set(id, channel);
+    } else {
+        channel.expiresAt = Date.now() + LIVE_AUTOSUB_LOG_TTL_MS;
+    }
+    return channel;
+}
+function broadcastAutoSubLog(jobId, entry) {
+    if (!entry || !entry.message) return entry;
+    const channel = getAutoSubLogChannel(jobId);
+    if (channel) {
+        channel.logs.push(entry);
+        channel.expiresAt = Date.now() + LIVE_AUTOSUB_LOG_TTL_MS;
+        for (const res of Array.from(channel.listeners || [])) {
+            try {
+                res.write('data: ' + JSON.stringify(entry) + '\n\n');
+            } catch (_) {
+                try { res.end(); } catch (_) { /* ignore */ }
+                channel.listeners.delete(res);
+            }
+        }
+    }
+    return entry;
+}
+function finalizeAutoSubLog(jobId, logTrail = []) {
+    const channel = getAutoSubLogChannel(jobId);
+    if (!channel) return;
+    if (Array.isArray(logTrail) && logTrail.length) {
+        channel.logs = logTrail.slice(-250);
+    }
+    channel.done = true;
+    channel.expiresAt = Date.now() + 2 * 60 * 1000;
+    for (const res of Array.from(channel.listeners || [])) {
+        try {
+            res.write('event: done\ndata: {}\n\n');
+            res.end();
+        } catch (_) { /* ignore */ }
+        channel.listeners.delete(res);
+    }
+}
+setInterval(() => {
+    const now = Date.now();
+    for (const [jobId, channel] of liveAutoSubLogChannels.entries()) {
+        if (!channel) {
+            liveAutoSubLogChannels.delete(jobId);
+            continue;
+        }
+        if (channel.expiresAt && channel.expiresAt < now) {
+            try {
+                for (const res of Array.from(channel.listeners || [])) {
+                    try { res.end(); } catch (_) { /* ignore */ }
+                }
+            } catch (_) { /* ignore */ }
+            liveAutoSubLogChannels.delete(jobId);
+        }
+    }
+}, LIVE_AUTOSUB_LOG_TTL_MS).unref?.();
+
+app.get('/api/auto-subtitles/logs', (req, res) => {
+    try {
+        const { jobId, since, format, replay = '1' } = req.query;
+        const channel = getAutoSubLogChannel(jobId);
+        if (!jobId || !channel) {
+            return res.status(400).json({ error: 'jobId is required' });
+        }
+        const sinceTs = Number(since);
+        const entries = Array.isArray(channel.logs)
+            ? channel.logs.filter((entry) => {
+                const ts = Number(entry?.ts);
+                if (!Number.isFinite(sinceTs)) return true;
+                if (!Number.isFinite(ts)) return false;
+                return ts > sinceTs;
+            }).slice(-250)
+            : [];
+        const wantsSse = (req.headers.accept || '').includes('text/event-stream') && format !== 'json';
+        if (wantsSse) {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.setHeader('Content-Encoding', 'identity');
+            res.flushHeaders?.();
+            if (replay !== '0' && entries.length) {
+                entries.forEach((entry) => {
+                    res.write('data: ' + JSON.stringify(entry) + '\n\n');
+                });
+            }
+            if (channel.done) {
+                res.write('event: done\ndata: {}\n\n');
+                return res.end();
+            }
+            channel.listeners.add(res);
+            req.on('close', () => {
+                channel.listeners.delete(res);
+            });
+            return;
+        }
+        return res.json({
+            logs: entries,
+            done: channel.done === true
+        });
+    } catch (error) {
+        log.error(() => ['[Auto Subs Logs] Error handling stream:', error]);
+        res.status(500).json({ error: 'Failed to stream logs' });
+    }
+});
+
 // API: Automatic subtitles (Cloudflare Workers AI transcription + optional translation)
 app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
     let logTrail = [];
+    const jobId = (req.body?.jobId || '').toString().trim();
+    let logFinalized = false;
+    const finalizeLogs = (trail = logTrail) => {
+        if (logFinalized) return;
+        finalizeAutoSubLog(jobId, trail);
+        logFinalized = true;
+    };
+    const logStep = (message, level = 'info') => {
+        const entry = { ts: Date.now(), level, message: String(message || '') };
+        logTrail.push(entry);
+        return broadcastAutoSubLog(jobId, entry);
+    };
+    const respond = (statusCode, payload) => {
+        finalizeLogs(payload?.logTrail || logTrail);
+        return res.status(statusCode).json(payload);
+    };
     try {
         setNoStore(res);
         let t = res.locals?.t || getTranslatorFromRequest(req, res, req.body);
@@ -4598,18 +4753,12 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
             sendFullVideo = false,
             diarization = false
         } = req.body || {};
-        // Force diarization/speaker labels for all auto-subs modes
+        // Force diarization for all auto-subs modes (labels are stripped from outputs)
         diarization = true;
-        logTrail = [];
-        const logStep = (message, level = 'info') => {
-            const entry = { ts: Date.now(), level, message: String(message || '') };
-            logTrail.push(entry);
-            return entry;
-        };
 
         if (!configStr || !streamUrl || !videoId) {
             logStep('Missing required fields for auto-subs request', 'error');
-            return res.status(400).json({
+            return respond(400, {
                 error: t('server.errors.missingFields', {}, 'Missing required fields: configStr, streamUrl, videoId'),
                 logTrail
             });
@@ -4617,11 +4766,14 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
 
         const config = await resolveConfigGuarded(configStr, req, res, '[Auto Subs API] config', t);
         // If storage is unavailable, respondStorageUnavailable already replied
-        if (!config) return;
+        if (!config) {
+            finalizeAutoSubLog(jobId, logTrail);
+            return;
+        }
         if (!config || config.__sessionTokenError === true) {
             log.warn(() => '[Auto Subs API] Rejected due to invalid/missing session token');
             t = getTranslatorFromRequest(req, res, config);
-            return res.status(401).json({
+            return respond(401, {
                 error: t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'),
                 logTrail
             });
@@ -4638,7 +4790,7 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
         const engineKey = String(engine || 'remote').toLowerCase();
         if (engineKey === 'local') {
             logStep('Local engine requested but not available in hosted mode', 'warn');
-            return res.status(400).json({
+            return respond(400, {
                 error: t('server.errors.autoSubsLocalUnavailable', {}, 'Local Whisper (extension) is not available yet. Use Remote (Cloudflare Workers AI).'),
                 cacheBlocked,
                 hashes: { linked: linkedHash, stream: streamHashInfo.hash || '' },
@@ -4649,10 +4801,40 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
         const providerKey = (translationProvider || config.mainProvider || 'gemini').toString().toLowerCase();
         let transcription = null;
         const transcriptDiagnostics = {};
-        if (engineKey === 'assemblyai') {
+        const transcriptPayload = (req.body && typeof req.body.transcript === 'object') ? req.body.transcript : {};
+        const transcriptSrtRaw = (typeof transcriptPayload.srt === 'string' && transcriptPayload.srt.trim())
+            ? transcriptPayload.srt
+            : ((typeof req.body?.transcriptSrt === 'string' && req.body.transcriptSrt.trim()) ? req.body.transcriptSrt : '');
+        const transcriptSrt = stripSpeakerLabelsFromSrt(transcriptSrtRaw);
+        const transcriptLang = (transcriptPayload.languageCode || transcriptPayload.language || req.body?.transcriptLanguage || sourceLanguage || '').toString().trim();
+        const cfStatus = Number.isFinite(transcriptPayload.cfStatus) ? transcriptPayload.cfStatus : (Number.isFinite(req.body?.cfStatus) ? req.body.cfStatus : null);
+        const cfBody = (transcriptPayload.cfBody || req.body?.cfBody || '').toString();
+        const audioMeta = (typeof transcriptPayload.audio === 'object') ? transcriptPayload.audio : {};
+        const audioBytes = Number.isFinite(transcriptPayload.audioBytes) ? transcriptPayload.audioBytes
+            : Number.isFinite(audioMeta.bytes) ? audioMeta.bytes
+                : (Array.isArray(audioMeta.windows) ? audioMeta.windows.reduce((sum, w) => sum + (Number(w.bytes) || 0), 0) : null);
+        const audioSource = transcriptPayload.audioSource || audioMeta.source || (engineKey === 'assemblyai' ? 'assemblyai-extension' : 'extension');
+        const audioContentType = transcriptPayload.contentType || audioMeta.contentType || (engineKey === 'assemblyai' ? 'audio/wav' : 'audio/wav');
+        const transcriptModel = transcriptPayload.model || model || '@cf/openai/whisper';
+
+        if (engineKey === 'assemblyai' && transcriptSrt) {
+            const transcriptBytes = Buffer.byteLength(transcriptSrt, 'utf8');
+            logStep(`Using client AssemblyAI transcript (${formatBytes(transcriptBytes)}) from ${audioSource}`, 'info');
+            transcription = {
+                srt: transcriptSrt,
+                languageCode: transcriptLang || sourceLanguage || 'und',
+                model: 'assemblyai',
+                assemblyId: transcriptPayload.assemblyId || null
+            };
+            transcriptDiagnostics.audioBytes = audioBytes;
+            transcriptDiagnostics.audioSource = audioSource;
+            transcriptDiagnostics.contentType = audioContentType;
+            transcriptDiagnostics.assemblyId = transcriptPayload.assemblyId || null;
+            transcriptDiagnostics.usedFullVideo = transcriptPayload.usedFullVideo === true;
+        } else if (engineKey === 'assemblyai') {
             if (!config.assemblyAiApiKey) {
                 logStep('AssemblyAI API key missing in config', 'error');
-                return res.status(400).json({
+                return respond(400, {
                     error: t('server.errors.apiKeyRequired', {}, 'API key is required'),
                     logTrail
                 });
@@ -4682,30 +4864,16 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
             }
         } else {
             // Client-supplied transcription (xSync extension, Cloudflare Workers AI)
-            const transcriptPayload = (req.body && typeof req.body.transcript === 'object') ? req.body.transcript : {};
-            const transcriptSrt = (typeof transcriptPayload.srt === 'string' && transcriptPayload.srt.trim())
-                ? transcriptPayload.srt
-                : ((typeof req.body?.transcriptSrt === 'string' && req.body.transcriptSrt.trim()) ? req.body.transcriptSrt : '');
-            const transcriptLang = (transcriptPayload.languageCode || transcriptPayload.language || req.body?.transcriptLanguage || sourceLanguage || '').toString().trim();
-            const cfStatus = Number.isFinite(transcriptPayload.cfStatus) ? transcriptPayload.cfStatus : (Number.isFinite(req.body?.cfStatus) ? req.body.cfStatus : null);
-            const cfBody = (transcriptPayload.cfBody || req.body?.cfBody || '').toString();
-            const audioMeta = (typeof transcriptPayload.audio === 'object') ? transcriptPayload.audio : {};
-            const audioBytes = Number.isFinite(transcriptPayload.audioBytes) ? transcriptPayload.audioBytes
-                : Number.isFinite(audioMeta.bytes) ? audioMeta.bytes
-                    : (Array.isArray(audioMeta.windows) ? audioMeta.windows.reduce((sum, w) => sum + (Number(w.bytes) || 0), 0) : null);
-            const audioSource = transcriptPayload.audioSource || audioMeta.source || 'extension';
-            const audioContentType = transcriptPayload.contentType || audioMeta.contentType || 'audio/wav';
-            const transcriptModel = transcriptPayload.model || model || '@cf/openai/whisper';
-
             if (!transcriptSrt) {
                 logStep('Client transcript missing; server-side fetch/transcribe is disabled for auto-subs', 'error');
-                return res.status(400).json({
+                return respond(400, {
                     error: t('server.errors.autoSubsClientRequired', {}, 'Automatic subtitles now require a client-provided transcript (xSync extension).'),
                     logTrail
                 });
             }
+            const transcriptBytes = Buffer.byteLength(transcriptSrt, 'utf8');
             logStep(
-                `Using client transcript (${formatBytes(Buffer.byteLength(transcriptSrt, 'utf8'))}) from ${audioSource}`,
+                `Using client transcript (${formatBytes(transcriptBytes)}) from ${audioSource}`,
                 'info'
             );
             if (cfStatus) {
@@ -4726,15 +4894,15 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
 
         if (!transcription || !transcription.srt) {
             logStep('Transcription returned no content', 'error');
-            return res.status(500).json({
+            return respond(500, {
                 error: t('server.errors.transcriptionEmpty', {}, 'Transcription returned no content'),
                 logTrail
             });
         }
-        const originalSrt = (transcription && transcription.srt) ? transcription.srt : '';
+        const originalSrt = stripSpeakerLabelsFromSrt((transcription && transcription.srt) ? transcription.srt : '');
         if (!originalSrt || !originalSrt.trim()) {
             logStep('Transcription returned no content', 'error');
-            return res.status(500).json({
+            return respond(500, {
                 error: t('server.errors.transcriptionEmpty', {}, 'Transcription returned no content'),
                 logTrail
             });
@@ -4851,7 +5019,7 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
             cacheBlocked ? 'warn' : 'success'
         );
 
-        return res.json({
+        return respond(200, {
             success: true,
             cacheBlocked,
             hashes: { linked: linkedHash, stream: streamHashInfo.hash || '' },
@@ -4881,12 +5049,14 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
         const t = res.locals?.t || getTranslatorFromRequest(req, res);
         if (respondStorageUnavailable(res, error, '[Auto Subs API]', t)) return;
         log.error(() => '[Auto Subs API] Error:', error);
-        res.status(500).json({
+        respond(500, {
             error: t('server.errors.autoSubsFailed', {}, `Automatic subtitles failed: ${error.message}`),
             logTrail: (Array.isArray(logTrail) && logTrail.length)
                 ? logTrail
                 : [{ ts: Date.now(), level: 'error', message: error.message || 'Automatic subtitles failed' }]
         });
+    } finally {
+        finalizeLogs(logTrail);
     }
 });
 
