@@ -2936,15 +2936,20 @@ Translate to {target_language}.`;
     function updateSecondaryProviderOptions(selectedKey = '') {
         const select = document.getElementById('secondaryProviderSelect');
         const toggle = document.getElementById('enableSecondaryProvider');
+        const mainSelect = document.getElementById('mainProviderSelect');
         if (!select || !toggle) return;
         ensureProvidersInState();
-        const mainKey = currentConfig.mainProvider || 'gemini';
+        // Prefer the live UI value for main to avoid stale state during load
+        const mainKey = (mainSelect?.value || currentConfig.mainProvider || 'gemini').toLowerCase();
         const opts = ['gemini'];
         getProviderKeys().forEach(key => {
-            const cfg = currentConfig.providers?.[key];
-            if (cfg && cfg.enabled && key !== mainKey) opts.push(key);
+            const toggleEl = document.getElementById(`provider-${key}-enabled`);
+            const uiEnabled = toggleEl ? toggleEl.checked === true : false;
+            const stateEnabled = currentConfig.providers?.[key]?.enabled === true;
+            const isEnabled = uiEnabled || stateEnabled;
+            if (isEnabled && key.toLowerCase() !== mainKey) opts.push(key);
         });
-        const filtered = opts.filter(key => key !== mainKey);
+        const filtered = opts.filter(key => key.toLowerCase() !== mainKey);
 
         if (filtered.length === 0) {
             toggle.disabled = true;
@@ -2964,17 +2969,20 @@ Translate to {target_language}.`;
         }));
         syncSelectOptions(select, desiredOptions);
 
-        // Prefer the caller's requested key, otherwise preserve current selection when valid
-        if (selectedKey && filtered.includes(selectedKey)) {
-            select.value = selectedKey;
-        } else if (select.value && filtered.includes(select.value)) {
-            // keep current selection
-        } else {
-            select.value = filtered[0];
-        }
+        // Prefer the caller's requested key (case-insensitive), otherwise preserve current selection when valid
+        const lowerFiltered = new Set(filtered.map(f => f.toLowerCase()));
+        const matchKey = (key) => {
+            const lower = String(key || '').toLowerCase();
+            return filtered.find(f => f.toLowerCase() === lower);
+        };
+        const chosen =
+            matchKey(selectedKey) ||
+            matchKey(select.value) ||
+            filtered[0];
+        select.value = chosen;
 
         // If fallback is enabled but no value was saved (e.g., previous UI bug), default to first available
-        if (toggle.checked && (!select.value || !filtered.includes(select.value))) {
+        if (toggle.checked && (!select.value || !lowerFiltered.has(select.value.toLowerCase()))) {
             select.value = filtered[0];
         }
 
