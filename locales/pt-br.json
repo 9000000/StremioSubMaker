@@ -382,7 +382,7 @@
           "decodeReady": "OK",
           "decodeError": "Falha na decodificação",
           "versionFallback": "n/a",
-          "pending": "WAITING"
+          "pending": "AGUARDANDO"
         },
         "extension": {
           "waiting": "Aguardando extensão...",
@@ -400,12 +400,12 @@
           "step1Chip": "Passo 1",
           "step1Title": "Vídeo ou áudio de entrada",
           "streamLabel": "URL do Stream / arquivo",
-          "streamPlaceholder": "https://exemplo.com/video.mkv",
+          "streamPlaceholder": "Cole a URL do v?deo/stream do Stremio ou do navegador",
           "streamNote": "Buscaremos e extrairemos o áudio; streams protegidos/DRM não funcionarão.",
           "prefill": "Usar id de stream fornecido",
           "clear": "Limpar",
           "step2Chip": "Passo 2",
-          "step2Title": "Idioma + modelo",
+          "step2Title": "Modo e ?udio",
           "modeLabel": "Modo de legendas automáticas",
           "modeHelper": "Cloudflare roda via extensão xSync. O servidor não buscará seu stream.",
           "modeHelperAssembly": "AssemblyAI faz o upload a partir deste servidor (sem extensão).",
@@ -443,7 +443,17 @@
           "transcribePill": "Transcrever",
           "alignPill": "Alinhar + timestamps",
           "translatePill": "Traduzir",
-          "deliverPill": "Pronto para entregar"
+          "deliverPill": "Pronto para entregar",
+          "translationStepChip": "Passo 2.5",
+          "translationStepTitle": "Idiomas de tradução",
+          "translationSettingsTitle": "Configurações de tradução",
+          "translationSettingsMeta": "Lotes e timestamps",
+          "batchingLabel": "Loteamento",
+          "batchingMultiple": "Vários lotes (recomendado)",
+          "batchingSingle": "Lote único (tudo de uma vez)",
+          "timestampsLabel": "Tratamento de timestamps",
+          "timestampsRebuild": "Reconstruir timestamps",
+          "progressAria": "Progresso"
         },
         "actions": {
           "start": "Iniciar legendas automáticas",
@@ -451,7 +461,8 @@
           "progress": "Progresso",
           "downloadSrt": "Baixar SRT",
           "downloadVtt": "Baixar VTT",
-          "downloadTranslation": "Baixar {lang}"
+          "downloadTranslation": "Baixar {lang}",
+          "continue": "Continuar"
         },
         "options": {
           "addTargets": "Adicionar idiomas de destino em Configurar"
@@ -467,7 +478,7 @@
           "translating": "Traduzindo para {target}",
           "skipTranslate": "Pulando tradução",
           "preparing": "Preparando downloads",
-          "sample": "1\n00:00:00,000 --> 00:00:02,000\n[Exemplo de legenda gerada pelo Whisper]\n",
+          "sample": "[Legenda de exemplo gerada pelo Whisper]",
           "done": "Feito. Pronto para baixar.",
           "previewPlan": "Pipeline: buscar -> transcrever -> alinhar -> traduzir -> entregar.",
           "noOutput": "Nenhuma saída ainda.",
@@ -478,7 +489,9 @@
           "mismatch": "Incompatibilidade de hash: vinculado {linked} vs colado {stream}. Upload em cache desabilitado.",
           "linked": "Vinculado: {linked} | Stream: {stream}{cache}",
           "waiting": "Aguardando hash do stream...",
-          "cacheDisabled": "Cache desabilitado nesta execução."
+          "cacheDisabled": "Cache desabilitado nesta execução.",
+          "statusMismatch": "Detectada incompatibilidade de hash.",
+          "statusMatch": "Hashes correspondem."
         },
         "logs": {
           "noStream": "Cole uma URL de stream primeiro.",
@@ -487,10 +500,43 @@
           "assemblyMissingKey": "O modo AssemblyAI exige uma chave de API. Adicione em Configurar.",
           "finished": "Pronto. Downloads disponíveis.",
           "cacheSkipped": "Uploads para cache foram pulados por incompatibilidade de hash.",
-          "errorPrefix": "Erro: "
+          "errorPrefix": "Erro: ",
+          "previewPlan": "Pipeline: buscar -> transcrever -> alinhar -> traduzir -> entregar.",
+          "transcriptionDone": "Transcrição concluída.",
+          "alignmentDone": "Alinhamento e geração de timestamps concluídos.",
+          "translationSummary": "Tradução finalizada.",
+          "translationSuccess": "{count} prontas",
+          "translationFailed": "{count} falharam",
+          "readyToDeliver": "Pronto para entregar {count} faixa(s).",
+          "cfStatus": "Status do Cloudflare: {status}",
+          "cfBody": "Resposta do Cloudflare: "
         },
         "providers": {
           "missing": "Nenhum fornecedor configurado"
+        },
+        "log": {
+          "header": "Log ao vivo",
+          "sub": "Veja cada etapa do pipeline, erros e respostas upstream aqui."
+        },
+        "locks": {
+          "needContinue": "Clique em Continuar para desbloquear os pr?ximos passos.",
+          "needTarget": "Selecione um destino ou desative a tradu??o para liberar Executar.",
+          "needStep2": "Conclua o Passo 2 e pressione Continuar para prosseguir.",
+          "needRun": "Execute as auto-legendas para liberar os downloads."
+        },
+        "simulation": {
+          "startLabel": "Iniciar legendas autom?ticas",
+          "running": "Executando...",
+          "fetching": "Buscando stream...",
+          "transcribing": "Transcrevendo com Whisper ({model})",
+          "aligning": "Alinhando e limpando timestamps",
+          "translating": "Traduzindo para {target}",
+          "skippingTranslation": "Pulando tradu??o",
+          "preparing": "Preparando downloads",
+          "done": "Feito. Pronto para baixar.",
+          "previewPlan": "Pipeline: buscar -> transcrever -> alinhar -> traduzir -> entregar.",
+          "sampleSubtitle": "[Legenda de exemplo gerada pelo Whisper]",
+          "translateFallbackTarget": "destinos"
         }
       },
       "footnote": "O Toolbox está vinculado à sua sessão e stream atual. Mantenha esta aba aberta enquanto assiste para uma transição mais suave."

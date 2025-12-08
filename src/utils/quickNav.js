@@ -466,6 +466,7 @@ function quickNavScript() {
 
       let latest = null;
       let latestSig = '';
+      let latestLooseSig = '';
       let latestTs = 0;
       let es = null;
       let pollTimer = null;
@@ -478,7 +479,9 @@ function quickNavScript() {
       let sseCooldownUntil = 0;
       let sseProbeTimer = null;
       let currentSig = '';
+      let currentLooseSig = '';
       let lastSig = '';
+      let lastLooseSig = '';
       let hasBaseline = false;
       let lastSeenTs = Date.now();
       const MAX_SSE_RETRIES = 5;
@@ -534,6 +537,11 @@ function quickNavScript() {
           payload.filename || ''
         ];
         return parts.join('::');
+      }
+
+      function buildLooseSignature(payload) {
+        if (!payload) return '';
+        return [payload.videoId || '', payload.filename || ''].join('::');
       }
 
       function parseVideoId(raw) {
@@ -641,7 +649,9 @@ function quickNavScript() {
       }
 
       currentSig = buildSignature(current);
+      currentLooseSig = buildLooseSignature(current);
       lastSig = currentSig;
+      lastLooseSig = currentLooseSig;
 
       function broadcastEpisode(payload) {
         if (!payload) return;
@@ -761,45 +771,57 @@ function quickNavScript() {
       function handleEpisode(payload) {
         if (!payload || !payload.videoId) return;
         const payloadSig = buildSignature(payload) || String(payload.updatedAt || '');
-        if (!payloadSig) return;
+        const payloadLooseSig = buildLooseSignature(payload);
+        if (!payloadSig && !payloadLooseSig) return;
         const ts = Number(payload.updatedAt || Date.now());
+        const matchesCurrent = (payloadSig && payloadSig === currentSig) ||
+          (payloadLooseSig && payloadLooseSig === currentLooseSig);
+        const matchesLast = (payloadSig && payloadSig === lastSig) ||
+          (payloadLooseSig && payloadLooseSig === lastLooseSig);
 
         if (!hasBaseline) {
           hasBaseline = true;
           lastSeenTs = ts || Date.now();
-          lastSig = payloadSig;
+          if (payloadSig) lastSig = payloadSig;
+          if (payloadLooseSig) lastLooseSig = payloadLooseSig;
           latest = payload;
-          latestSig = payloadSig;
+          latestSig = payloadSig || payloadLooseSig || '';
+          latestLooseSig = payloadLooseSig || latestLooseSig;
           latestTs = ts || Date.now();
-          if (payloadSig === currentSig) return;
+          if (matchesCurrent) return;
           showToast(payload);
           return;
         }
 
-        if (payloadSig === currentSig) {
+        if (matchesCurrent) {
           lastSeenTs = Math.max(lastSeenTs, ts || Date.now());
-          lastSig = payloadSig;
+          if (payloadSig) lastSig = payloadSig;
+          if (payloadLooseSig) lastLooseSig = payloadLooseSig;
           latest = null;
           latestSig = '';
+          latestLooseSig = '';
           latestTs = ts || Date.now();
           toast.classList.remove('show');
           return;
         }
 
-        if (payloadSig === lastSig) {
+        if (matchesLast) {
           lastSeenTs = Math.max(lastSeenTs, ts || Date.now());
           if (ts && ts > latestTs) {
             latest = payload;
-            latestSig = payloadSig;
+            latestSig = payloadSig || payloadLooseSig || latestSig;
+            latestLooseSig = payloadLooseSig || latestLooseSig;
             latestTs = ts;
           }
           return;
         }
 
         lastSeenTs = ts || Date.now();
-        lastSig = payloadSig;
+        if (payloadSig) lastSig = payloadSig;
+        if (payloadLooseSig) lastLooseSig = payloadLooseSig;
         latest = payload;
-        latestSig = payloadSig;
+        latestSig = payloadSig || payloadLooseSig || latestSig;
+        latestLooseSig = payloadLooseSig || latestLooseSig;
         latestTs = ts || Date.now();
         if (typeof opts.onEpisode === 'function') {
           try { opts.onEpisode(payload); } catch (_) {}
@@ -818,6 +840,7 @@ function quickNavScript() {
           toast.classList.remove('show');
           latest = null;
           latestSig = '';
+          latestLooseSig = '';
           latestTs = 0;
         });
       }

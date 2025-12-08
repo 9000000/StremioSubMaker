@@ -382,7 +382,7 @@
           "decodeReady": "OK",
           "decodeError": "فشل فك التشفير",
           "versionFallback": "غير متاح",
-          "pending": "WAITING"
+          "pending": "???????"
         },
         "extension": {
           "waiting": "بانتظار الامتداد...",
@@ -400,12 +400,12 @@
           "step1Chip": "الخطوة 1",
           "step1Title": "إدخال الصوت أو الفيديو",
           "streamLabel": "رابط البث / الملف",
-          "streamPlaceholder": "https://example.com/video.mkv",
+          "streamPlaceholder": "???? ???? ???????/???? ?? Stremio ?? ??????",
           "streamNote": "سنقوم بجلب واستخراج الصوت؛ التدفقات المحمية/DRM لن تعمل.",
           "prefill": "استخدام معرف البث المقدم",
           "clear": "مسح",
           "step2Chip": "الخطوة 2",
-          "step2Title": "اللغة + النموذج",
+          "step2Title": "????? ??????",
           "modeLabel": "وضع الترجمات التلقائية",
           "modeHelper": "Cloudflare يعمل عبر إضافة xSync. الخادم لن يجلب البث الخاص بك.",
           "modeHelperAssembly": "AssemblyAI يرفع من هذا الخادم (لا حاجة للإضافة).",
@@ -437,13 +437,23 @@
           "translatePill": "ترجمة",
           "deliverPill": "جاهز للتسليم",
           "singleBatch": "وضع دفعة واحدة",
-          "sendTimestamps": "إرسال الطوابع الزمنية للذكاء الاصطناعي",
+          "sendTimestamps": "إرسال الطوابع الزمنية إلى الذكاء الاصطناعي",
           "providerLabel": "مزود الترجمة",
           "providerModelLabel": "نموذج الترجمة",
           "providerModelPlaceholder": "استخدام الإعداد الافتراضي للمزود",
           "translationsEmpty": "لا توجد ترجمات بعد.",
           "translationCardTitle": "ترجمة {lang}",
-          "translationCardFallback": "ترجمة مترجمة"
+          "translationCardFallback": "ترجمة مترجمة",
+          "translationStepChip": "الخطوة 2.5",
+          "translationStepTitle": "لغات الترجمة",
+          "translationSettingsTitle": "إعدادات الترجمة",
+          "translationSettingsMeta": "التقسيم والطوابع الزمنية",
+          "batchingLabel": "التقسيم إلى دفعات",
+          "batchingMultiple": "عدة دفعات (مستحسن)",
+          "batchingSingle": "دفعة واحدة (الكل دفعة واحدة)",
+          "timestampsLabel": "التعامل مع الطوابع الزمنية",
+          "timestampsRebuild": "إعادة بناء الطوابع الزمنية",
+          "progressAria": "التقدم"
         },
         "actions": {
           "start": "بدء الترجمات التلقائية",
@@ -451,7 +461,8 @@
           "progress": "التقدم",
           "downloadSrt": "تحميل SRT",
           "downloadVtt": "تحميل VTT",
-          "downloadTranslation": "تحميل {lang}"
+          "downloadTranslation": "تحميل {lang}",
+          "continue": "متابعة"
         },
         "options": {
           "addTargets": "أضف لغات الهدف في الإعدادات"
@@ -466,7 +477,7 @@
           "translating": "جاري الترجمة إلى {target}",
           "skipTranslate": "تخطي الترجمة",
           "preparing": "تجهيز التحميلات",
-          "sample": "1\n00:00:00,000 --> 00:00:02,000\n[عينة ترجمة مولدة بواسطة Whisper]\n",
+          "sample": "[عينة ترجمة مولدة بواسطة Whisper]",
           "done": "تم. جاهز للتحميل.",
           "previewPlan": "المسار: جلب -> تفريغ صوتي -> محاذاة -> ترجمة -> تسليم.",
           "noOutput": "لا توجد مخرجات بعد.",
@@ -481,16 +492,51 @@
           "noTargets": "اختر لغة هدف واحدة على الأقل أو عطّل الترجمة.",
           "sendingRequest": "جارٍ إرسال الطلب إلى Cloudflare Workers AI...",
           "finished": "تم. التحميلات جاهزة.",
-          "cacheSkipped": "تم تخطي رفع التخزين المؤقت بسبب عدم تطابق التجزئة."
+          "cacheSkipped": "تم تخطي رفع التخزين المؤقت بسبب عدم تطابق التجزئة.",
+          "previewPlan": "المسار: جلب -> تفريغ صوتي -> محاذاة -> ترجمة -> تسليم.",
+          "transcriptionDone": "اكتمل التفريغ الصوتي.",
+          "alignmentDone": "اكتملت المحاذاة وتوليد الطوابع الزمنية.",
+          "translationSummary": "انتهت الترجمة.",
+          "translationSuccess": "{count} جاهزة",
+          "translationFailed": "{count} فشلت",
+          "readyToDeliver": "جاهز لتسليم {count} مسار/مسارات.",
+          "cfStatus": "حالة Cloudflare: {status}",
+          "cfBody": "استجابة Cloudflare: "
         },
         "hash": {
           "mismatch": "عدم تطابق في التجزئة: المرتبط {linked} مقابل المُدخل {stream}. تم تعطيل رفع التخزين المؤقت.",
           "linked": "مرتبط: {linked} | البث: {stream}{cache}",
           "waiting": "بانتظار تجزئة البث...",
-          "cacheDisabled": "تم تعطيل التخزين المؤقت لهذه العملية."
+          "cacheDisabled": "تم تعطيل التخزين المؤقت لهذه العملية.",
+          "statusMismatch": "تم اكتشاف عدم تطابق في التجزئة.",
+          "statusMatch": "التجزئات متطابقة."
         },
         "providers": {
           "missing": "لا يوجد مزود مُكوَّن"
+        },
+        "log": {
+          "header": "سجل مباشر",
+          "sub": "تابع كل خطوة في خط المعالجة، الأخطاء، واستجابات الخوادم هنا."
+        },
+        "locks": {
+          "needContinue": "???? ?????? ???? ??????? ???????.",
+          "needTarget": "???? ??? ??? ?? ???? ??????? ?????? ???????.",
+          "needStep2": "???? ?????? 2 ????? ?????? ????????.",
+          "needRun": "???? ???????? ????????? ???? ?????????."
+        },
+        "simulation": {
+          "startLabel": "??? ???????? ?????????",
+          "running": "???? ???????...",
+          "fetching": "???? ??? ????...",
+          "transcribing": "???? ??????? ?????? ???????? Whisper ({model})",
+          "aligning": "???? ?????? ?????? ??????? ???????",
+          "translating": "???? ??????? ??? {target}",
+          "skippingTranslation": "???? ???????",
+          "preparing": "????? ?????????",
+          "done": "??. ???? ???????.",
+          "previewPlan": "??????: ??? -> ????? ???? -> ?????? -> ????? -> ?????.",
+          "sampleSubtitle": "[???? ????? ????? ?????? Whisper]",
+          "translateFallbackTarget": "???????"
         }
       },
       "footnote": "صندوق الأدوات مرتبط بجلستك والبث الحالي. اترك علامة التبويب هذه مفتوحة أثناء البث لأفضل تجربة."

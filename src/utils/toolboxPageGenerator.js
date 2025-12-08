@@ -5435,6 +5435,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         setDecodeBadge('bad', text || decodeLabels.error, false);
       }
       function maybeUpdateDecodeFromLog(message, tone = '') {
+        if (!state.autoSubsInFlight) return;
         const text = (message || '').toString();
         if (!text) return;
         const lower = text.toLowerCase();
@@ -6461,6 +6462,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       }
 
       function handleAutoSubProgressMessage(msg) {
+        if (!state.autoSubsInFlight) return;
         if (!msg || !state.autoSubsMessageId || (msg.messageId && msg.messageId !== state.autoSubsMessageId)) return;
         refreshAutoSubTimeout();
         const tone = (msg.level || '').toString().toLowerCase();
