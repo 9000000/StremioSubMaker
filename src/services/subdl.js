@@ -656,6 +656,8 @@ class SubDLService {
         } else {
           raw = buf.toString('utf8');
         }
+        // Strip UTF-8 BOM if present (helps Arabic/RTL and some ZIP packs)
+        if (raw && typeof raw === 'string') raw = raw.replace(/^\uFEFF/, '');
 
         const lower = altEntry.toLowerCase();
         if (lower.endsWith('.vtt')) {

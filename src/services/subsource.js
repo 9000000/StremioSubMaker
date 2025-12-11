@@ -1194,6 +1194,8 @@ class SubSourceService {
           } else {
             raw = buf.toString('utf8');
           }
+          // Strip UTF-8 BOM if present (prevents first-letter loss in some players)
+          if (raw && typeof raw === 'string') raw = raw.replace(/^\uFEFF/, '');
 
           const lower = altEntry.toLowerCase();
           if (lower.endsWith('.vtt')) {

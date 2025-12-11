@@ -15,14 +15,29 @@
      * Exposes window.partialsReady so other scripts can wait before wiring UI.
      * Prioritizes the main partial so core content renders before footer/overlays.
      */
+    function withCacheBuster(src) {
+        try {
+            const base = new URL(src, window.location.origin);
+            const pageParams = new URLSearchParams(window.location.search || '');
+            const existing = base.searchParams.get('_cb') || base.searchParams.get('v');
+            const cb = existing || pageParams.get('_cb') || pageParams.get('v') || String(Date.now());
+            base.searchParams.set('_cb', cb);
+            return base.pathname + base.search;
+        } catch (_) {
+            const sep = src.includes('?') ? '&' : '?';
+            return src + sep + '_cb=' + Date.now();
+        }
+    }
+
     function fetchPartial(el) {
         const src = el.getAttribute('data-include');
         if (!src) return Promise.resolve('');
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10000);
+        const bustedSrc = withCacheBuster(src);
 
-        return fetch(src, { cache: 'no-store', signal: controller.signal })
+        return fetch(bustedSrc, { cache: 'no-store', signal: controller.signal })
             .then(function(res) {
                 if (!res.ok) {
                     const message = translate('config.partials.loadError', { src: src, status: res.status }, 'Failed to load partial: ' + src + ' (' + res.status + ')');

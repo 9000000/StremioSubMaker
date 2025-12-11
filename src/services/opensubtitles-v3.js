@@ -408,6 +408,8 @@ class OpenSubtitlesV3Service {
               for (let i = 2, j = 0; i + 1 < abuf.length; i += 2, j += 2) { swapped[j] = abuf[i + 1]; swapped[j + 1] = abuf[i]; }
               raw = swapped.toString('utf16le');
             } else raw = abuf.toString('utf8');
+            // Strip UTF-8 BOM if present (prevents first-char loss in some players)
+            if (raw && typeof raw === 'string') raw = raw.replace(/^\uFEFF/, '');
 
             const lname = altEntry.toLowerCase();
             if (lname.endsWith('.vtt')) return raw;
@@ -501,6 +503,8 @@ class OpenSubtitlesV3Service {
           for (let i = 2, j = 0; i + 1 < buf.length; i += 2, j += 2) { swapped[j] = buf[i + 1]; swapped[j + 1] = buf[i]; }
           text = swapped.toString('utf16le');
         } else text = buf.toString('utf8');
+        // Strip UTF-8 BOM if present (common in Arabic/RTL files)
+        if (text && typeof text === 'string') text = text.replace(/^\uFEFF/, '');
 
         const trimmed = (text || '').trimStart();
         if (trimmed.startsWith('WEBVTT')) {
