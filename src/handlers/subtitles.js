@@ -2040,7 +2040,8 @@ function createSubtitleHandler(config) {
         type: videoInfo.type,
         season: videoInfo.season,
         episode: videoInfo.episode,
-        languages: allLanguages
+        languages: allLanguages,
+        excludeHearingImpairedSubtitles: config.excludeHearingImpairedSubtitles === true
       };
 
       // Get user config hash for cache isolation
@@ -2191,6 +2192,18 @@ function createSubtitleHandler(config) {
       let filteredFoundSubtitles = allLanguages.length > 0
         ? foundSubtitles.filter(sub => sub.languageCode && expandedLangs.has(sub.languageCode))
         : foundSubtitles;
+
+      // Optional: exclude SDH/HI (hearing impaired) subtitles from results
+      if (config.excludeHearingImpairedSubtitles === true) {
+        const beforeCount = filteredFoundSubtitles.length;
+        filteredFoundSubtitles = filteredFoundSubtitles.filter(sub => {
+          return !(sub && (sub.hearing_impaired === true || sub.hearingImpaired === true || sub.hi === true || sub.hi === 1));
+        });
+        const removed = beforeCount - filteredFoundSubtitles.length;
+        if (removed > 0) {
+          log.debug(() => `[Subtitles] Excluded ${removed} hearing impaired subtitles (SDH/HI)`);
+        }
+      }
 
       // Rank subtitles by filename match + quality metrics before creating response lists
       // This ensures the best matches appear first in Stremio UI
@@ -3855,7 +3868,8 @@ async function getAvailableSubtitlesForTranslation(videoId, config) {
       type: videoInfo.type,
       season: videoInfo.season,
       episode: videoInfo.episode,
-      languages: sourceLanguages
+      languages: sourceLanguages,
+      excludeHearingImpairedSubtitles: config.excludeHearingImpairedSubtitles === true
     };
 
     // Create user-scoped deduplication key based on video info, source languages, and user config
@@ -3926,6 +3940,16 @@ async function getAvailableSubtitlesForTranslation(videoId, config) {
       log.debug(() => `[Translation Selector] Found ${subs.length} subtitles total`);
       return subs;
     });
+
+    if (config && config.excludeHearingImpairedSubtitles === true && Array.isArray(subtitles)) {
+      const beforeCount = subtitles.length;
+      const filtered = subtitles.filter(sub => !(sub && (sub.hearing_impaired === true || sub.hearingImpaired === true || sub.hi === true || sub.hi === 1)));
+      const removed = beforeCount - filtered.length;
+      if (removed > 0) {
+        log.debug(() => `[Translation Selector] Excluded ${removed} hearing impaired subtitles (SDH/HI)`);
+      }
+      return filtered;
+    }
 
     return subtitles;
 

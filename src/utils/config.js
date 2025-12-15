@@ -436,6 +436,7 @@ function normalizeConfig(config) {
   mergedConfig.syncSubtitlesEnabled = mergedConfig.subToolboxEnabled === true;
   mergedConfig.singleBatchMode = mergedConfig.singleBatchMode === true;
   mergedConfig.multiProviderEnabled = mergedConfig.multiProviderEnabled === true;
+  mergedConfig.excludeHearingImpairedSubtitles = mergedConfig.excludeHearingImpairedSubtitles === true;
   const advSettings = mergedConfig.advancedSettings || {};
   mergedConfig.advancedSettings = {
     ...advSettings,
@@ -837,6 +838,8 @@ function getDefaultConfig(modelName = null) {
     subToolboxEnabled: false, // unified toolbox entry for file translation, sync, and upcoming tools
     fileTranslationEnabled: false, // legacy flag (mirrors subToolboxEnabled)
     syncSubtitlesEnabled: false, // legacy flag (mirrors subToolboxEnabled)
+    // If true, filter out SDH/HI (hearing impaired) subtitles from provider results
+    excludeHearingImpairedSubtitles: false,
     mobileMode: false, // Hold translation responses until full translation is ready (Android cache workaround)
     singleBatchMode: false, // Translate whole file at once (streaming partials)
     // Minimum size for a subtitle file to be considered valid (bytes)

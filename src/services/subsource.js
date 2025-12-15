@@ -347,7 +347,7 @@ class SubSourceService {
         return [];
       }
 
-      const { imdb_id, type, season, episode, languages } = params;
+      const { imdb_id, type, season, episode, languages, excludeHearingImpairedSubtitles } = params;
 
       // SubSource requires IMDB ID - skip if not available (e.g., anime with Kitsu IDs)
       if (!imdb_id || imdb_id === 'undefined') {
@@ -372,6 +372,11 @@ class SubSourceService {
         // Request more results to allow for better ranking/filtering
         limit: 100
       };
+
+      // Optional filter: exclude HI/SDH subtitles (SubSource supports hearingImpaired=true/false)
+      if (excludeHearingImpairedSubtitles === true) {
+        queryParams.hearingImpaired = 'false';
+      }
 
       // Convert ISO codes to full language names for SubSource API
       // SubSource expects language names like "english", "spanish", etc.

@@ -321,6 +321,13 @@
             fallbackFlag: 'BR'
         },
         {
+            value: 'pt-pt',
+            labelKey: 'config.uiLanguages.pt-pt.label',
+            flagKey: 'config.uiLanguages.pt-pt.flag',
+            fallbackLabel: 'Portuguese (Portugal)',
+            fallbackFlag: 'PT'
+        },
+        {
             value: 'ar',
             labelKey: 'config.uiLanguages.ar.label',
             flagKey: 'config.uiLanguages.ar.flag',
@@ -361,6 +368,7 @@
             'en': 'EN',
             'es': 'ES',
             'pt-br': 'PT',
+            'pt-pt': 'PT',
             'ar': 'AR'
         };
         const label = codeLabelMap[entry.value] || entry.value.toUpperCase();
@@ -697,6 +705,7 @@ Translate to {target_language}.`;
             subToolboxEnabled: false, // unified toolbox entry for translate/sync/auto tools
             fileTranslationEnabled: false, // legacy flag (mirrors subToolboxEnabled)
             syncSubtitlesEnabled: false, // legacy flag (mirrors subToolboxEnabled)
+            excludeHearingImpairedSubtitles: false, // If true, hide SDH/HI subtitles from results
             mobileMode: false, // On Android: wait for full translation before responding
             singleBatchMode: false, // Try translating whole file at once
             advancedSettings: {
@@ -886,7 +895,14 @@ Translate to {target_language}.`;
         const ariaPrefix = labelText ? `${labelText}: ` : '';
 
         container.innerHTML = '';
-        SUPPORTED_UI_LANGUAGES.forEach((entry) => {
+        const orderedEntries = [...SUPPORTED_UI_LANGUAGES].sort((a, b) => {
+            const aActive = a.value === activeMeta.value;
+            const bActive = b.value === activeMeta.value;
+            if (aActive && !bActive) return -1;
+            if (!aActive && bActive) return 1;
+            return 0;
+        });
+        orderedEntries.forEach((entry) => {
             const meta = resolveUiLanguageMeta(entry);
             const btn = document.createElement('button');
             btn.type = 'button';
@@ -1098,6 +1114,7 @@ Translate to {target_language}.`;
         currentConfig.learnTargetLanguages = normalizeLanguageCodes(currentConfig.learnTargetLanguages || []);
         currentConfig.learnPlacement = 'top';
         currentConfig.mobileMode = currentConfig.mobileMode === true;
+        currentConfig.excludeHearingImpairedSubtitles = currentConfig.excludeHearingImpairedSubtitles === true;
         enforceLanguageLimits();
         updateLanguageLimitCopy();
 
@@ -2106,6 +2123,8 @@ Translate to {target_language}.`;
         if (dock) {
             dock.addEventListener('click', (e) => {
                 e.stopPropagation();
+                const clickedFlag = e.target && e.target.closest ? e.target.closest('.ui-lang-flag') : null;
+                if (clickedFlag) return;
                 setUiLanguageExpanded(!uiLanguageExpanded);
             });
         }
@@ -3797,6 +3816,7 @@ Translate to {target_language}.`;
         ];
         const otherSettingsCard = document.getElementById('otherSettingsCard');
         const subToolboxNoTranslationGroup = document.getElementById('subToolboxNoTranslationGroup');
+        const excludeHearingImpairedNoTranslationGroup = document.getElementById('excludeHearingImpairedNoTranslationGroup');
 
         ['sendTimestampsToAI', 'databaseMode', 'learnModeEnabled', 'mobileMode', 'singleBatchMode', 'betaMode'].forEach(id => {
             const group = document.getElementById(id)?.closest('.form-group');
@@ -3816,6 +3836,9 @@ Translate to {target_language}.`;
             if (subToolboxNoTranslationGroup) {
                 subToolboxNoTranslationGroup.style.display = '';
             }
+            if (excludeHearingImpairedNoTranslationGroup) {
+                excludeHearingImpairedNoTranslationGroup.style.display = '';
+            }
             return;
         }
 
@@ -3823,6 +3846,9 @@ Translate to {target_language}.`;
         if (!hasStoredState) {
             if (subToolboxNoTranslationGroup) {
                 subToolboxNoTranslationGroup.style.display = 'none';
+            }
+            if (excludeHearingImpairedNoTranslationGroup) {
+                excludeHearingImpairedNoTranslationGroup.style.display = 'none';
             }
             return;
         }
@@ -3838,6 +3864,9 @@ Translate to {target_language}.`;
         }
         if (subToolboxNoTranslationGroup) {
             subToolboxNoTranslationGroup.style.display = 'none';
+        }
+        if (excludeHearingImpairedNoTranslationGroup) {
+            excludeHearingImpairedNoTranslationGroup.style.display = 'none';
         }
     }
 
@@ -4534,6 +4563,8 @@ Translate to {target_language}.`;
             newConfig.mobileMode = oldConfig.mobileMode === true;
             // - single-batch mode
             newConfig.singleBatchMode = oldConfig.singleBatchMode === true;
+            // - exclude HI/SDH subtitles
+            newConfig.excludeHearingImpairedSubtitles = oldConfig.excludeHearingImpairedSubtitles === true;
 
             // Reset selected model to default (do NOT preserve old) and reset advanced settings to defaults
             newConfig.geminiModel = defaults.geminiModel;
@@ -4738,6 +4769,13 @@ Translate to {target_language}.`;
             || currentConfig.syncSubtitlesEnabled === true;
         currentConfig.subToolboxEnabled = toolboxEnabled;
         setSubToolboxEnabledUI(toolboxEnabled);
+
+        // Load HI/SDH exclusion setting (applies to both translation + no-translation modes)
+        const hiExcludeEnabled = currentConfig.excludeHearingImpairedSubtitles === true;
+        const hiExcludeEl = document.getElementById('excludeHearingImpairedSubtitles');
+        const hiExcludeElNoTranslation = document.getElementById('excludeHearingImpairedSubtitlesNoTranslation');
+        if (hiExcludeEl) hiExcludeEl.checked = hiExcludeEnabled;
+        if (hiExcludeElNoTranslation) hiExcludeElNoTranslation.checked = hiExcludeEnabled;
         const mobileModeEl = document.getElementById('mobileMode');
         if (mobileModeEl) mobileModeEl.checked = currentConfig.mobileMode === true;
         const singleBatchEl = document.getElementById('singleBatchMode');
@@ -4829,6 +4867,28 @@ Translate to {target_language}.`;
         } else {
             // If the toggle isn't present, preserve existing value in state
             currentConfig.mobileMode = currentConfig.mobileMode === true;
+        }
+
+        // Track HI/SDH exclusion toggles (keep both in sync)
+        const hiExcludeToggle = document.getElementById('excludeHearingImpairedSubtitles');
+        const hiExcludeToggleNoTranslation = document.getElementById('excludeHearingImpairedSubtitlesNoTranslation');
+        const syncHiExclude = (value) => {
+            currentConfig.excludeHearingImpairedSubtitles = value === true;
+            if (hiExcludeToggle && hiExcludeToggle.checked !== currentConfig.excludeHearingImpairedSubtitles) {
+                hiExcludeToggle.checked = currentConfig.excludeHearingImpairedSubtitles;
+            }
+            if (hiExcludeToggleNoTranslation && hiExcludeToggleNoTranslation.checked !== currentConfig.excludeHearingImpairedSubtitles) {
+                hiExcludeToggleNoTranslation.checked = currentConfig.excludeHearingImpairedSubtitles;
+            }
+        };
+        if (hiExcludeToggle) {
+            hiExcludeToggle.addEventListener('change', (e) => syncHiExclude(e.target.checked === true));
+        }
+        if (hiExcludeToggleNoTranslation) {
+            hiExcludeToggleNoTranslation.addEventListener('change', (e) => syncHiExclude(e.target.checked === true));
+        }
+        if (!hiExcludeToggle && !hiExcludeToggleNoTranslation) {
+            currentConfig.excludeHearingImpairedSubtitles = currentConfig.excludeHearingImpairedSubtitles === true;
         }
         const singleBatchToggle = document.getElementById('singleBatchMode');
         if (singleBatchToggle) {
@@ -4939,6 +4999,10 @@ Translate to {target_language}.`;
                 enabled: isBypassRequested(),
                 duration: 12
             },
+            excludeHearingImpairedSubtitles: (function(){
+                const el = document.getElementById('excludeHearingImpairedSubtitlesNoTranslation') || document.getElementById('excludeHearingImpairedSubtitles');
+                return el ? el.checked === true : (currentConfig?.excludeHearingImpairedSubtitles === true);
+            })(),
             subToolboxEnabled: (function(){
                 const el = document.getElementById('subToolboxEnabledNoTranslation') || document.getElementById('subToolboxEnabled');
                 return el ? el.checked : (currentConfig?.subToolboxEnabled === true);

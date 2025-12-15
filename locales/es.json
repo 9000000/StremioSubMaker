@@ -689,6 +689,10 @@
           "label": "Portugués (Brasil)",
           "flag": "BR"
         },
+        "pt-pt": {
+          "label": "Portugués (Portugal)",
+          "flag": "PT"
+        },
         "ar": {
           "label": "Árabe",
           "flag": "SA"
