@@ -876,8 +876,9 @@ async function createAssemblyTranscript(apiKey, payload = {}, logger = null) {
             if (typeof logger === 'function') logger(message, level);
         } catch (_) { /* ignore logger errors */ }
     };
-    const languageCode = (payload.language_code || payload.languageCode || '').toString().trim();
     // Keep payload compliant with AssemblyAI's transcript schema (unknown keys trigger schema errors)
+    // Always use automatic language detection - AssemblyAI will detect the spoken language
+    // and fall back to "auto" (highest confidence) by default when no expected_languages are set
     const requestBody = {
         punctuate: true,
         format_text: true,
@@ -886,14 +887,12 @@ async function createAssemblyTranscript(apiKey, payload = {}, logger = null) {
         filter_profanity: false,
         auto_chapters: false,
         disfluencies: true,
-        audio_url: payload.audio_url
+        audio_url: payload.audio_url,
+        // Enable automatic language detection (always on for auto-subs)
+        // Per AssemblyAI docs: detects the dominant language and uses it during transcription
+        // When fallback_language is not specified (or "auto"), highest confidence language is used
+        language_detection: true
     };
-    if (languageCode) {
-        requestBody.language_code = languageCode;
-    } else {
-        // Let AssemblyAI auto-detect when the source language is unknown
-        requestBody.language_detection = true;
-    }
     if (payload.word_boost && Array.isArray(payload.word_boost) && payload.word_boost.length > 0) {
         requestBody.word_boost = payload.word_boost;
     }
@@ -1118,7 +1117,6 @@ async function transcribeWithAssemblyAi(streamUrl, opts = {}, logger = null) {
         const uploadUrl = await uploadToAssembly(apiKey, upload, logger);
         const transcriptId = await createAssemblyTranscript(apiKey, {
             audio_url: uploadUrl,
-            language_code: opts.sourceLanguage || opts.languageCode || '',
             // Always request speaker labels to preserve turn splits (labels are removed from the final text)
             speaker_labels: true
         }, logger);
@@ -1141,7 +1139,8 @@ async function transcribeWithAssemblyAi(streamUrl, opts = {}, logger = null) {
         return {
             transcription: {
                 srt: srt || '',
-                languageCode: language || opts.sourceLanguage || 'und',
+                // Use the auto-detected language from AssemblyAI; fallback to 'und' if not available
+                languageCode: language || 'und',
                 model: 'assemblyai',
                 assemblyId: transcriptId
             },

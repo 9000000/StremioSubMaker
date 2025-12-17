@@ -6615,7 +6615,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         };
         if (engine === 'assemblyai') {
           delete payload.model;
-          if (!payload.sourceLanguage) delete payload.sourceLanguage;
+          // AssemblyAI always uses automatic language detection - don't send sourceLanguage
+          delete payload.sourceLanguage;
         }
         if (overrides.sendFullVideo === true) {
           payload.sendFullVideo = true;
@@ -6916,7 +6917,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
               data: {
                 streamUrl: stream,
                 filename: PAGE.filename || '',
-                sourceLanguage: els.sourceLang?.value || '',
+                // AssemblyAI uses automatic language detection - no sourceLanguage needed
                 diarization: true,
                 useAssembly: true,
                 assemblyApiKey: BOOTSTRAP.assemblyApiKey || '',
