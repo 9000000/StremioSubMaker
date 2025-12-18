@@ -3319,6 +3319,33 @@ Translate to {target_language}.`;
             const keys = getGeminiApiKeys();
             const keysError = document.getElementById('geminiApiKeysError');
 
+            // Check for empty fields in the rotation list (Key 1 is the single key input)
+            const singleKeyValue = input?.value?.trim() || '';
+            const keysList = document.getElementById('geminiApiKeysList');
+            let hasEmptyFields = !singleKeyValue; // Key 1 empty?
+
+            if (keysList) {
+                const inputs = keysList.querySelectorAll('.gemini-api-key-input');
+                inputs.forEach(inp => {
+                    if (!inp.value?.trim()) {
+                        hasEmptyFields = true;
+                        inp.classList.add('invalid');
+                    }
+                });
+            }
+
+            if (hasEmptyFields) {
+                const message = tConfig('config.validation.geminiKeysFillEmpty', {}, '⚠️ Please fill in all API key fields or remove empty ones');
+                if (keysError) {
+                    keysError.textContent = message;
+                    keysError.style.display = 'block';
+                }
+                if (showNotification) {
+                    showAlert(message, 'error');
+                }
+                return false;
+            }
+
             if (keys.length === 0) {
                 const message = tConfig('config.validation.geminiKeysRequired', {}, '⚠️ At least one API key is required for rotation');
                 if (keysError) {
@@ -3486,6 +3513,32 @@ Translate to {target_language}.`;
             return;
         }
 
+        // Check if any existing fields are empty before adding a new one
+        // This includes Key 1 (single key input) and additional keys (Key 2+)
+        if (!value) { // Only check when adding empty field (not when loading saved keys)
+            const singleKeyInput = document.getElementById('geminiApiKey');
+            const singleKeyValue = singleKeyInput?.value?.trim() || '';
+
+            // Check Key 1 (single key field)
+            if (!singleKeyValue) {
+                showAlert(tConfig('config.validation.geminiKeysFillEmpty', {}, 'Please fill in all API key fields before adding a new one'), 'warning');
+                singleKeyInput?.focus();
+                singleKeyInput?.classList.add('invalid');
+                return;
+            }
+
+            // Check additional keys (Key 2+)
+            const existingInputs = keysList.querySelectorAll('.gemini-api-key-input');
+            for (const inp of existingInputs) {
+                if (!inp.value?.trim()) {
+                    showAlert(tConfig('config.validation.geminiKeysFillEmpty', {}, 'Please fill in all API key fields before adding a new one'), 'warning');
+                    inp.focus();
+                    inp.classList.add('invalid');
+                    return;
+                }
+            }
+        }
+
         const row = document.createElement('div');
         row.className = 'gemini-key-row';
         row.style.cssText = 'display: flex; gap: 0.5rem; align-items: center;';
@@ -3500,9 +3553,13 @@ Translate to {target_language}.`;
         input.spellcheck = false;
 
         // Sync first key to single input when keys change
-        input.addEventListener('input', () => {
+        input.addEventListener('input', (e) => {
             syncFirstKeyToSingleInput();
             updateGeminiKeysCount();
+            // Remove invalid class when user starts typing
+            if (e.target.value?.trim()) {
+                e.target.classList.remove('invalid');
+            }
         });
 
         // Test button for per-key validation

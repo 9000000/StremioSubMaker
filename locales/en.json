@@ -853,6 +853,7 @@
         "subsourceKeyRequired": "SubSource is enabled but API key is missing",
         "subtitleProviderRequired": "Please enable at least one subtitle provider",
         "geminiKeysRequired": "At least one API key is required for rotation",
+        "geminiKeysFillEmpty": "Please fill in all API key fields before adding a new one",
         "apiKeyInvalid": "Invalid API key",
         "apiError": "API error: {reason}"
       },
