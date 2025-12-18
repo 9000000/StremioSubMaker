@@ -50,16 +50,16 @@ function redactApiKey(apiKey) {
 }
 
 /**
- * Redact an API key for concise logging (shows first 3 chars only)
+ * Redact an API key for concise logging (shows first 3 and last 3 chars)
  * Used for identifying which key is being used in rotation logs
  * @param {string} apiKey - API key to redact
- * @returns {string} - Redacted API key in format "abc[REDACTED]"
+ * @returns {string} - Redacted API key in format "abc...[REDACTED]...xyz"
  */
 function redactKeyShort(apiKey) {
-  if (!apiKey || typeof apiKey !== 'string' || apiKey.length < 3) {
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.length < 8) {
     return '[REDACTED]';
   }
-  return `${apiKey.substring(0, 3)}[REDACTED]`;
+  return `${apiKey.substring(0, 8)}...[REDACTED]...${apiKey.substring(apiKey.length - 3)}`;
 }
 
 /**

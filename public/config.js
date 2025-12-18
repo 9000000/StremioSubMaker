@@ -5053,10 +5053,13 @@ Translate to {target_language}.`;
         if (keysList) {
             keysList.innerHTML = '';
         }
-        // Populate keys from config
+        // Populate additional keys from config (skip first key - it's already in the single key field)
         const geminiApiKeys = Array.isArray(currentConfig.geminiApiKeys) ? currentConfig.geminiApiKeys : [];
-        if (geminiApiKeys.length > 0) {
-            geminiApiKeys.forEach(key => addGeminiKeyInput(key));
+        // The first key in geminiApiKeys is Key 1, which is displayed in the single key field
+        // Only add Key 2+ to the additional keys list
+        const additionalKeys = geminiApiKeys.slice(1);
+        if (additionalKeys.length > 0) {
+            additionalKeys.forEach(key => addGeminiKeyInput(key));
         }
         // Toggle UI visibility based on state
         toggleGeminiKeyRotationUI(keyRotationEnabled);
