@@ -36,7 +36,7 @@ class GeminiService {
   constructor(apiKey, model = '', advancedSettings = {}) {
     this.apiKey = apiKey;
     // Fallback to default if model not provided (config.js handles env var override)
-    this.model = model || 'gemini-2.5-flash-preview-09-2025';
+    this.model = model || 'gemini-3-flash-preview';
     this.baseUrl = GEMINI_API_URL;
 
     // Advanced settings with environment variable fallbacks

@@ -347,7 +347,7 @@ function normalizeConfig(config) {
   }
 
   // Determine the model to use (from config or default)
-  const configModel = config.geminiModel || process.env.GEMINI_MODEL || 'gemini-flash-latest';
+  const configModel = config.geminiModel || process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
 
   // Get model-specific defaults based on the selected model
   const defaults = getDefaultConfig(configModel);
@@ -781,7 +781,7 @@ function getModelSpecificDefaults(modelName) {
  */
 function getDefaultConfig(modelName = null) {
   // Determine the model to use for defaults
-  const effectiveModel = modelName || process.env.GEMINI_MODEL || 'gemini-2.5-flash-preview-09-2025';
+  const effectiveModel = modelName || process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
   const modelDefaults = getModelSpecificDefaults(effectiveModel);
 
   // Read advanced settings from environment variables with fallback to model-specific defaults
