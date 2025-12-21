@@ -1787,15 +1787,15 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         inline: copy.step1.hashMismatchInline,
         alertLines: hashAlertLines
       },
-        locks: {
-          needExtraction: copy.locks.needExtraction,
-          needTrack: copy.locks.needTrack
-        },
-        errors: {
-          metaFetchFailed: t('toolbox.errors.metaFetchFailed', {}, 'Failed to fetch metadata')
-        }
+      locks: {
+        needExtraction: copy.locks.needExtraction,
+        needTrack: copy.locks.needTrack
+      },
+      errors: {
+        metaFetchFailed: t('toolbox.errors.metaFetchFailed', {}, 'Failed to fetch metadata')
       }
-    };
+    }
+  };
 
   return `
 <!DOCTYPE html>
@@ -6575,22 +6575,27 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
                 err.style.color = 'var(--danger)';
                 err.textContent = entry.error;
                 card.appendChild(err);
-              } else if (entry.srt) {
+              }
+              if (entry.srt || entry.error) {
                 const actions = document.createElement('div');
                 actions.className = 'controls';
                 const btn = document.createElement('a');
-                btn.className = 'btn secondary';
-                const blob = new Blob([entry.srt], { type: 'text/plain' });
-                btn.href = entry.downloadUrl || URL.createObjectURL(blob);
-                btn.download = (PAGE.videoHash || 'video') + '_' + (entry.languageCode || 'lang') + '_autosub.srt';
-                btn.textContent = tt('toolbox.autoSubs.actions.downloadTranslation', { lang: entry.languageCode || 'subtitle' }, 'Download ' + (entry.languageCode || 'subtitle'));
-                actions.appendChild(btn);
+                if (entry.srt) {
+                  btn.className = 'btn secondary';
+                  const blob = new Blob([entry.srt], { type: 'text/plain' });
+                  btn.href = entry.downloadUrl || URL.createObjectURL(blob);
+                  btn.download = (PAGE.videoHash || 'video') + '_' + (entry.languageCode || 'lang') + '_autosub.srt';
+                  btn.textContent = tt('toolbox.autoSubs.actions.downloadTranslation', { lang: entry.languageCode || 'subtitle' }, 'Download ' + (entry.languageCode || 'subtitle'));
+                  actions.appendChild(btn);
+                }
 
                 const reBtn = document.createElement('button');
                 reBtn.type = 'button';
                 reBtn.className = 'btn ghost';
-                const safeLang = entry.languageCode || 'subtitle';
-                reBtn.textContent = tt('toolbox.autoSubs.actions.retranslate', { lang: safeLang }, 'Retranslate ' + safeLang);
+                const safeLang = (entry.languageCode || '').toString().trim();
+                reBtn.textContent = safeLang
+                  ? tt('toolbox.autoSubs.actions.retranslate', { lang: safeLang }, 'Retry translation ' + safeLang)
+                  : tt('toolbox.autoSubs.actions.retranslate', { lang: '' }, 'Retry translation');
                 reBtn.addEventListener('click', (ev) => {
                   ev.preventDefault();
                   ev.stopPropagation();
@@ -8183,7 +8188,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       gap: 14px;
       align-items: flex-start;
     }
-    .section-joined .joined-grid > .step-card { align-self: center; height: auto; }
+    .section-joined .joined-grid > .step-card { height: auto; }
     @media (min-width: 1024px) {
       .section-joined .joined-grid::before {
         content: '';
@@ -8262,7 +8267,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       align-items: center;
       justify-content: center;
       text-align: center;
-      align-self: center;
+      align-self: flex-start;
     }
     #autoStep2Card .step-title { justify-content: flex-start; width: 100%; text-align: left; }
     #autoStep2Card .step-body {

@@ -475,7 +475,7 @@
           "downloadVtt": "Download VTT",
           "downloadRawTranscript": "Download raw transcript",
           "downloadTranslation": "Download {lang}",
-          "retranslate": "Retranslate {lang}",
+          "retranslate": "Retry translation {lang}",
           "continue": "Continue"
         },
         "options": {

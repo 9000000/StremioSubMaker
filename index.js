@@ -1907,6 +1907,20 @@ function applySafeCors(req, res, next) {
     return cors()(req, res, next);
 }
 
+function getForwardedForIp(xffHeader) {
+    if (!xffHeader || typeof xffHeader !== 'string') return '';
+    const first = xffHeader.split(',')[0];
+    return first ? first.trim() : '';
+}
+
+function getClientIp(req) {
+    const cf = req.get('cf-connecting-ip');
+    const xff = getForwardedForIp(req.get('x-forwarded-for'));
+    const xri = req.get('x-real-ip');
+    const direct = req.ip || req?.connection?.remoteAddress || '';
+    return cf || xff || xri || direct || 'unknown';
+}
+
 // Helper: sanitize and normalize host header to avoid header injection / poisoned manifests
 function getSafeHost(req) {
     const rawHost = req.get('host') || '';
@@ -6973,6 +6987,9 @@ app.get('/addon/:config/manifest.json', async (req, res) => {
         setNoStore(res);
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
+        const rawUrl = req.originalUrl || req.url || '';
+        const hasVersionSegment = /\/v[0-9.]+(\/|$)/.test(rawUrl);
+        log.info(() => `[Manifest] Request meta ip=${getClientIp(req)} cf=${req.get('cf-connecting-ip') || 'n/a'} xff=${req.get('x-forwarded-for') || 'n/a'} xri=${req.get('x-real-ip') || 'n/a'} ua=${req.get('user-agent') || 'n/a'} origin=${req.get('origin') || 'n/a'} referer=${req.get('referer') || 'n/a'} host=${req.get('host') || 'n/a'} url=${rawUrl || 'n/a'} versioned=${hasVersionSegment}`);
         log.debug(() => `[Manifest] Parsing config for manifest request`);
         const config = await resolveConfigGuarded(req.params.config, req, res, '[Manifest] config', t);
         if (!config) return;

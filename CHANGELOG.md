@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 - **Locale refresh and fixes:** Repaired corrupted Arabic strings and synced missing locale keys (ar/es/pt-br/pt-pt) with the latest English entries.
 - **Sub Toolbox localization cleanup:** Removed remaining hardcoded English strings across Sub Toolbox, History, and Sync pages by wiring them to i18n keys in all locales.
 - **Rate limit error handling fix:** Fixed a bug where OpenSubtitles login rate limit errors (429) were being re-classified as `type: 'unknown'` with `isRetryable: false` instead of preserving the original `rate_limit` classification. The `parseApiError()` utility now preserves pre-existing `statusCode`, `type`, and `isRetryable` properties on manually-created errors, ensuring proper error handling and user-facing messages for rate-limited login attempts.
+- **Manifest request logging:** Added detailed manifest request metadata logging, including best-effort client IP resolution and forwarded headers, to help debug host/config access issues.
+- **Auto-subs retry UX:** Renamed the "Retranslate" action to "Retry translation," improved button fallbacks when language codes are missing, and only show download actions when SRT output exists.
+- **Auto-subs layout tweaks:** Adjusted joined step card alignment for cleaner layout on larger screens.
 
 ## SubMaker v1.4.26
 
