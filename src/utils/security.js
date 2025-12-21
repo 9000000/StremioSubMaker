@@ -210,11 +210,43 @@ function constantTimeCompare(a, b) {
   }
 }
 
+/**
+ * Sanitize an API key for safe use in HTTP headers
+ * Removes control characters, newlines, and other invalid bytes that
+ * would cause "Invalid character in header content" errors
+ * @param {string} apiKey - API key to sanitize
+ * @returns {string|null} - Sanitized API key or null if invalid
+ */
+function sanitizeApiKeyForHeader(apiKey) {
+  if (!apiKey || typeof apiKey !== 'string') {
+    return null;
+  }
+
+  // Remove control characters (U+0000-U+001F except tab U+0009) and other problematic chars
+  // HTTP headers can only contain printable ASCII (0x20-0x7E) plus tab (0x09)
+  // Also remove DEL (0x7F) and non-ASCII characters for safety
+  const sanitized = apiKey
+    .replace(/[\x00-\x08\x0A-\x1F\x7F]/g, '') // Remove control chars except tab
+    .replace(/[\u0080-\uFFFF]/g, '') // Remove non-ASCII
+    .trim();
+
+  // If sanitization changed the key significantly, it's probably corrupted
+  // Return the sanitized version but log a warning if too much was removed
+  if (sanitized.length < apiKey.length * 0.5) {
+    // More than 50% of the key was invalid characters - likely corrupted
+    return null;
+  }
+
+  return sanitized.length > 0 ? sanitized : null;
+}
+
 module.exports = {
   redactToken,
   redactApiKey,
+  redactKeyShort,
   sanitizeError,
   sanitizeConfig,
   sanitizeCacheKey,
-  constantTimeCompare
+  constantTimeCompare,
+  sanitizeApiKeyForHeader
 };

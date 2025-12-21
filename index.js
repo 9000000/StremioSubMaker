@@ -664,33 +664,59 @@ async function transcribeWithCloudflare(audioBuffer, opts = {}) {
     const model = (opts.model || '@cf/openai/whisper').trim();
     // Cloudflare expects the model path with slashes preserved (e.g. @cf/openai/whisper); do not encode slashes
     const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${encodeURI(model)}`;
-    const FormDataCtor = typeof FormData !== 'undefined' ? FormData : global.FormData;
-    const BlobCtor = typeof Blob !== 'undefined' ? Blob : require('buffer').Blob;
-    if (!FormDataCtor || !BlobCtor) {
-        throw new Error('FormData/Blob not available in this environment');
-    }
-    const formData = new FormDataCtor();
-    const blobType = opts.contentType || 'audio/wav';
-    const blobName = opts.filename || 'audio.wav';
-    formData.append('file', new BlobCtor([audioBuffer], { type: blobType }), blobName);
-    if (opts.sourceLanguage) formData.append('language', opts.sourceLanguage);
-    // Force diarization for Cloudflare transcription
-    formData.append('diarization', 'true');
+
+    // Determine if this is the turbo model (different API schema)
+    const isTurboModel = model.includes('whisper-large-v3-turbo');
+
+    // For base @cf/openai/whisper: only raw binary audio is accepted (no language, no diarization)
+    // For @cf/openai/whisper-large-v3-turbo: accepts Base64 audio, language, task, vad_filter
+    // NOTE: 'diarization' is NOT a valid parameter for any Cloudflare Whisper model!
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), AUTOSUB_CF_TIMEOUT_MS);
     let response;
     let responseStatus = null;
+    let raw = '';
+
     try {
-        response = await fetch(endpoint, {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                Accept: 'application/json'
-            },
-            body: formData,
-            signal: controller.signal
-        });
+        if (isTurboModel) {
+            // IMPORTANT: Despite what the Cloudflare docs say for whisper-large-v3-turbo,
+            // the REST API only accepts 'array' or 'binary' format, NOT Base64 string!
+            // Error: "Type mismatch of '/audio', 'string' not in 'array','binary'"
+            const payload = {
+                audio: Array.from(audioBuffer),
+                task: 'transcribe'
+            };
+            // Only turbo model supports 'language' param
+            if (opts.sourceLanguage) payload.language = opts.sourceLanguage;
+            // Enable VAD filter if requested
+            if (opts.vadFilter === true) payload.vad_filter = true;
+
+            response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+        } else {
+            // Base whisper model: raw binary POST (no FormData, no language parameter)
+            // This is the correct method per Cloudflare docs
+            const blobType = opts.contentType || 'audio/wav';
+            response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: 'application/json',
+                    'Content-Type': blobType
+                },
+                body: audioBuffer,
+                signal: controller.signal
+            });
+        }
         responseStatus = response?.status || null;
     } catch (error) {
         clearTimeout(timeout);
@@ -701,7 +727,6 @@ async function transcribeWithCloudflare(audioBuffer, opts = {}) {
     }
     clearTimeout(timeout);
 
-    let raw = '';
     let data = null;
     try {
         raw = await response.text();

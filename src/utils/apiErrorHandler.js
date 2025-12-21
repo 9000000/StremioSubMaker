@@ -86,6 +86,12 @@ function parseApiError(error, serviceName = 'API', options = {}) {
       parsed.isRetryable = true;
       parsed.userMessage = translate('apiErrors.serviceUnavailable', { service: serviceLabel }, 'Service temporarily unavailable. Please try again in a few minutes.');
     }
+    // DeepL quota/rate limits (non-standard 456/459)
+    else if (String(serviceName || '').toLowerCase() === 'deepl' && (parsed.statusCode === 456 || parsed.statusCode === 459)) {
+      parsed.type = 'rate_limit';
+      parsed.isRetryable = true;
+      parsed.userMessage = translate('apiErrors.rateLimit', { service: serviceLabel }, `${serviceLabel} rate limit exceeded. Please wait a few minutes and try again.`);
+    }
     // OpenSubtitles 469 (Database connection error - custom status code)
     // This is a backend error that should be retried
     else if (parsed.statusCode === 469) {
@@ -297,6 +303,7 @@ function handleTranslationError(error, serviceName, options = {}) {
   customError.statusCode = parsed.statusCode;
   customError.type = parsed.type;
   customError.isRetryable = parsed.isRetryable;
+  customError.serviceName = parsed.serviceName || serviceName;
 
   // Mark error as already logged to prevent duplicate logs in downstream handlers
   customError._alreadyLogged = true;
@@ -314,6 +321,8 @@ function handleTranslationError(error, serviceName, options = {}) {
     customError.translationErrorType = '429';
   } else if (!customError.translationErrorType && parsed.statusCode === 503) {
     customError.translationErrorType = '503';
+  } else if (!customError.translationErrorType && String(serviceName || '').toLowerCase() === 'deepl' && (parsed.statusCode === 456 || parsed.statusCode === 459)) {
+    customError.translationErrorType = '429';
   } else if (!customError.translationErrorType && error.message && (error.message.includes('MAX_TOKENS') || error.message.includes('exceeded maximum token limit'))) {
     customError.translationErrorType = 'MAX_TOKENS';
   } else if (!customError.translationErrorType && error.message && (error.message.includes('PROHIBITED_CONTENT') || error.message.includes('RECITATION'))) {

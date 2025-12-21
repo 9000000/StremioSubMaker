@@ -14,6 +14,7 @@ const { handleSearchError, handleDownloadError, logApiError } = require('../util
 const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const { detectAndConvertEncoding } = require('../utils/encodingDetector');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
+const { sanitizeApiKeyForHeader } = require('../utils/security');
 const zlib = require('zlib');
 const log = require('../utils/logger');
 const { isTrueishFlag } = require('../utils/subtitleFlags');
@@ -226,11 +227,15 @@ class SubSourceService {
       'X-Requested-With': 'XMLHttpRequest'
     };
 
-    // Add API key to headers
-    if (this.apiKey && this.apiKey.trim() !== '') {
-      this.defaultHeaders['X-API-Key'] = this.apiKey.trim();
-      this.defaultHeaders['api-key'] = this.apiKey.trim();
+    // Add API key to headers (sanitize to prevent "Invalid character in header content" errors)
+    const sanitizedApiKey = sanitizeApiKeyForHeader(this.apiKey);
+    if (sanitizedApiKey) {
+      this.defaultHeaders['X-API-Key'] = sanitizedApiKey;
+      this.defaultHeaders['api-key'] = sanitizedApiKey;
       log.debug(() => '[SubSource] Initializing with API key in headers');
+    } else if (this.apiKey && this.apiKey.trim() !== '') {
+      // API key was provided but contained too many invalid characters (likely corrupted)
+      log.warn(() => '[SubSource] API key appears corrupted (contains invalid characters) - please re-enter your SubSource API key');
     }
 
     // Reusable axios client with pooling + DNS cache

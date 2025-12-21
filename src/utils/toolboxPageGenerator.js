@@ -5514,6 +5514,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         assemblySendFullVideo: document.getElementById('assemblySendFullVideo'),
         assemblyOptions: document.getElementById('assemblyOptions'),
         assemblyModeHelper: document.getElementById('assemblyModeHelper'),
+        vadFilterEnabled: document.getElementById('vadFilterEnabled'),
+        turboOptions: document.getElementById('turboOptions'),
         decodeBadge: document.getElementById('decodeBadge'),
         decodeBadgeDot: document.getElementById('decodeBadgeDot'),
         decodeBadgeValue: document.getElementById('decodeBadgeValue'),
@@ -6484,6 +6486,19 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         if (modelRow) modelRow.style.display = isAssembly ? 'none' : '';
         if (els.sourceLang) els.sourceLang.disabled = isAssembly;
         if (els.model) els.model.disabled = isAssembly;
+        // Also update turbo options visibility based on current model
+        toggleTurboOptions();
+      }
+
+      function toggleTurboOptions() {
+        const mode = (els.modeSelect?.value || '').toString().toLowerCase();
+        const model = (els.model?.value || '').toString();
+        const isCloudflare = mode === 'cloudflare';
+        const isTurbo = model.includes('whisper-large-v3-turbo');
+        // Show turboOptions only when Cloudflare mode + Turbo model selected
+        if (els.turboOptions) {
+          els.turboOptions.style.display = (isCloudflare && isTurbo) ? '' : 'none';
+        }
       }
 
       function toggleTranslationStep() {
@@ -7210,6 +7225,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
                 model: els.model?.value || '@cf/openai/whisper',
                 sourceLanguage: els.sourceLang?.value || '',
                 diarization: true,
+                vadFilter: els.vadFilterEnabled?.checked === true,
                 cfAccountId: cfCreds.accountId,
                 cfToken: cfCreds.token
               }
@@ -7324,6 +7340,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         if (els.providerModel && BOOTSTRAP.defaults?.translationModel) {
           els.providerModel.value = BOOTSTRAP.defaults.translationModel;
         }
+        toggleModeDetails(); // Sets mode details and turbo options visibility
         toggleTranslationStep();
         toggleTranslationSettings(false);
         updateHashStatusFromInput();
@@ -7346,6 +7363,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           refreshStepLocks();
         });
         els.modeSelect?.addEventListener('change', toggleModeDetails);
+        els.model?.addEventListener('change', toggleTurboOptions);
         els.translationSettingsToggle?.addEventListener('click', () => toggleTranslationSettings());
         els.provider?.addEventListener('change', renderProviderModels);
         els.targetLang?.addEventListener('change', () => refreshStepLocks());
@@ -7647,6 +7665,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       translateOutput: t('toolbox.autoSubs.steps.translateOutput', {}, 'Translate to target languages'),
       assemblySendFullVideo: t('toolbox.autoSubs.steps.sendFullVideo', {}, 'Send full video to AssemblyAI (≤5GB)'),
       assemblySendFullVideoHelper: t('toolbox.autoSubs.steps.sendFullVideoHelper', {}, 'If the stream is larger than 5GB, we will fall back to audio extraction automatically.'),
+      vadFilter: t('toolbox.autoSubs.steps.vadFilter', {}, 'Enable VAD filter (Turbo model)'),
+      vadFilterHelper: t('toolbox.autoSubs.steps.vadFilterHelper', {}, 'Preprocess audio with a voice activity detection model to remove silence. Recommended for cleaner transcription.'),
       translationStepChip: t('toolbox.autoSubs.steps.stepTwoFiveChip', {}, 'Step 2.5'),
       translationStepTitle: t('toolbox.autoSubs.steps.stepTwoFiveTitle', {}, 'Translation targets'),
       translationSettingsTitle: t('toolbox.autoSubs.steps.translationSettings', {}, 'Translation settings'),
@@ -8747,6 +8767,12 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
                 <label class="inline-checkbox">
                   <input type="checkbox" id="translateOutput" checked> ${escapeHtml(copy.steps.translateOutput)}
                 </label>
+              </div>
+              <div id="turboOptions" style="display:none; margin-top:8px;">
+                <label class="inline-checkbox">
+                  <input type="checkbox" id="vadFilterEnabled" checked> ${escapeHtml(copy.steps.vadFilter)}
+                </label>
+                <p class="muted" id="vadFilterHelper" style="margin-top:4px;">${escapeHtml(copy.steps.vadFilterHelper)}</p>
               </div>
               <div id="assemblyOptions" style="display:none; margin-top:8px;">
                 <label class="inline-checkbox">

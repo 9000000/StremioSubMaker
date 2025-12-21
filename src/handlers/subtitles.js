@@ -575,8 +575,9 @@ ${t('subtitle.concurrencyLimitBody', {}, 'Please wait for one to finish, then tr
 
 // Create an SRT explaining a translation error, visible across the whole video timeline
 // User can click again to retry the translation
-function createTranslationErrorSubtitle(errorType, errorMessage, uiLanguage = 'en') {
+function createTranslationErrorSubtitle(errorType, errorMessage, uiLanguage = 'en', providerName = null) {
   const t = getTranslator(uiLanguage);
+  const provider = String(providerName || '').trim().toLowerCase();
   // Determine error title based on type
   let errorTitle = t('subtitle.translationFailed', {}, 'Translation Failed');
   let errorExplanation = errorMessage || t('subtitle.translationUnexpected', {}, 'An unexpected error occurred during translation.');
@@ -591,6 +592,18 @@ function createTranslationErrorSubtitle(errorType, errorMessage, uiLanguage = 'e
     errorExplanation = t('subtitle.translationOverloadBody', {}, 'The Gemini API is temporarily overloaded with requests.\nThis is usually temporary and resolves within minutes.');
     retryAdvice = t('subtitle.translationOverloadRetry', {}, '(503) Service Unavailable - Wait a moment for Gemini to recover,\nthen click this subtitle again to retry translation.');
   } else if (errorType === '429') {
+    if (provider === 'gemini') {
+      return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationRateLimitGeminiTitle', {}, 'Translation Failed: Usage Limit Reached (429)')}
+${t('subtitle.translationRateLimitGeminiBody', {}, 'Check API Key limits or retry in a few minutes.')}`, null, uiLanguage);
+    }
+    if (provider === 'deepl') {
+      return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationRateLimitDeeplTitle', {}, 'Translation Failed: Usage Limit Reached (DeepL)')}
+${t('subtitle.translationRateLimitDeeplBody', {}, 'DeepL API rate/quota limit reached. Please wait a few minutes and try again.')}`, null, uiLanguage);
+    }
     errorTitle = t('subtitle.translationRateLimit', {}, 'Translation Failed: Usage Limit Reached (429)');
     errorExplanation = t('subtitle.translationRateLimitBody', {}, 'Your Gemini API usage limit has been exceeded.\nThis may be a rate limit or quota limit.');
     retryAdvice = t('subtitle.translationRateLimitRetry', {}, '(429) API Rate/Quota Limit - Gemini API is limiting your API key requests.\nWait a few minutes, then click again to retry.');
@@ -915,7 +928,7 @@ async function getFinalCachedTranslation(storageKey, bypassKey, { bypass, bypass
           return null;
         }
         if (bypassCached.isError === true) {
-          return createTranslationErrorSubtitle(bypassCached.errorType, bypassCached.errorMessage, lang);
+          return createTranslationErrorSubtitle(bypassCached.errorType, bypassCached.errorMessage, lang, bypassCached.errorProvider);
         }
         return bypassCached.content || bypassCached;
       }
@@ -925,7 +938,7 @@ async function getFinalCachedTranslation(storageKey, bypassKey, { bypass, bypass
       const cached = await readFromStorage(storageKey);
       if (cached) {
         if (cached.isError === true) {
-          return createTranslationErrorSubtitle(cached.errorType, cached.errorMessage, lang);
+          return createTranslationErrorSubtitle(cached.errorType, cached.errorMessage, lang, cached.errorProvider);
         }
         return cached.content || cached;
       }
@@ -3207,7 +3220,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
             // Check if this is a cached error
             if (bypassCached.isError === true) {
               log.debug(() => ['[Translation] Cached error found (bypass) key=', cacheKey, 'â€” showing error and clearing cache']);
-              const errorSrt = createTranslationErrorSubtitle(bypassCached.errorType, bypassCached.errorMessage, config.uiLanguage || 'en');
+              const errorSrt = createTranslationErrorSubtitle(bypassCached.errorType, bypassCached.errorMessage, config.uiLanguage || 'en', bypassCached.errorProvider);
 
               // Delete the error cache so next click retries translation
               const adapter = await getStorageAdapter();
@@ -3234,7 +3247,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
         // Check if this is a cached error
         if (cached.isError === true) {
           log.debug(() => ['[Translation] Cached error found (permanent) key=', cacheKey, ' - showing error and clearing cache']);
-          const errorSrt = createTranslationErrorSubtitle(cached.errorType, cached.errorMessage, config.uiLanguage || 'en');
+          const errorSrt = createTranslationErrorSubtitle(cached.errorType, cached.errorMessage, config.uiLanguage || 'en', cached.errorProvider);
 
           // Delete the error cache so next click retries translation
           const adapter = await getStorageAdapter();
@@ -3964,6 +3977,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
         isError: true,
         errorType: errorType,
         errorMessage: errorMessage,
+        errorProvider: error.serviceName || error.providerName || null,
         timestamp: Date.now(),
         expiresAt: Date.now() + 15 * 60 * 1000 // 15 minutes - auto-expire old errors
       };
