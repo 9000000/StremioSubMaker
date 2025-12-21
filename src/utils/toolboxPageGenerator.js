@@ -8289,7 +8289,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       text-align: center;
       align-self: start;
       height: max-content;
-      background: red !important; /* TEMPORARY DEBUG - remove after testing */
     }
     #autoStep2Card .step-title { justify-content: flex-start; width: 100%; text-align: left; }
     #autoStep2Card .step-body {
@@ -8303,7 +8302,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     #autoStep2Card .row { width: auto; max-width: 640px; margin: 0 auto; justify-items: center; }
     #autoStep2Card .row > div { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
     #autoStep2Card label { text-align: center; }
-    #autoStep2Card .controls.wrap { justify-content: center; }
+    #autoStep2Card .controls.wrap { justify-content: center; background: yellow !important; }
+    #autoStep2Card .mode-details { background: lime !important; }
     #autoStep2Card #assemblyOptions {
       display: flex;
       flex-direction: column;
@@ -8311,6 +8311,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       gap: 6px;
       text-align: center;
       margin-top: 8px;
+      background: cyan !important;
     }
     #autoTranslationCard {
       max-width: 600px;
