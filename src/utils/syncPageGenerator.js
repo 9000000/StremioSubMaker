@@ -624,6 +624,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
     <link rel="shortcut icon" href="/favicon-toolbox.svg">
     <link rel="apple-touch-icon" href="/favicon-toolbox.svg">
     <link rel="stylesheet" href="/css/combobox.css">
+    <script src="/js/csrf.js" defer></script>
     <script>
       (function() {
         var html = document.documentElement;

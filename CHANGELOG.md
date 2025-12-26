@@ -4,25 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## SubMaker v1.4.27
 
-**Cloudflare Auto-subs Improvements:**
-
-- **Parallel transcription:** Audio windows now transcribe in parallel (up to 4 concurrent requests), reducing an 8-window video from ~2+ minutes to ~30 seconds.
-- **Whisper Large V3 Turbo Base64 fix:** The Cloudflare API requires Base64-encoded audio in JSON payloads for the Turbo model (not raw binary or array format like the base model).
-- **Duration estimation fix for TS streams:** Fixed incomplete subtitle coverage where only half the video was transcribed. For TS (transport stream) containers where duration probing fails, the byte-based estimation now uses 0.8 Mbps (down from 2 Mbps), ensuring full coverage for lower-bitrate streams.
-- **Graceful window failures:** Individual failed audio windows are now skipped instead of failing the entire transcription—improves resilience for problematic segments (silence, music, etc.).
-- **Model-aware window sizes:** Base Whisper model uses 30s windows (its max), Turbo model uses 90s by default with UI slider support up to 25 minutes.
-- **VAD filter option:** Added "Enable VAD filter" checkbox for Turbo model to remove silence from audio for cleaner transcription. Turbo is now the default model.
-
-
-**Bug Fixes:**
-
-- **Stream hash mismatch resolution:** Fixed hash mismatch errors when pasting debrid/addon stream URLs (e.g., `/resolve/realdebrid/...`). These URLs redirect to CDN URLs containing the actual filename, but the hash was being computed from the redirect URL path instead. Now, the client follows redirects with a HEAD request to get the final URL before computing the hash, ensuring it matches the linked stream hash.
-- **Anime season pack matching:** Fixed episode matching for filenames like `Berserk - 01[1080 BD X265].ass`—regex now recognizes `[` and `(` as valid episode terminators.
-- **SubSource API key sanitization:** Fixed "Invalid character in header content" errors by sanitizing API keys containing control characters.
-- **Rate limit error handling:** Fixed OpenSubtitles login 429 errors being misclassified as `type: 'unknown'`. The `parseApiError()` utility now preserves original error properties.
-- **Locale fixes:** Repaired corrupted Arabic strings and synced missing keys (ar/es/pt-br/pt-pt) with English.
-
-**Other Improvements:**
+**Improvements:**
 
 - **Localization cleanup:** Removed hardcoded English strings in Sub Toolbox, History, and Sync pages.
 - **Manifest logging:** Added detailed request metadata logging (client IP, forwarded headers) for debugging.
@@ -34,6 +16,28 @@ All notable changes to this project will be documented in this file.
 - **Eliminated duplicate listEmbeddedOriginals call:** The xEmbed section was calling `listEmbeddedOriginals()` a second time despite the data already being cached in `embeddedOriginalsByHash` Map. Now reuses the pre-fetched data.
 - **Eliminated duplicate listEmbeddedTranslations call:** The xEmbed section was calling `listEmbeddedTranslations()` despite translations already being pre-fetched. Now reuses the `embeddedTranslationsByHash` Map.
 
+**Bug Fixes:**
+
+- **Stream hash mismatch resolution:** Fixed hash mismatch errors when pasting debrid/addon stream URLs (e.g., `/resolve/realdebrid/...`). These URLs redirect to CDN URLs containing the actual filename, but the hash was being computed from the redirect URL path instead. Now, the client follows redirects with a HEAD request to get the final URL before computing the hash, ensuring it matches the linked stream hash.
+- **Anime season pack matching:** Fixed episode matching for filenames like `Berserk - 01[1080 BD X265].ass`—regex now recognizes `[` and `(` as valid episode terminators.
+- **SubSource API key sanitization:** Fixed "Invalid character in header content" errors by sanitizing API keys containing control characters.
+- **Rate limit error handling:** Fixed OpenSubtitles login 429 errors being misclassified as `type: 'unknown'`. The `parseApiError()` utility now preserves original error properties.
+- **Locale fixes:** Repaired corrupted Arabic strings and synced missing keys (ar/es/pt-br/pt-pt) with English.
+
+**Security Fixes:**
+
+- **CSRF Protection:** Implemented Cross-Site Request Forgery protection for browser-facing POST endpoints using double-submit cookie pattern. CSRF tokens are now generated for page loads and validated on state-changing requests from browsers. Stremio native clients (no Origin header) are exempted as they're not vulnerable to CSRF attacks.
+- **XSS Defense-in-Depth:** Added additional HTML escaping at the source when building hash mismatch alert messages in `toolboxPageGenerator.js`. While the downstream `buildHashStatusContent()` function already escapes the entire string, this defense-in-depth approach prevents XSS if future refactoring accidentally removes the later escape.
+- **SSRF Protection:** Added Server-Side Request Forgery protection for the auto-subtitles feature. The `streamUrl` parameter is now validated against private/internal IP ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x, localhost, link-local, etc.), cloud metadata endpoints (AWS/GCP/Azure), and blocked hostnames. DNS resolution is performed to detect private IPs even when using hostname-based URLs. This prevents attackers from using the addon to probe internal networks or access cloud instance metadata.
+
+**Auto-subs Improvements:**
+
+- **Parallel transcription:** Audio windows now transcribe in parallel (up to 4 concurrent requests), reducing an 8-window video from ~2+ minutes to ~30 seconds.
+- **Whisper Large V3 Turbo Base64 fix:** The Cloudflare API requires Base64-encoded audio in JSON payloads for the Turbo model (not raw binary or array format like the base model).
+- **Duration estimation fix for TS streams:** Fixed incomplete subtitle coverage where only half the video was transcribed. For TS (transport stream) containers where duration probing fails, the byte-based estimation now uses 0.8 Mbps (down from 2 Mbps), ensuring full coverage for lower-bitrate streams.
+- **Graceful window failures:** Individual failed audio windows are now skipped instead of failing the entire transcription—improves resilience for problematic segments (silence, music, etc.).
+- **Model-aware window sizes:** Base Whisper model uses 30s windows (its max), Turbo model uses 90s by default with UI slider support up to 25 minutes.
+- **VAD filter option:** Added "Enable VAD filter" checkbox for Turbo model to remove silence from audio for cleaner transcription. Turbo is now the default model.
 
 ## SubMaker v1.4.26
 

@@ -53,6 +53,8 @@ const { getSessionManager } = require('./src/utils/sessionManager');
 const { runStartupValidation } = require('./src/utils/startupValidation');
 const { StorageUnavailableError } = require('./src/storage/errors');
 const { loadLocale, getTranslator, DEFAULT_LANG } = require('./src/utils/i18n');
+const cookieParser = require('cookie-parser');
+const { csrfProtection, csrfTokenSetter, generateCsrfClientScript, ensureCsrfToken } = require('./src/utils/csrf');
 
 // Cache-buster path segment for temporary HA cache invalidation
 // Default to current package version so it auto-advances on releases
@@ -382,6 +384,32 @@ function inferAudioFilename(contentType = '', fallback = 'audio') {
     return `${fallback}.${ext || 'bin'}`;
 }
 
+// NOTE: This function is currently unused - all transcription happens client-side via xSync extension
+async function fetchWithRedirects(url, options = {}, maxRedirects = 5) {
+    let currentUrl = String(url || '');
+    let redirects = 0;
+    const baseOptions = { ...(options || {}), redirect: 'manual' };
+
+    while (true) {
+        const response = await fetch(currentUrl, baseOptions);
+        const status = response.status || 0;
+        if ([301, 302, 303, 307, 308].includes(status)) {
+            const location = response.headers.get('location');
+            if (!location) {
+                return response;
+            }
+            if (redirects >= maxRedirects) {
+                throw new Error('Too many redirects');
+            }
+            const nextUrl = new URL(location, currentUrl).toString();
+            redirects += 1;
+            currentUrl = nextUrl;
+            continue;
+        }
+        return response;
+    }
+}
+
 async function extractAudioWithFfmpeg(streamUrl, options = {}, logger = null) {
     const logStep = (message, level = 'info') => {
         try {
@@ -405,6 +433,7 @@ async function downloadStreamAudio(streamUrl, options = {}, logger = null) {
             if (typeof logger === 'function') logger(message, level);
         } catch (_) { /* swallow logger errors */ }
     };
+
     const urlStr = String(streamUrl || '');
     const looksAdaptive = /\.m3u8(\?|$)/i.test(urlStr) || /\.mpd(\?|$)/i.test(urlStr);
     if (!forceFfmpeg && !looksAdaptive) {
@@ -413,10 +442,10 @@ async function downloadStreamAudio(streamUrl, options = {}, logger = null) {
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
         let response;
         try {
-            response = await fetch(streamUrl, {
+            response = await fetchWithRedirects(streamUrl, {
                 headers: { Range: `bytes=0-${maxBytes - 1}` },
                 signal: controller.signal
-            });
+            }, 5);
         } catch (error) {
             clearTimeout(timeout);
             logStep(`HTTP fetch failed: ${error.message || error}`, 'warn');
@@ -774,6 +803,7 @@ async function downloadFullStreamToFile(streamUrl, options = {}, logger = null) 
             if (typeof logger === 'function') logger(message, level);
         } catch (_) { /* ignore logger errors */ }
     };
+
     const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : ASSEMBLY_MAX_UPLOAD_BYTES;
     const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : ASSEMBLY_FETCH_TIMEOUT_MS;
     const tempPath = path.join(os.tmpdir(), `submaker_assembly_${Date.now()}_${Math.random().toString(16).slice(2)}.bin`);
@@ -784,7 +814,7 @@ async function downloadFullStreamToFile(streamUrl, options = {}, logger = null) 
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
         logStep(`Downloading full stream locally (limit ${formatBytes(maxBytes)})`, 'info');
-        response = await fetch(streamUrl, { signal: controller.signal });
+        response = await fetchWithRedirects(streamUrl, { signal: controller.signal }, 5);
         if (!response || !response.ok || !response.body) {
             throw new Error(`Failed to fetch stream (${response ? response.status : 'no response'})`);
         }
@@ -2441,6 +2471,22 @@ app.use((req, res, next) => {
 // Security: Limit JSON payload size (raised to handle embedded subtitle uploads up to ~5MB)
 // NOTE: Embedded extraction uploads the entire SRT from the browser; keep this modest but above 5MB allowance.
 app.use(express.json({ limit: '6mb' }));
+
+// Parse cookies for CSRF token validation
+app.use(cookieParser());
+
+// Set CSRF token on page loads (GET requests for HTML)
+app.use(csrfTokenSetter());
+
+// Protect browser-facing POST endpoints from CSRF attacks
+// Stremio native clients (no Origin header) are exempted since they're not vulnerable
+app.use(csrfProtection({
+    skipRoutes: [
+        // Addon API routes are protected by Origin/CORS checks, not CSRF tokens
+        '/addon'
+    ],
+    skipStremioClients: true
+}));
 
 // Install a request-scoped translator based on UI language hints (query/header)
 app.use((req, res, next) => {
@@ -5202,6 +5248,7 @@ app.get('/api/auto-subtitles/logs', (req, res) => {
 });
 
 // API: Automatic subtitles (Cloudflare Workers AI transcription + optional translation)
+// All transcription happens client-side via xSync extension - server only receives transcripts
 app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
     let logTrail = [];
     const jobId = (req.body?.jobId || '').toString().trim();
@@ -5320,36 +5367,14 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
             transcriptDiagnostics.assemblyId = transcriptPayload.assemblyId || null;
             transcriptDiagnostics.usedFullVideo = transcriptPayload.usedFullVideo === true;
         } else if (engineKey === 'assemblyai') {
-            if (!config.assemblyAiApiKey) {
-                logStep('AssemblyAI API key missing in config', 'error');
-                return respond(400, {
-                    error: t('server.errors.apiKeyRequired', {}, 'API key is required'),
-                    logTrail
-                });
-            }
-            try {
-                logStep(`Running AssemblyAI transcription (sendFullVideo=${sendFullVideo === true})`, 'info');
-                const assemblyResult = await transcribeWithAssemblyAi(streamUrl, {
-                    apiKey: config.assemblyAiApiKey,
-                    sourceLanguage,
-                    diarization,
-                    sendFullVideo: sendFullVideo === true,
-                    filename,
-                    videoId
-                }, (message, level) => logStep(message, level));
-                transcription = assemblyResult?.transcription || null;
-                transcriptDiagnostics.audioBytes = assemblyResult?.meta?.uploadedBytes || null;
-                transcriptDiagnostics.audioSource = assemblyResult?.meta?.uploadSource || 'assemblyai';
-                transcriptDiagnostics.contentType = assemblyResult?.meta?.contentType || '';
-                transcriptDiagnostics.assemblyId = assemblyResult?.meta?.assemblyId || '';
-                transcriptDiagnostics.usedFullVideo = assemblyResult?.meta?.usedFullVideo === true;
-            } catch (error) {
-                logStep(`AssemblyAI transcription failed: ${error.message || error}`, 'error');
-                return res.status(500).json({
-                    error: t('server.errors.transcriptionFailed', {}, `Automatic subtitles failed: ${error.message}`),
-                    logTrail
-                });
-            }
+            // AssemblyAI without client-provided transcript is not supported
+            // All transcription must happen client-side via the xSync extension
+            logStep('AssemblyAI engine requires client-provided transcript (xSync extension)', 'error');
+            return respond(400, {
+                error: t('server.errors.autoSubsClientRequired', {}, 'AssemblyAI transcription requires the xSync extension to provide the transcript.'),
+                hint: 'The xSync extension handles audio extraction and AssemblyAI API calls client-side.',
+                logTrail
+            });
         } else {
             // Client-supplied transcription (xSync extension, Cloudflare Workers AI)
             if (!transcriptSrt) {

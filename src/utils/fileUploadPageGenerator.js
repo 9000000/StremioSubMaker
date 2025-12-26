@@ -147,7 +147,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
     let languageDisplayNames = null;
     try {
         languageDisplayNames = new Intl.DisplayNames([uiLang], { type: 'language' });
-    } catch (_) {}
+    } catch (_) { }
     const lookupLanguageName = (code) => {
         if (!code) return '';
         const normalized = String(code).trim().toLowerCase();
@@ -169,7 +169,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         const localizedValue = (localized || '').toString().trim();
         const isCodeEcho = localizedValue &&
             (localizedValue.toLowerCase() === normalizedCode ||
-             localizedValue.toLowerCase() === normalizedCode.replace('-', '_'));
+                localizedValue.toLowerCase() === normalizedCode.replace('-', '_'));
 
         if (localized && !isCodeEcho) return localized;
         if (fallbackName) return fallbackName;
@@ -273,6 +273,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
     <link rel="shortcut icon" href="/favicon-toolbox.svg">
     <link rel="apple-touch-icon" href="/favicon-toolbox.svg">
     <script src="/js/sw-register.js" defer></script>
+    <script src="/js/csrf.js" defer></script>
     <link rel="stylesheet" href="/css/combobox.css">
     <script>
       (function() {
