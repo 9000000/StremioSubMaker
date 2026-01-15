@@ -4,6 +4,11 @@ require('dotenv').config();
 // Load logger utility first to intercept all console methods with timestamps
 const log = require('./src/utils/logger');
 
+// Initialize Sentry for error tracking (must be early to catch all errors)
+// Set SENTRY_DSN in environment to enable
+const sentry = require('./src/utils/sentry');
+sentry.init();
+
 const express = require('express');
 const compression = require('compression');
 const cors = require('cors');

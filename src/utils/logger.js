@@ -120,7 +120,7 @@ function closeStream() {
             logStream.end();
             logStream = null;
         }
-    } catch (_) {}
+    } catch (_) { }
 }
 
 /**
@@ -181,7 +181,7 @@ function rotateLogs() {
                 const dst = path.join(LOG_DIR, `${LOG_BASENAME}.${i + 1}`);
                 try {
                     if (fs.existsSync(src)) {
-                        try { fs.unlinkSync(dst); } catch (_) {}
+                        try { fs.unlinkSync(dst); } catch (_) { }
                         fs.renameSync(src, dst);
                     }
                 } catch (_) { /* continue */ }
@@ -189,15 +189,15 @@ function rotateLogs() {
             // app.log -> app.log.1
             const mainPath = currentLogPath();
             const rotatedPath = path.join(LOG_DIR, `${LOG_BASENAME}.1`);
-            try { fs.unlinkSync(rotatedPath); } catch (_) {}
+            try { fs.unlinkSync(rotatedPath); } catch (_) { }
             try {
                 if (fs.existsSync(mainPath)) fs.renameSync(mainPath, rotatedPath);
-            } catch (_) {}
+            } catch (_) { }
         } finally {
             openStream();
             currentLogSize = 0;
             rotating = false;
-            try { purgeOldLogs(); } catch (_) {}
+            try { purgeOldLogs(); } catch (_) { }
         }
     });
 }
@@ -242,7 +242,7 @@ function purgeOldLogs() {
             try {
                 fs.unlinkSync(file.path);
                 total -= file.size;
-            } catch (_) {}
+            } catch (_) { }
         }
     } catch (_) {
         // ignore purge errors
@@ -283,7 +283,7 @@ function serializeError(error, maxStackLines = 5) {
             result.stack = error.stack;
         } else {
             result.stack = lines.slice(0, maxStackLines).join('\n') +
-                          `\n... (${lines.length - maxStackLines} more lines omitted)`;
+                `\n... (${lines.length - maxStackLines} more lines omitted)`;
         }
     }
 
@@ -380,7 +380,7 @@ function createSafeReplacer(maxDepth = 3, maxStringLength = 500) {
     const seen = new WeakSet();
     let depth = 0;
 
-    return function(key, value) {
+    return function (key, value) {
         // Redact sensitive keys (API keys, tokens, passwords, etc.)
         const sensitiveKeys = [
             'api_key', 'apiKey', 'apikey', 'API_KEY',
@@ -440,7 +440,7 @@ function createSafeReplacer(maxDepth = 3, maxStringLength = 500) {
             // Truncate long strings (like response bodies, large buffers)
             if (value.length > maxStringLength) {
                 const truncated = value.substring(0, maxStringLength) +
-                       `... (${value.length - maxStringLength} more characters)`;
+                    `... (${value.length - maxStringLength} more characters)`;
                 return redactString(truncated);
             }
             return redactString(value);
@@ -518,15 +518,15 @@ const shutdownLogger = () => {
             flushBuffer(); // Flush any pending writes
             closeStream();
         }
-    } catch (_) {}
+    } catch (_) { }
 };
 
 // Periodic purge (every 1 hour)
 if (LOG_TO_FILE) {
     ensureLogDir();
     openStream();
-    try { purgeOldLogs(); } catch (_) {}
-    setInterval(() => { try { purgeOldLogs(); } catch (_) {} }, 1000 * 60 * 60);
+    try { purgeOldLogs(); } catch (_) { }
+    setInterval(() => { try { purgeOldLogs(); } catch (_) { } }, 1000 * 60 * 60);
 
     // Close stream on normal process exit
     // NOTE: SIGINT/SIGTERM are handled by sessionManager for coordinated shutdown
@@ -550,8 +550,8 @@ function debug(messageFn) {
 
     const message = typeof messageFn === 'function' ? messageFn() : messageFn;
     const args = Array.isArray(message) ? message : [message];
-    originalLog(`[${getTimestamp()}]`, ...args);
-    writeFileLog('INFO', args);
+    originalLog(`[${getTimestamp()}] [DEBUG]`, ...args);
+    writeFileLog('DEBUG', args);
 }
 
 /**
@@ -565,7 +565,7 @@ function info(messageFn) {
 
     const message = typeof messageFn === 'function' ? messageFn() : messageFn;
     const args = Array.isArray(message) ? message : [message];
-    originalLog(`[${getTimestamp()}]`, ...args);
+    originalLog(`[${getTimestamp()}] [INFO]`, ...args);
     writeFileLog('INFO', args);
 }
 
@@ -580,7 +580,7 @@ function warn(messageFn) {
 
     const message = typeof messageFn === 'function' ? messageFn() : messageFn;
     const args = Array.isArray(message) ? message : [message];
-    originalWarn(`[${getTimestamp()}]`, ...args);
+    originalWarn(`[${getTimestamp()}] [WARN]`, ...args);
     writeFileLog('WARN', args);
 }
 
@@ -595,7 +595,7 @@ function error(messageFn) {
 
     const message = typeof messageFn === 'function' ? messageFn() : messageFn;
     const args = Array.isArray(message) ? message : [message];
-    originalError(`[${getTimestamp()}]`, ...args);
+    originalError(`[${getTimestamp()}] [ERROR]`, ...args);
     writeFileLog('ERROR', args);
 }
 
@@ -605,23 +605,23 @@ function error(messageFn) {
  * New code should use the lazy log.debug/info/warn/error functions above
  */
 
-console.log = function(...args) {
+console.log = function (...args) {
     if (currentLevel <= LEVELS.debug && shouldSample('debug')) {
-        originalLog(`[${getTimestamp()}]`, ...args);
+        originalLog(`[${getTimestamp()}] [INFO]`, ...args);
         writeFileLog('INFO', args);
     }
 };
 
-console.error = function(...args) {
+console.error = function (...args) {
     if (currentLevel <= LEVELS.error && shouldSample('error')) {
-        originalError(`[${getTimestamp()}]`, ...args);
+        originalError(`[${getTimestamp()}] [ERROR]`, ...args);
         writeFileLog('ERROR', args);
     }
 };
 
-console.warn = function(...args) {
+console.warn = function (...args) {
     if (currentLevel <= LEVELS.warn && shouldSample('warn')) {
-        originalWarn(`[${getTimestamp()}]`, ...args);
+        originalWarn(`[${getTimestamp()}] [WARN]`, ...args);
         writeFileLog('WARN', args);
     }
 };
@@ -630,12 +630,55 @@ console.warn = function(...args) {
  * Special method for startup banner - always visible regardless of log level
  * This bypasses the log level filtering to ensure critical startup info is always shown
  */
-console.startup = function(...args) {
+console.startup = function (...args) {
     // Always show startup messages using originalLog (bypasses filtering)
     originalLog(...args);
     // Also write to file log
     writeFileLog('STARTUP', args);
 };
+
+// Lazy-load Sentry integration to avoid circular dependencies
+let sentryModule = null;
+function getSentry() {
+    if (!sentryModule) {
+        try {
+            sentryModule = require('./sentry');
+        } catch (e) {
+            sentryModule = { captureErrorForced: () => null, captureError: () => null };
+        }
+    }
+    return sentryModule;
+}
+
+/**
+ * Critical error log - ALWAYS shown and ALWAYS sent to Sentry
+ * Use for errors that indicate bugs in our code, not operational issues
+ * 
+ * @param {Function|string} messageFn - Function that returns the message, or a plain string
+ * @param {Error} [errorObj] - Optional Error object to send to Sentry
+ * @param {Object} [extras] - Optional extra context for Sentry
+ * Usage: log.critical(() => `[Module] CRITICAL: ${error.stack}`, error, { userId: '123' })
+ */
+function critical(messageFn, errorObj = null, extras = {}) {
+    // Critical always logs, regardless of log level
+    const message = typeof messageFn === 'function' ? messageFn() : messageFn;
+    const args = Array.isArray(message) ? message : [message];
+
+    // Always log to console and file
+    originalError(`[${getTimestamp()}] [CRITICAL]`, ...args);
+    writeFileLog('CRITICAL', args);
+
+    // Always send to Sentry
+    const sentry = getSentry();
+    if (sentry && sentry.captureErrorForced) {
+        const errorToSend = errorObj || new Error(args.join(' '));
+        sentry.captureErrorForced(errorToSend, {
+            module: extras.module || 'unknown',
+            message: args.join(' '),
+            ...extras
+        });
+    }
+}
 
 // Export the high-performance lazy logging functions
 module.exports = {
@@ -643,8 +686,11 @@ module.exports = {
     info,
     warn,
     error,
+    critical,
     shutdownLogger,
     redactSensitiveData,
+    // Sentry helpers
+    getSentry,
     // Legacy export for backward compatibility
-    log: { debug, info, warn, error }
+    log: { debug, info, warn, error, critical }
 };

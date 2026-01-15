@@ -708,7 +708,7 @@ class TranslationEngine {
           log.info(() => `[TranslationEngine] MAX_TOKENS retry succeeded for batch ${batchIndex + 1}`);
         } catch (retryError) {
           // Retry also failed, give up and throw the original error
-          log.error(() => `[TranslationEngine] MAX_TOKENS retry also failed for batch ${batchIndex + 1}: ${retryError.message}`);
+          log.warn(() => `[TranslationEngine] MAX_TOKENS retry also failed for batch ${batchIndex + 1}: ${retryError.message}`);
           const fallbackResult = await tryFallback(error);
           if (fallbackResult.handled) {
             translatedText = fallbackResult.text;
@@ -735,7 +735,7 @@ class TranslationEngine {
           log.info(() => `[TranslationEngine] Retry with modified prompt succeeded for batch ${batchIndex + 1}`);
         } catch (retryError) {
           // Retry also failed, give up and throw the original error
-          log.error(() => `[TranslationEngine] Retry with modified prompt also failed: ${retryError.message}`);
+          log.warn(() => `[TranslationEngine] Retry with modified prompt also failed: ${retryError.message}`);
           const fallbackResult = await tryFallback(error);
           if (fallbackResult.handled) {
             translatedText = fallbackResult.text;

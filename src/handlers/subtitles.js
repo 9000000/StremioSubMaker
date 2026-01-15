@@ -2287,7 +2287,7 @@ function createSubtitleHandler(config) {
         let subtitles = [];
         for (const result of providerResults) {
           if (result.error) {
-            log.error(() => [`[Subtitles] ${result.provider} search failed:`, result.error.message]);
+            log.warn(() => [`[Subtitles] ${result.provider} search failed:`, result.error.message]);
           } else {
             log.debug(() => `[Subtitles] Found ${result.results.length} subtitles from ${result.provider}`);
             subtitles = [...subtitles, ...result.results];

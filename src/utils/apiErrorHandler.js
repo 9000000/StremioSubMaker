@@ -172,12 +172,12 @@ function logApiError(error, serviceName, operation, options = {}) {
   // Only log once per error to avoid spam
   const logPrefix = `[${serviceName}]`;
 
-  // Log concise error message
-  log.error(() => `${logPrefix} ${operation} error: ${parsed.message}`);
+  // Log concise error message (as warn - these are expected operational issues, not code errors)
+  log.warn(() => `${logPrefix} ${operation} error: ${parsed.message}`);
 
   // Log status code only if not already mentioned in the error message
   if (parsed.statusCode && !parsed.message.includes(String(parsed.statusCode))) {
-    log.error(() => `${logPrefix} Response status: ${parsed.statusCode}`);
+    log.warn(() => `${logPrefix} Response status: ${parsed.statusCode}`);
   }
 
   // Log response data only for specific error types (not for rate limits/503s)
@@ -196,7 +196,7 @@ function logApiError(error, serviceName, operation, options = {}) {
         if (typeof data === 'string') {
           const truncated = data.length > truncateLimit ? data.substring(0, truncateLimit) + '...' : data;
           const suffix = data.length > truncateLimit ? ' (truncated)' : '';
-          log.error(() => [`${logPrefix} Response data${suffix}:`, truncated]);
+          log.warn(() => [`${logPrefix} Response data${suffix}:`, truncated]);
         } else if (typeof data === 'object' && data !== null) {
           // Log only essential fields for objects
           const essentialData = {
@@ -208,16 +208,16 @@ function logApiError(error, serviceName, operation, options = {}) {
           const serialized = JSON.stringify(essentialData);
           const truncated = serialized.length > truncateLimit ? serialized.substring(0, truncateLimit) + '...' : serialized;
           const suffix = serialized.length > truncateLimit ? ' (truncated)' : '';
-          log.error(() => [`${logPrefix} Response data${suffix}:`, truncated]);
+          log.warn(() => [`${logPrefix} Response data${suffix}:`, truncated]);
         } else {
           const stringified = String(data);
           const truncated = stringified.length > truncateLimit ? stringified.substring(0, truncateLimit) + '...' : stringified;
           const suffix = stringified.length > truncateLimit ? ' (truncated)' : '';
-          log.error(() => [`${logPrefix} Response data${suffix}:`, truncated]);
+          log.warn(() => [`${logPrefix} Response data${suffix}:`, truncated]);
         }
       } catch (logError) {
         // If logging the response data fails, log a safe error message
-        log.error(() => [`${logPrefix} Unable to parse response data:`, logError.message]);
+        log.warn(() => [`${logPrefix} Unable to parse response data:`, logError.message]);
       }
     }
   }

@@ -246,7 +246,7 @@ class OpenSubtitlesService {
       defaultHeaders['Api-Key'] = apiKey;
       // Only log once at startup
       if (!OpenSubtitlesService.initLogged) {
-        log.warn(() => '[OpenSubtitles] API key loaded successfully from environment');
+        log.debug(() => '[OpenSubtitles] API key loaded successfully from environment');
       }
     }
 
@@ -286,7 +286,7 @@ class OpenSubtitlesService {
       if (!this.config.username || !this.config.password) {
         log.warn(() => '[OpenSubtitles] Username and password are optional - searches will use basic API access (limited to 5 downloads/24h per IP)');
       } else {
-        log.warn(() => '[OpenSubtitles] Initialized with user account authentication for higher rate limits');
+        log.debug(() => '[OpenSubtitles] Initialized with user account authentication for higher rate limits');
       }
 
       // Mark as logged
@@ -468,7 +468,7 @@ class OpenSubtitlesService {
     try {
       // Authenticate with user credentials (required)
       if (!this.config.username || !this.config.password) {
-        log.error(() => '[OpenSubtitles] Username and password are required. Please configure your OpenSubtitles credentials.');
+        log.warn(() => '[OpenSubtitles] Username and password are required. Please configure your OpenSubtitles credentials.');
         return [];
       }
 
@@ -707,7 +707,7 @@ class OpenSubtitlesService {
 
       // Authenticate with user credentials (required)
       if (!this.config.username || !this.config.password) {
-        log.error(() => '[OpenSubtitles] Username and password are required. Please configure your OpenSubtitles credentials.');
+        log.warn(() => '[OpenSubtitles] Username and password are required. Please configure your OpenSubtitles credentials.');
         throw new Error('OpenSubtitles credentials not configured');
       }
 
@@ -763,7 +763,7 @@ class OpenSubtitlesService {
         try {
           zip = await JSZip.loadAsync(buf, { base64: false });
         } catch (zipErr) {
-          log.error(() => ['[OpenSubtitles] Failed to parse ZIP file:', zipErr.message]);
+          log.warn(() => ['[OpenSubtitles] Failed to parse ZIP file:', zipErr.message]);
           // Return informative subtitle instead of throwing
           const message = `1
 00:00:00,000 --> 04:00:00,000
@@ -967,7 +967,7 @@ Try selecting a different subtitle.`;
                   return converted;
                 }
               } catch (subErr) {
-                log.error(() => ['[OpenSubtitles] Failed to convert MicroDVD .sub to .vtt:', subErr.message]);
+                log.warn(() => ['[OpenSubtitles] Failed to convert MicroDVD .sub to .vtt:', subErr.message]);
               }
             } else {
               log.warn(() => `[OpenSubtitles] Detected VobSub .sub format (binary/image-based): ${altEntry} - not supported, skipping`);

@@ -392,7 +392,7 @@ class GeminiService {
 
         // Validate response
         if (!response.data) {
-          log.error(() => '[Gemini] No data in response');
+          log.warn(() => '[Gemini] No data in response');
           throw new Error('No data returned from Gemini API');
         }
 
@@ -415,7 +415,7 @@ class GeminiService {
             }
           })();
 
-          log.error(() => ['[Gemini] No candidates in response (truncated):', truncatedResponse]);
+          log.warn(() => ['[Gemini] No candidates in response (truncated):', truncatedResponse]);
 
           // If Gemini flagged safety, classify explicitly so upstream shows proper error subtitles
           if (blockReason || safetyRatings) {
@@ -436,7 +436,7 @@ class GeminiService {
 
         // Check for finish reason issues
         if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-          log.error(() => ['[Gemini] Unusual finish reason:', candidate.finishReason]);
+          log.warn(() => ['[Gemini] Unusual finish reason:', candidate.finishReason]);
 
           if (candidate.finishReason === 'SAFETY') {
             throw new Error('Translation blocked by safety filters');
@@ -458,12 +458,12 @@ class GeminiService {
 
         // Check for content
         if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
-          log.error(() => ['[Gemini] No content in candidate:', JSON.stringify(candidate, null, 2)]);
+          log.warn(() => ['[Gemini] No content in candidate:', JSON.stringify(candidate, null, 2)]);
           throw new Error('No content in response candidate');
         }
 
         if (!candidate.content.parts[0].text && aggregatedText.length === 0) {
-          log.error(() => ['[Gemini] No text in content parts:', JSON.stringify(candidate.content.parts, null, 2)]);
+          log.warn(() => ['[Gemini] No text in content parts:', JSON.stringify(candidate.content.parts, null, 2)]);
           throw new Error('No text in response content');
         }
 

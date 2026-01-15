@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.28
+
+**Logging & Monitoring:**
+
+- **Log level indicator in console output:** Console logs now include level tags (`[DEBUG]`, `[INFO]`, `[WARN]`, `[ERROR]`, `[CRITICAL]`) for easier filtering and debugging.
+- **Sentry error tracking integration:** Added optional Sentry integration for production error monitoring. Set `SENTRY_DSN` environment variable to enable. Only actual code errors are sent to Sentry - operational issues (rate limits, auth failures, network errors) are filtered out.
+- **New `log.critical()` function:** For errors that must always be logged and reported to Sentry regardless of log level. Used for bugs that indicate code issues, exluding operational problems.
+- **Changed API errors from `error` to `warn` level:** Rate limits (429), authentication failures, service unavailability (502/503), and other expected operational issues are now logged as warnings, not errors. This reduces noise in error logs and Sentry.
+- **Changed OpenSubtitles init messages to `debug` level:** "API key loaded successfully" and "Initialized with user account authentication" messages now only appear when `LOG_LEVEL=debug`.
+- **Unhandled promise rejection handler:** Added global handler to capture and report async errors that aren't caught with try/catch.
+
+**Environment Variables:**
+
+- `SENTRY_DSN` - Your Sentry project DSN (required to enable Sentry)
+- `SENTRY_ENVIRONMENT` - Environment name for Sentry (default: 'production')
+- `SENTRY_SAMPLE_RATE` - Error sample rate 0-1 (default: 1.0 = 100%)
+- `SENTRY_ENABLED` - Set to 'false' to disable Sentry even with DSN set
+
 ## SubMaker v1.4.27
 
 **Improvements:**
