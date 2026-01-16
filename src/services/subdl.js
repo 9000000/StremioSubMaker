@@ -6,6 +6,7 @@ const { detectAndConvertEncoding } = require('../utils/encodingDetector');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const { redactSensitiveData } = require('../utils/logger');
 const log = require('../utils/logger');
+const { detectArchiveType, extractSubtitleFromArchive, isArchive } = require('../utils/archiveExtractor');
 
 
 const SUBDL_API_URL = 'https://api.subdl.com/api/v1';
@@ -455,364 +456,32 @@ class SubDLService {
         throw new Error('Downloaded file is empty');
       }
 
-      // Check if response looks like an error page (HTML) instead of ZIP
+      // Check if response looks like an error page (HTML) instead of archive
       const dataString = subtitleResponse.data.toString('utf8', 0, Math.min(100, subtitleResponse.data.length));
       if (dataString.includes('<!DOCTYPE') || dataString.includes('<html') || dataString.includes('404') || dataString.includes('error')) {
-        log.error(() => '[SubDL] Response appears to be an error page, not a ZIP file');
+        log.error(() => '[SubDL] Response appears to be an error page, not an archive file');
         log.error(() => ['[SubDL] Response preview:', dataString.substring(0, 200)]);
         throw new Error('Server returned an error page instead of a subtitle file. The subtitle may have been removed from SubDL.');
       }
 
-      // Check for ZIP file signature (PK bytes at start)
-      if (subtitleResponse.data[0] !== 0x50 || subtitleResponse.data[1] !== 0x4B) {
-        log.error(() => '[SubDL] Invalid ZIP file signature detected');
+      // Check for valid archive signature (ZIP or RAR)
+      const archiveType = detectArchiveType(subtitleResponse.data);
+      if (!archiveType) {
+        log.error(() => '[SubDL] Invalid archive signature detected (not ZIP or RAR)');
         log.error(() => ['[SubDL] First 20 bytes:', Array.from(subtitleResponse.data.slice(0, 20)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' ')]);
-        throw new Error('Downloaded file is not a valid ZIP file. Server may have returned an error or the file may be corrupted.');
+        throw new Error('Downloaded file is not a valid archive. Server may have returned an error or the file may be corrupted.');
       }
 
-      // Guard against huge ZIPs before attempting to parse
-      const zipSize = subtitleResponse.data.length;
-      if (zipSize > MAX_ZIP_BYTES) {
-        log.warn(() => `[SubDL] ZIP too large (${zipSize} bytes > ${MAX_ZIP_BYTES}); returning info subtitle instead of parsing`);
-        return createZipTooLargeSubtitle(MAX_ZIP_BYTES, zipSize);
-      }
+      log.debug(() => `[SubDL] Detected ${archiveType.toUpperCase()} archive`);
 
-      // Extract subtitle from ZIP (support multiple formats)
-      const JSZip = require('jszip');
-      let zip;
-      try {
-        zip = await JSZip.loadAsync(subtitleResponse.data);
-      } catch (zipErr) {
-        log.error(() => ['[SubDL] Failed to parse ZIP file:', zipErr.message]);
-        // Return informative subtitle instead of throwing
-        const message = `1
-00:00:00,000 --> 04:00:00,000
-SubDL download failed: Corrupted ZIP file
-The subtitle file appears to be damaged or incomplete.
-Try selecting a different subtitle.`;
-        return appendHiddenInformationalNote(message);
-      }
-
-      const entries = Object.keys(zip.files);
-
-      // Helper function to find episode file in season pack (regular TV shows)
-      const findEpisodeFile = (files, season, episode) => {
-        const seasonEpisodePatterns = [
-          new RegExp(`s0*${season}e0*${episode}(?![0-9])`, 'i'),        // S02E01, s02e01
-          new RegExp(`${season}x0*${episode}(?![0-9])`, 'i'),           // 2x01
-          new RegExp(`s0*${season}[\\s._-]*x[\\s._-]*e?0*${episode}(?![0-9])`, 'i'), // S02xE01, S02x1
-          new RegExp(`0*${season}[\\s._-]*x[\\s._-]*e?0*${episode}(?![0-9])`, 'i'),  // 02xE01, 2xE01
-          new RegExp(`s0*${season}\\.e0*${episode}(?![0-9])`, 'i'),     // S02.E01
-          new RegExp(`season[\\s._-]*0*${season}[\\s._-]*episode[\\s._-]*0*${episode}(?![0-9])`, 'i')  // Season 2 Episode 1
-        ];
-
-        // Find file that matches the episode pattern
-        for (const filename of files) {
-          const lowerName = filename.toLowerCase();
-          // Skip directories
-          if (zip.files[filename].dir) continue;
-
-          // Check if file matches episode patterns
-          if (seasonEpisodePatterns.some(pattern => pattern.test(lowerName))) {
-            return filename;
-          }
-        }
-
-        return null;
-      };
-
-      // Helper function to find episode file in anime season pack (episode number only)
-      const findEpisodeFileAnime = (files, episode) => {
-        // Anime-friendly episode-only patterns (no season required)
-        const animeEpisodePatterns = [
-          // E01 / EP01 / Episode 01 / Ep 01
-          new RegExp(`(?<=\\b|\\s|\\[|\\(|-|_)e(?:p(?:isode)?)?[\\s._-]*0*${episode}(?:v\\d+)?(?=\\b|\\s|\\]|\\)|\\.|-|_|$)`, 'i'),
-          // [01] / (01) / - 01 / _01 / .01. / - 01[1080p] (with boundaries)
-          new RegExp(`(?:^|[\\s\\[\\(\\-_.])0*${episode}(?:v\\d+)?(?=$|[\\s\\[\\]\\(\\)\\-_.])`, 'i'),
-          // 01en / 01eng (language suffix immediately after episode number before extension)
-          new RegExp(`(?:^|[\\s\\[\\(\\-_])0*${episode}(?:v\\d+)?[a-z]{2,3}(?=\\.|[\\s\\[\\]\\(\\)\\-_.]|$)`, 'i'),
-          // Episode 01 / Episodio 01 / Capitulo 01
-          new RegExp(`(?:episode|episodio|ep|cap(?:itulo)?)\\s*0*${episode}(?![0-9])`, 'i'),
-          // Japanese/Chinese/Korean: 第01話 / 01話 / 01集 / 1화
-          new RegExp(`第?\\s*0*${episode}\\s*(?:話|集|화)`, 'i'),
-          // Must NOT match resolution/year patterns
-          new RegExp(`^(?!.*(?:720|1080|480|2160)p).*[\\[\\(\\-_\\s]0*${episode}[\\]\\)\\-_\\s\\.]`, 'i')
-        ];
-
-        // Find file that matches the episode pattern
-        for (const filename of files) {
-          const lowerName = filename.toLowerCase();
-          // Skip directories
-          if (zip.files[filename].dir) continue;
-
-          // Skip if it looks like a resolution or year (e.g., 1080p, 2023)
-          if (/(?:720|1080|480|2160)p|(?:19|20)\d{2}/.test(lowerName)) {
-            // Only skip if the episode number appears in these contexts
-            const episodeStr = String(episode).padStart(2, '0');
-            if (lowerName.includes(`${episodeStr}p`) || lowerName.includes(`20${episodeStr}`)) {
-              continue;
-            }
-          }
-
-          // Check if file matches episode patterns
-          if (animeEpisodePatterns.some(pattern => pattern.test(lowerName))) {
-            return filename;
-          }
-        }
-
-        return null;
-      };
-
-      let targetEntry = null;
-
-      // If this is a season pack, find the specific episode file
-      if (isSeasonPack && seasonPackSeason && seasonPackEpisode) {
-        log.debug(() => `[SubDL] Searching for S${String(seasonPackSeason).padStart(2, '0')}E${String(seasonPackEpisode).padStart(2, '0')} in season pack ZIP`);
-        log.debug(() => `[SubDL] Available files in ZIP: ${entries.join(', ')}`);
-
-        // Prefer SRT when both SRT and ASS/SSA exist
-        const srtFiles = entries.filter(filename => filename.toLowerCase().endsWith('.srt') && !zip.files[filename].dir);
-
-        // Try anime-specific patterns first (episode-only, no season)
-        // This works for anime where files are just "01.srt", "ep01.srt", etc.
-        targetEntry = findEpisodeFileAnime(srtFiles, seasonPackEpisode);
-
-        if (targetEntry) {
-          log.debug(() => `[SubDL] Found SRT episode file using anime patterns: ${targetEntry}`);
-        } else {
-          // Fallback to regular TV show patterns (season+episode) within SRT files
-          targetEntry = findEpisodeFile(srtFiles, seasonPackSeason, seasonPackEpisode);
-
-          if (targetEntry) {
-            log.debug(() => `[SubDL] Found SRT episode file using TV show patterns: ${targetEntry}`);
-          } else {
-            // If no matching SRT, try any format (anime patterns first, then TV patterns)
-            let anyMatch = findEpisodeFileAnime(entries, seasonPackEpisode);
-            if (anyMatch) {
-              log.debug(() => `[SubDL] Found episode file using anime patterns: ${anyMatch}`);
-              targetEntry = anyMatch;
-            } else {
-              anyMatch = findEpisodeFile(entries, seasonPackSeason, seasonPackEpisode);
-              if (anyMatch) {
-                log.debug(() => `[SubDL] Found episode file using TV show patterns: ${anyMatch}`);
-                targetEntry = anyMatch;
-              } else {
-                log.warn(() => `[SubDL] Could not find episode ${seasonPackEpisode} (S${String(seasonPackSeason).padStart(2, '0')}E${String(seasonPackEpisode).padStart(2, '0')}) in season pack ZIP`);
-                log.warn(() => `[SubDL] Available files: ${entries.join(', ')}`);
-                // Return informative subtitle instead of throwing error
-                return createEpisodeNotFoundSubtitle(seasonPackEpisode, seasonPackSeason, entries);
-              }
-            }
-          }
-        }
-      } else {
-        // Not a season pack - use the first .srt file
-        targetEntry = entries.find(filename => filename.toLowerCase().endsWith('.srt'));
-      }
-
-      // Extract and return the target .srt file if found
-      if (targetEntry && targetEntry.toLowerCase().endsWith('.srt')) {
-        // Read as buffer to detect encoding properly
-        const buffer = await zip.files[targetEntry].async('nodebuffer');
-        const subtitleContent = detectAndConvertEncoding(buffer, 'SubDL');
-        log.debug(() => `[SubDL] Subtitle downloaded and extracted successfully (.srt): ${targetEntry}`);
-        return subtitleContent;
-      }
-
-      // Fallback: support .vtt/.ass/.ssa/.sub
-      let altEntry = null;
-
-      if (isSeasonPack && seasonPackSeason && seasonPackEpisode) {
-        // For season packs, search for episode file with alternate formats
-        const altFormatFiles = entries.filter(filename => {
-          const f = filename.toLowerCase();
-          return (f.endsWith('.vtt') || f.endsWith('.ass') || f.endsWith('.ssa') || f.endsWith('.sub')) && !zip.files[filename].dir;
-        });
-
-        // Try anime-specific patterns first, then regular TV show patterns
-        altEntry = findEpisodeFileAnime(altFormatFiles, seasonPackEpisode);
-
-        if (!altEntry) {
-          altEntry = findEpisodeFile(altFormatFiles, seasonPackSeason, seasonPackEpisode);
-        }
-
-        if (altEntry) {
-          log.debug(() => `[SubDL] Found episode file with alternate format in season pack: ${altEntry}`);
-        }
-      } else {
-        // Not a season pack - use the first alternate format file
-        altEntry = entries.find(filename => {
-          const f = filename.toLowerCase();
-          return f.endsWith('.vtt') || f.endsWith('.ass') || f.endsWith('.ssa') || f.endsWith('.sub');
-        });
-      }
-
-      if (altEntry) {
-        // Read with BOM awareness (handles UTF-16 ASS/SSA)
-        const uint8 = await zip.files[altEntry].async('uint8array');
-        const buf = Buffer.from(uint8);
-        let raw;
-        if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) {
-          raw = buf.slice(2).toString('utf16le');
-          log.debug(() => `[SubDL] Detected UTF-16LE BOM in ${altEntry}; decoded as UTF-16LE`);
-        } else if (buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF) {
-          const swapped = Buffer.allocUnsafe(Math.max(0, buf.length - 2));
-          for (let i = 2, j = 0; i + 1 < buf.length; i += 2, j += 2) { swapped[j] = buf[i + 1]; swapped[j + 1] = buf[i]; }
-          raw = swapped.toString('utf16le');
-          log.debug(() => `[SubDL] Detected UTF-16BE BOM in ${altEntry}; decoded as UTF-16BE->LE`);
-        } else {
-          raw = buf.toString('utf8');
-        }
-        // Strip UTF-8 BOM if present (helps Arabic/RTL and some ZIP packs)
-        if (raw && typeof raw === 'string') raw = raw.replace(/^\uFEFF/, '');
-
-        const lower = altEntry.toLowerCase();
-        if (lower.endsWith('.vtt')) {
-          log.debug(() => `[SubDL] Keeping original VTT: ${altEntry}`);
-          return raw;
-        }
-
-        // Handle MicroDVD .sub files (text-based, frame-based timing)
-        if (lower.endsWith('.sub')) {
-          // Check if it's MicroDVD format (text-based with {frame}{frame}text pattern)
-          const isMicroDVD = /^\s*\{\d+\}\{\d+\}/.test(raw);
-
-          if (isMicroDVD) {
-            log.debug(() => `[SubDL] Detected MicroDVD .sub format: ${altEntry}`);
-            try {
-              const subsrt = require('subsrt-ts');
-              // MicroDVD uses frame-based timing, need FPS for conversion
-              // Default to 25 FPS (PAL standard) - most common for European content
-              const fps = 25;
-              const converted = subsrt.convert(raw, { to: 'vtt', from: 'sub', fps: fps });
-
-              if (converted && typeof converted === 'string' && converted.trim().length > 0) {
-                log.debug(() => `[SubDL] Converted MicroDVD .sub to .vtt successfully (fps=${fps})`);
-                return converted;
-              }
-            } catch (subErr) {
-              log.error(() => ['[SubDL] Failed to convert MicroDVD .sub to .vtt:', subErr.message]);
-            }
-          } else {
-            // VobSub (binary/image-based) - not supported, requires OCR
-            log.warn(() => `[SubDL] Detected VobSub .sub format (binary/image-based): ${altEntry} - not supported, skipping`);
-          }
-        }
-
-        // Try enhanced ASS/SSA conversion for .ass and .ssa files
-        if (lower.endsWith('.ass') || lower.endsWith('.ssa')) {
-          const assConverter = require('../utils/assConverter');
-          const format = lower.endsWith('.ass') ? 'ass' : 'ssa';
-          const result = assConverter.convertASSToVTT(raw, format);
-
-          if (result.success) {
-            log.debug(() => `[SubDL] Converted ${altEntry} to .vtt successfully (enhanced converter)`);
-            return result.content;
-          } else {
-            log.warn(() => `[SubDL] Enhanced converter failed: ${result.error}, trying fallback`);
-          }
-        }
-
-        // Try library conversion first (to VTT)
-        try {
-          const subsrt = require('subsrt-ts');
-          let converted;
-          if (lower.endsWith('.ass')) {
-            converted = subsrt.convert(raw, { to: 'vtt', from: 'ass' });
-          } else if (lower.endsWith('.ssa')) {
-            converted = subsrt.convert(raw, { to: 'vtt', from: 'ssa' });
-          } else {
-            converted = subsrt.convert(raw, { to: 'vtt' });
-          }
-
-          if (!converted || typeof converted !== 'string' || converted.trim().length === 0) {
-            const sanitized = (raw || '').replace(/\u0000/g, '');
-            if (sanitized && sanitized !== raw) {
-              if (lower.endsWith('.ass')) {
-                converted = subsrt.convert(sanitized, { to: 'vtt', from: 'ass' });
-              } else if (lower.endsWith('.ssa')) {
-                converted = subsrt.convert(sanitized, { to: 'vtt', from: 'ssa' });
-              } else {
-                converted = subsrt.convert(sanitized, { to: 'vtt' });
-              }
-            }
-          }
-
-          if (converted && typeof converted === 'string' && converted.trim().length > 0) {
-            log.debug(() => `[SubDL] Converted ${altEntry} to .vtt successfully`);
-            return converted;
-          }
-          throw new Error('Conversion to VTT resulted in empty output');
-        } catch (convErr) {
-          log.error(() => ['[SubDL] Failed to convert to .vtt:', convErr.message, 'file:', altEntry]);
-
-          // Manual ASS/SSA fallback
-          try {
-            const manual = (function assToVttFallback(input) {
-              if (!input || !/\[events\]/i.test(input)) return null;
-              const lines = input.split(/\r?\n/);
-              let format = [];
-              let inEvents = false;
-              for (const line of lines) {
-                const l = line.trim();
-                if (/^\[events\]/i.test(l)) { inEvents = true; continue; }
-                if (!inEvents) continue;
-                if (/^\[.*\]/.test(l)) break;
-                if (/^format\s*:/i.test(l)) {
-                  format = l.split(':')[1].split(',').map(s => s.trim().toLowerCase());
-                }
-              }
-              const idxStart = Math.max(0, format.indexOf('start'));
-              const idxEnd = Math.max(1, format.indexOf('end'));
-              const idxText = format.length > 0 ? Math.max(format.indexOf('text'), format.length - 1) : 9;
-              const out = ['WEBVTT', ''];
-              const parseTime = (t) => {
-                const m = t.trim().match(/(\d+):(\d{2}):(\d{2})[\.\:](\d{2})/);
-                if (!m) return null;
-                const h = parseInt(m[1], 10) || 0; const mi = parseInt(m[2], 10) || 0; const s = parseInt(m[3], 10) || 0; const cs = parseInt(m[4], 10) || 0;
-                const ms = (h * 3600 + mi * 60 + s) * 1000 + cs * 10;
-                const hh = String(Math.floor(ms / 3600000)).padStart(2, '0');
-                const mm = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
-                const ss = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
-                const mmm = String(ms % 1000).padStart(3, '0');
-                return `${hh}:${mm}:${ss}.${mmm}`;
-              };
-              const cleanText = (txt) => {
-                let t = txt.replace(/\{[^}]*\}/g, '');
-                t = t.replace(/\\N/g, '\n').replace(/\\n/g, '\n').replace(/\\h/g, ' ');
-                t = t.replace(/[\u0000-\u001F]/g, '');
-                return t.trim();
-              };
-              for (const line of lines) {
-                if (!/^dialogue\s*:/i.test(line)) continue;
-                const payload = line.split(':').slice(1).join(':');
-                const parts = []; let cur = ''; let splits = 0;
-                for (let i = 0; i < payload.length; i++) {
-                  const ch = payload[i];
-                  if (ch === ',' && splits < Math.max(idxText, 9)) { parts.push(cur); cur = ''; splits++; }
-                  else { cur += ch; }
-                }
-                parts.push(cur);
-                const start = parts[idxStart]; const end = parts[idxEnd]; const text = parts[idxText] ?? '';
-                const st = parseTime(start); const et = parseTime(end);
-                if (!st || !et) continue;
-                const ct = cleanText(text); if (!ct) continue;
-                out.push(`${st} --> ${et}`); out.push(ct); out.push('');
-              }
-              if (out.length <= 2) return null; return out.join('\n');
-            })(raw);
-            if (manual && manual.trim().length > 0) {
-              log.debug(() => `[SubDL] Fallback converted ${altEntry} to .vtt successfully (manual parser)`);
-              return manual;
-            }
-          } catch (fallbackErr) {
-            log.error(() => ['[SubDL] Manual ASS/SSA fallback failed:', fallbackErr.message, 'file:', altEntry]);
-          }
-        }
-      }
-
-      log.error(() => ['[SubDL] Available files in ZIP:', entries.join(', ')]);
-      throw new Error('Failed to extract or convert subtitle from ZIP (no .srt and conversion to VTT failed)');
+      // Use the centralized archive extractor that handles both ZIP and RAR
+      return await extractSubtitleFromArchive(subtitleResponse.data, {
+        providerName: 'SubDL',
+        maxBytes: MAX_ZIP_BYTES,
+        isSeasonPack: isSeasonPack,
+        season: seasonPackSeason,
+        episode: seasonPackEpisode
+      });
 
     } catch (error) {
       handleDownloadError(error, 'SubDL');

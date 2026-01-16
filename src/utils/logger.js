@@ -586,8 +586,10 @@ function warn(messageFn) {
 
 /**
  * Error log with lazy evaluation
+ * Automatically sends Error objects to Sentry
  * @param {Function|string} messageFn - Function that returns the message, or a plain string
  * Usage: log.error(() => `[Module] Error: ${error.stack}`)
+ * Usage: log.error(() => ['[Module] Error:', errorObj])
  */
 function error(messageFn) {
     if (currentLevel > LEVELS.error) return; // Early exit
@@ -597,6 +599,18 @@ function error(messageFn) {
     const args = Array.isArray(message) ? message : [message];
     originalError(`[${getTimestamp()}] [ERROR]`, ...args);
     writeFileLog('ERROR', args);
+
+    // Automatically send Error objects to Sentry
+    const sentry = getSentry();
+    if (sentry && sentry.captureError) {
+        // Find Error objects in args and send them to Sentry
+        for (const arg of args) {
+            if (arg instanceof Error && !arg._sentToSentry) {
+                sentry.captureError(arg, { module: 'Logger', source: 'log.error' });
+                break; // Only send first Error to avoid duplicates
+            }
+        }
+    }
 }
 
 /**
@@ -616,6 +630,17 @@ console.error = function (...args) {
     if (currentLevel <= LEVELS.error && shouldSample('error')) {
         originalError(`[${getTimestamp()}] [ERROR]`, ...args);
         writeFileLog('ERROR', args);
+
+        // Automatically send Error objects to Sentry
+        const sentry = getSentry();
+        if (sentry && sentry.captureError) {
+            for (const arg of args) {
+                if (arg instanceof Error && !arg._sentToSentry) {
+                    sentry.captureError(arg, { module: 'Logger', source: 'console.error' });
+                    break;
+                }
+            }
+        }
     }
 };
 

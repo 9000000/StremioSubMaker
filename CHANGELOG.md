@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.30
+
+**New Features:**
+
+- **RAR Archive Support:** Subtitle providers (SubDL, SubSource, OpenSubtitles, OpenSubtitles V3, Subs.ro) now support RAR archives in addition to ZIP files. Previously, providers returning RAR archives instead of ZIP would fail with "Invalid ZIP file signature detected" errors. The addon now automatically detects RAR archives (`Rar!` signature) and extracts subtitles from them seamlessly.
+
+**Improvements:**
+
+- **Centralized archive extraction utility:** Created a new `archiveExtractor.js` utility that consolidates all archive handling logic (ZIP and RAR) into a single location. This reduces code duplication across providers (~1000+ lines removed) and ensures consistent handling of:
+  - Archive type detection (ZIP/RAR)
+  - Season pack episode extraction (TV show and anime patterns)
+  - Subtitle file selection (SRT priority, fallback to VTT/ASS/SSA/SUB)
+  - Subtitle format conversion to VTT
+  - BOM-aware encoding detection (UTF-16LE/BE)
+  - Size limit enforcement (25MB default)
+  - Error subtitles for oversized archives, missing episodes, and corrupted files
+
+- **Response analyzer RAR detection:** Updated the response analyzer utility to detect RAR archives in addition to ZIP, improving content type analysis for debugging.
+
+- **Enhanced archive debugging:** Added comprehensive debug logging throughout the archive extraction pipeline, including first bytes hex dump, RAR version detection (RAR4/RAR5), file count and entry listing, per-file extraction progress, subtitle format conversion attempts and fallback chains, and stack traces for all errors.
+
+- **Sentry error capture in Express error handlers:** All Express error handlers (subtitle, translation, translate-selector, file-translate, sub-toolbox, and general) now capture errors to Sentry with module context, path, and method information for improved production debugging.
+
+- **Sentry debug endpoint:** Added `/debug-sentry` endpoint to verify Sentry integration is working correctly in production environments.
+
+**Bug Fixes:**
+
+- **Fixed unhandled rejection on OpenSubtitles rate limit:** Fixed an issue where OpenSubtitles 429 (rate limit) errors during login caused unhandled promise rejections to be logged. The root cause was the login mutex promise being rejected when no concurrent requests were waiting on it. Added `.catch()` handler to swallow the rejection (the error is still handled by the try/catch block). Also improved the mutex waiter error handling to return `null` gracefully for rate limits and retryable errors instead of re-throwing.
+
 ## SubMaker v1.4.29
 
 **New Subtitle Providers:**

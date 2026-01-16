@@ -21,6 +21,12 @@ function analyzeResponseContent(buffer) {
         buffer[2] === 0x03 && buffer[3] === 0x04;
     if (isZip) return { type: 'zip', hint: 'Valid ZIP file', isRetryable: false };
 
+    // Check for RAR archive - "Rar!" signature (52 61 72 21)
+    const isRar = buffer.length >= 7 &&
+        buffer[0] === 0x52 && buffer[1] === 0x61 &&
+        buffer[2] === 0x72 && buffer[3] === 0x21;
+    if (isRar) return { type: 'rar', hint: 'Valid RAR file', isRetryable: false };
+
     // Check for Gzip (compressed content) - 1f 8b
     const isGzip = buffer.length >= 2 && buffer[0] === 0x1F && buffer[1] === 0x8B;
     if (isGzip) return { type: 'gzip', hint: 'Gzip compressed content', isRetryable: false };

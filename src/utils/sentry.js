@@ -1,17 +1,17 @@
 /**
  * Sentry Integration for SubMaker
  * 
- * Smart error reporting that filters out operational warnings
- * and only sends actual code errors to Sentry.
+ * All errors are sent to Sentry (no filtering).
+ * Only warn/info level messages are filtered out.
  * 
  * Usage:
  *   const sentry = require('./sentry');
  *   sentry.init();  // Call once at startup
  *   
- *   // Report an error (filtered - skips rate limits, auth failures, etc.)
+ *   // Report an error (sent to Sentry)
  *   sentry.captureError(error, { module: 'Translation', userId: 'abc123' });
  *   
- *   // Force report (bypasses filters for critical errors)
+ *   // Force report (same as captureError, for backwards compatibility)
  *   sentry.captureErrorForced(error, { module: 'Startup' });
  * 
  * Environment Variables:
@@ -27,95 +27,8 @@ const { version } = require('./version');
 let Sentry = null;
 let sentryInitialized = false;
 
-// Patterns for errors we should NOT send to Sentry (expected operational issues)
-const IGNORED_ERROR_PATTERNS = [
-    // Rate limiting (expected under high load)
-    /rate.?limit/i,
-    /429/,
-    /too many requests/i,
-    /quota.?exceeded/i,
-
-    // Authentication failures (user config issue, not our bug)
-    /authentication.?failed/i,
-    /invalid.?username/i,
-    /invalid.?password/i,
-    /invalid.?credentials/i,
-    /401/,
-    /403/,
-
-    // Service unavailability (external issue, not our bug)
-    /service.?unavailable/i,
-    /503/,
-    /502/,
-    /504/,
-    /gateway.?timeout/i,
-
-    // Network issues (transient, not our bug)
-    /ECONNRESET/,
-    /ETIMEDOUT/,
-    /ECONNREFUSED/,
-    /ENOTFOUND/,
-    /socket.?hang.?up/i,
-    /network.?error/i,
-
-    // Translation operational issues
-    /concurrency.?limit/i,
-    /translation.?in.?progress/i,
-    /mobile.?mode.?wait.?timed.?out/i,
-
-    // Safety blocks (working as intended)
-    /BLOCKING.*cache.?reset/i,
-
-    // Session/config issues (user needs to reconfigure)
-    /session.?token.?error/i,
-    /config.?error/i,
-    /missing.?config/i,
-
-    // OpenSubtitles quota (daily limit, expected)
-    /allowed 20 subtitles/i,
-    /download.?limit/i,
-
-    // Gemini safety filters (working as intended)
-    /PROHIBITED_CONTENT/i,
-    /safety.?filter/i,
-    /RECITATION/i,
-    /MAX_TOKENS/i,
-];
-
-// Patterns for errors we should ALWAYS send to Sentry (critical issues)
-const CRITICAL_ERROR_PATTERNS = [
-    /uncaught.?exception/i,
-    /unhandled.?rejection/i,
-    /CRITICAL/i,
-    /FATAL/i,
-    /memory.?leak/i,
-    /heap.?out.?of.?memory/i,
-    /stack.?overflow/i,
-];
-
-/**
- * Check if an error should be ignored (not sent to Sentry)
- * @param {Error|string} error - Error object or message
- * @param {Object} extras - Additional context
- * @returns {boolean} - True if error should be ignored
- */
-function shouldIgnoreError(error, extras = {}) {
-    const message = typeof error === 'string' ? error : (error?.message || '');
-    const fullContext = `${message} ${JSON.stringify(extras)}`;
-
-    // Check if it's a critical error that should ALWAYS be reported
-    if (CRITICAL_ERROR_PATTERNS.some(pattern => pattern.test(fullContext))) {
-        return false; // Don't ignore critical errors
-    }
-
-    // Check if error is already marked as logged (avoid duplicates)
-    if (error?._alreadyLogged || error?._sentToSentry) {
-        return true;
-    }
-
-    // Check against ignore patterns
-    return IGNORED_ERROR_PATTERNS.some(pattern => pattern.test(fullContext));
-}
+// NOTE: All error filtering has been removed. All errors are now sent to Sentry.
+// (warn and below messages are still filtered out)
 
 /**
  * Initialize Sentry
@@ -123,6 +36,8 @@ function shouldIgnoreError(error, extras = {}) {
  */
 function init() {
     const dsn = process.env.SENTRY_DSN;
+
+    console.log('[Sentry] init() called. SENTRY_DSN present:', !!dsn, '| SENTRY_ENABLED:', process.env.SENTRY_ENABLED);
 
     if (!dsn) {
         console.log('[Sentry] SENTRY_DSN not configured - error reporting disabled');
@@ -152,6 +67,7 @@ function init() {
 
             // Send ALL errors to Sentry - no filtering
             beforeSend(event, hint) {
+                console.log('[Sentry] beforeSend triggered for event:', event?.event_id);
                 return event;
             },
 
@@ -165,34 +81,31 @@ function init() {
         });
 
         sentryInitialized = true;
-        console.log(`[Sentry] Initialized for environment: ${process.env.SENTRY_ENVIRONMENT || 'production'}`);
+        console.log(`[Sentry] ✅ INITIALIZED for environment: ${process.env.SENTRY_ENVIRONMENT || 'production'} | DSN: ${dsn.slice(0, 30)}...`);
         return true;
 
     } catch (err) {
-        console.error('[Sentry] Failed to initialize:', err.message);
+        console.error('[Sentry] ❌ FAILED to initialize:', err.message);
         console.error('[Sentry] Install with: npm install @sentry/node');
         return false;
     }
 }
 
 /**
- * Capture an error and send to Sentry (with filtering)
- * Automatically filters out operational issues like rate limits, auth failures, etc.
+ * Capture an error and send to Sentry
+ * All errors are sent (no filtering)
  * 
  * @param {Error|string} error - Error object or message
  * @param {Object} extras - Additional context (module, userId, etc.)
- * @returns {string|null} - Sentry event ID or null if filtered/disabled
+ * @returns {string|null} - Sentry event ID or null if disabled
  */
 function captureError(error, extras = {}) {
     if (!sentryInitialized || !Sentry) {
+        console.log('[Sentry] captureError called but Sentry not initialized (sentryInitialized=%s, Sentry=%s)', sentryInitialized, !!Sentry);
         return null;
     }
 
-    // Filter out operational issues that shouldn't be reported to Sentry
-    if (shouldIgnoreError(error, extras)) {
-        return null;
-    }
-
+    // NO FILTERING - send ALL errors to Sentry
     try {
         const eventId = Sentry.captureException(error, {
             extra: extras,
@@ -202,6 +115,8 @@ function captureError(error, extras = {}) {
             }
         });
 
+        console.log('[Sentry] Captured error with eventId:', eventId, '| Error:', error?.message || String(error).slice(0, 100));
+
         // Mark as sent to avoid duplicates
         if (error && typeof error === 'object') {
             error._sentToSentry = true;
@@ -209,7 +124,7 @@ function captureError(error, extras = {}) {
 
         return eventId;
     } catch (e) {
-        // Don't let Sentry errors crash the app
+        console.error('[Sentry] captureError threw:', e?.message || e);
         return null;
     }
 }
@@ -224,6 +139,7 @@ function captureError(error, extras = {}) {
  */
 function captureErrorForced(error, extras = {}) {
     if (!sentryInitialized || !Sentry) {
+        console.log('[Sentry] captureErrorForced called but Sentry not initialized (sentryInitialized=%s, Sentry=%s)', sentryInitialized, !!Sentry);
         return null;
     }
 
@@ -237,12 +153,15 @@ function captureErrorForced(error, extras = {}) {
             }
         });
 
+        console.log('[Sentry] Captured forced error with eventId:', eventId, '| Error:', error?.message || String(error).slice(0, 100));
+
         if (error && typeof error === 'object') {
             error._sentToSentry = true;
         }
 
         return eventId;
     } catch (e) {
+        console.error('[Sentry] captureErrorForced threw:', e?.message || e);
         return null;
     }
 }
@@ -260,13 +179,13 @@ function captureMessage(message, level = 'info', extras = {}) {
         return null;
     }
 
-    // Filter out operational messages at warning level or below
-    if (level !== 'error' && level !== 'fatal' && shouldIgnoreError(message, extras)) {
+    // Only send error and fatal level messages to Sentry (warn and below not needed)
+    if (level !== 'error' && level !== 'fatal') {
         return null;
     }
 
     try {
-        return Sentry.captureMessage(message, {
+        const eventId = Sentry.captureMessage(message, {
             level,
             extra: extras,
             tags: {
@@ -274,7 +193,10 @@ function captureMessage(message, level = 'info', extras = {}) {
                 ...(extras.tags || {})
             }
         });
+        console.log('[Sentry] Captured message with eventId:', eventId, '| Level:', level, '| Message:', String(message).slice(0, 100));
+        return eventId;
     } catch (e) {
+        console.error('[Sentry] captureMessage threw:', e?.message || e);
         return null;
     }
 }
@@ -342,5 +264,4 @@ module.exports = {
     addBreadcrumb,
     flush,
     isInitialized,
-    shouldIgnoreError, // Exported for testing
 };

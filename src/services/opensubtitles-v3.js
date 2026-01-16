@@ -7,6 +7,7 @@ const { version } = require('../utils/version');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const log = require('../utils/logger');
 const { isTrueishFlag, inferHearingImpairedFromName } = require('../utils/subtitleFlags');
+const { detectArchiveType, extractSubtitleFromArchive, isArchive } = require('../utils/archiveExtractor');
 
 const OPENSUBTITLES_V3_BASE_URL = 'https://opensubtitles-v3.strem.io/subtitles/';
 const USER_AGENT = `SubMaker v${version}`;
@@ -378,134 +379,21 @@ class OpenSubtitlesV3Service {
         });
 
         const buf = Buffer.isBuffer(response.data) ? response.data : Buffer.from(response.data);
-        const isZip = buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4B && buf[2] === 0x03 && buf[3] === 0x04;
 
-        if (isZip) {
-          if (buf.length > MAX_ZIP_BYTES) {
-            log.warn(() => `[OpenSubtitles V3] ZIP too large (${buf.length} bytes > ${MAX_ZIP_BYTES}); returning info subtitle instead of parsing`);
-            return createZipTooLargeSubtitle(MAX_ZIP_BYTES, buf.length);
-          }
+        // Check for archive by magic bytes (ZIP or RAR)
+        const archiveType = detectArchiveType(buf);
 
-          const JSZip = require('jszip');
-          let zip;
-          try {
-            zip = await JSZip.loadAsync(buf, { base64: false });
-          } catch (zipErr) {
-            log.error(() => ['[OpenSubtitles V3] Failed to parse ZIP file:', zipErr.message]);
-            // Return informative subtitle instead of throwing
-            const message = `1
-00:00:00,000 --> 04:00:00,000
-OpenSubtitles V3 download failed: Corrupted ZIP file
-The subtitle file appears to be damaged or incomplete.
-Try selecting a different subtitle.`;
-            return appendHiddenInformationalNote(message);
-          }
-          const entries = Object.keys(zip.files);
-          const srtEntry = entries.find(f => f.toLowerCase().endsWith('.srt'));
-          if (srtEntry) {
-            const buffer = await zip.files[srtEntry].async('nodebuffer');
-            const srt = detectAndConvertEncoding(buffer, 'OpenSubtitles V3');
-            log.debug(() => '[OpenSubtitles V3] Extracted .srt from ZIP');
-            return srt;
-          }
-          const altEntry = entries.find(f => { const l = f.toLowerCase(); return l.endsWith('.vtt') || l.endsWith('.ass') || l.endsWith('.ssa') || l.endsWith('.sub'); });
-          if (altEntry) {
-            const uint8 = await zip.files[altEntry].async('uint8array');
-            const abuf = Buffer.from(uint8);
-            let raw;
-            if (abuf.length >= 2 && abuf[0] === 0xFF && abuf[1] === 0xFE) raw = abuf.slice(2).toString('utf16le');
-            else if (abuf.length >= 2 && abuf[0] === 0xFE && abuf[1] === 0xFF) {
-              const swapped = Buffer.allocUnsafe(Math.max(0, abuf.length - 2));
-              for (let i = 2, j = 0; i + 1 < abuf.length; i += 2, j += 2) { swapped[j] = abuf[i + 1]; swapped[j + 1] = abuf[i]; }
-              raw = swapped.toString('utf16le');
-            } else raw = abuf.toString('utf8');
-            // Strip UTF-8 BOM if present (prevents first-char loss in some players)
-            if (raw && typeof raw === 'string') raw = raw.replace(/^\uFEFF/, '');
+        if (archiveType) {
+          log.debug(() => `[OpenSubtitles V3] Detected ${archiveType.toUpperCase()} archive`);
 
-            const lname = altEntry.toLowerCase();
-            if (lname.endsWith('.vtt')) return raw;
-
-            // Handle MicroDVD .sub files (text-based, frame-based timing)
-            if (lname.endsWith('.sub')) {
-              const isMicroDVD = /^\s*\{\d+\}\{\d+\}/.test(raw);
-              if (isMicroDVD) {
-                log.debug(() => `[OpenSubtitles V3] Detected MicroDVD .sub format: ${altEntry}`);
-                try {
-                  const subsrt = require('subsrt-ts');
-                  const fps = 25;
-                  const converted = subsrt.convert(raw, { to: 'vtt', from: 'sub', fps: fps });
-                  if (converted && typeof converted === 'string' && converted.trim().length > 0) {
-                    log.debug(() => `[OpenSubtitles V3] Converted MicroDVD .sub to .vtt successfully (fps=${fps})`);
-                    return converted;
-                  }
-                } catch (subErr) {
-                  log.error(() => ['[OpenSubtitles V3] Failed to convert MicroDVD .sub to .vtt:', subErr.message]);
-                }
-              } else {
-                log.warn(() => `[OpenSubtitles V3] Detected VobSub .sub format (binary/image-based): ${altEntry} - not supported, skipping`);
-              }
-            }
-
-            // Try enhanced ASS/SSA conversion first
-            if (lname.endsWith('.ass') || lname.endsWith('.ssa')) {
-              const assConverter = require('../utils/assConverter');
-              const format = lname.endsWith('.ass') ? 'ass' : 'ssa';
-              const result = assConverter.convertASSToVTT(raw, format);
-              if (result.success) return result.content;
-              log.debug(() => `[OpenSubtitles V3] Enhanced converter failed: ${result.error}, trying fallback`);
-            }
-
-            try {
-              const subsrt = require('subsrt-ts');
-              let converted;
-              if (lname.endsWith('.ass')) converted = subsrt.convert(raw, { to: 'vtt', from: 'ass' });
-              else if (lname.endsWith('.ssa')) converted = subsrt.convert(raw, { to: 'vtt', from: 'ssa' });
-              else converted = subsrt.convert(raw, { to: 'vtt' });
-              if (!converted || converted.trim().length === 0) {
-                const sanitized = (raw || '').replace(/\u0000/g, '');
-                if (lname.endsWith('.ass')) converted = subsrt.convert(sanitized, { to: 'vtt', from: 'ass' });
-                else if (lname.endsWith('.ssa')) converted = subsrt.convert(sanitized, { to: 'vtt', from: 'ssa' });
-                else converted = subsrt.convert(sanitized, { to: 'vtt' });
-              }
-              if (converted && converted.trim().length > 0) return converted;
-              throw new Error('Empty VTT after conversion');
-            } catch (_) {
-              const manual = (function assToVttFallback(input) {
-                if (!input || !/\[events\]/i.test(input)) return null;
-                const lines = input.split(/\r?\n/); let format = []; let inEvents = false;
-                for (const line of lines) {
-                  const l = line.trim();
-                  if (/^\[events\]/i.test(l)) { inEvents = true; continue; }
-                  if (!inEvents) continue; if (/^\[.*\]/.test(l)) break;
-                  if (/^format\s*:/i.test(l)) format = l.split(':')[1].split(',').map(s => s.trim().toLowerCase());
-                }
-                const idxStart = Math.max(0, format.indexOf('start'));
-                const idxEnd = Math.max(1, format.indexOf('end'));
-                const idxText = format.length > 0 ? Math.max(format.indexOf('text'), format.length - 1) : 9;
-                const out = ['WEBVTT', ''];
-                const parseTime = (t) => {
-                  const m = t.trim().match(/(\d+):(\d{2}):(\d{2})[\.\:](\d{2})/);
-                  if (!m) return null; const h = +m[1] || 0, mi = +m[2] || 0, s = +m[3] || 0, cs = +m[4] || 0;
-                  const ms = (h * 3600 + mi * 60 + s) * 1000 + cs * 10; const hh = String(Math.floor(ms / 3600000)).padStart(2, '0');
-                  const mm = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0'); const ss = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
-                  const mmm = String(ms % 1000).padStart(3, '0'); return `${hh}:${mm}:${ss}.${mmm}`;
-                };
-                const cleanText = (txt) => {
-                  let t = txt.replace(/\{[^}]*\}/g, ''); t = t.replace(/\\N/g, '\n').replace(/\\n/g, '\n').replace(/\\h/g, ' ');
-                  t = t.replace(/[\u0000-\u001F]/g, ''); return t.trim();
-                };
-                for (const line of lines) {
-                  if (!/^dialogue\s*:/i.test(line)) continue; const payload = line.split(':').slice(1).join(':');
-                  const parts = []; let cur = ''; let splits = 0; for (let i = 0; i < payload.length; i++) { const ch = payload[i]; if (ch === ',' && splits < Math.max(idxText, 9)) { parts.push(cur); cur = ''; splits++; } else { cur += ch; } }
-                  parts.push(cur); const st = parseTime(parts[idxStart]); const et = parseTime(parts[idxEnd]); if (!st || !et) continue;
-                  const ct = cleanText(parts[idxText] ?? ''); if (!ct) continue; out.push(`${st} --> ${et}`); out.push(ct); out.push('');
-                }
-                return out.length > 2 ? out.join('\n') : null;
-              })(raw);
-              if (manual && manual.trim().length > 0) return manual;
-            }
-          }
-          throw new Error('Failed to extract or convert subtitle from ZIP (no .srt and conversion to VTT failed)');
+          // Use the centralized archive extractor that handles both ZIP and RAR
+          return await extractSubtitleFromArchive(buf, {
+            providerName: 'OpenSubtitles V3',
+            maxBytes: MAX_ZIP_BYTES,
+            isSeasonPack: false,
+            season: null,
+            episode: null
+          });
         }
 
         // Non-ZIP path: decode with BOM awareness

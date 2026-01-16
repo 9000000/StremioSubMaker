@@ -26,6 +26,7 @@ const { detectAndConvertEncoding } = require('../utils/encodingDetector');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const log = require('../utils/logger');
 const { version } = require('../utils/version');
+const { detectArchiveType, extractSubtitleFromArchive, isArchive } = require('../utils/archiveExtractor');
 
 const SUBS_RO_API_URL = 'https://subs.ro/api/v1.0';
 const USER_AGENT = `SubMaker v${version}`;
@@ -576,53 +577,20 @@ class SubsRoService {
                     return createZipTooLargeSubtitle(MAX_ZIP_BYTES, buffer.length);
                 }
 
-                // Check if it's a ZIP file (starts with PK magic bytes)
-                const isZip = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B;
+                // Check for valid archive (ZIP or RAR)
+                const archiveType = detectArchiveType(buffer);
 
-                if (isZip) {
-                    log.debug(() => `[SubsRo] Received ZIP archive (${buffer.length} bytes), extracting...`);
+                if (archiveType) {
+                    log.debug(() => `[SubsRo] Received ${archiveType.toUpperCase()} archive (${buffer.length} bytes), extracting...`);
 
-                    // Extract subtitle from ZIP using JSZip (async)
-                    const JSZip = require('jszip');
-                    let zip;
-                    try {
-                        zip = await JSZip.loadAsync(buffer, { base64: false });
-                    } catch (zipErr) {
-                        log.error(() => ['[SubsRo] Failed to parse ZIP:', zipErr.message]);
-                        throw new Error('Invalid ZIP file from Subs.ro (corrupted or incomplete)');
-                    }
-
-                    const entries = Object.keys(zip.files);
-
-                    if (!entries || entries.length === 0) {
-                        throw new Error('ZIP archive is empty');
-                    }
-
-                    // Find target entry based on whether this is a season pack
-                    let selectedEntry = null;
-
-                    if (isSeasonPack && seasonPackSeason && seasonPackEpisode) {
-                        log.debug(() => `[SubsRo] Searching for S${String(seasonPackSeason).padStart(2, '0')}E${String(seasonPackEpisode).padStart(2, '0')} in ZIP`);
-                        log.debug(() => `[SubsRo] Available files: ${entries.join(', ')}`);
-
-                        selectedEntry = this._findEpisodeFile(zip, entries, seasonPackSeason, seasonPackEpisode);
-
-                        if (!selectedEntry) {
-                            log.warn(() => `[SubsRo] Episode not found in season pack ZIP`);
-                            return createEpisodeNotFoundSubtitle(seasonPackEpisode, seasonPackSeason, entries);
-                        }
-                    } else {
-                        // Not a season pack - find first subtitle file
-                        selectedEntry = this._findFirstSubtitleFile(zip, entries);
-                    }
-
-                    if (!selectedEntry) {
-                        log.warn(() => `[SubsRo] No subtitle file found in ZIP. Entries: ${entries.join(', ')}`);
-                        throw new Error('No subtitle file found in ZIP archive');
-                    }
-
-                    // Read and process the subtitle content
-                    return await this._extractAndConvertSubtitle(zip, selectedEntry);
+                    // Use the centralized archive extractor that handles both ZIP and RAR
+                    return await extractSubtitleFromArchive(buffer, {
+                        providerName: 'SubsRo',
+                        maxBytes: MAX_ZIP_BYTES,
+                        isSeasonPack: isSeasonPack,
+                        season: seasonPackSeason,
+                        episode: seasonPackEpisode
+                    });
 
                 } else {
                     // Not a ZIP - try to handle as direct text content

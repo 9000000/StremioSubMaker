@@ -2636,6 +2636,12 @@ app.get('/sw.js', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'sw.js'));
 });
 
+// Sentry debug endpoint - throws an error to verify Sentry is working
+// Visit /debug-sentry to trigger a test error that should appear in Sentry dashboard
+app.get('/debug-sentry', (req, res) => {
+    throw new Error('SubMaker Sentry test error - if you see this in Sentry, it works!');
+});
+
 // Serve static files with caching enabled
 // CSS and JS files get 1 year cache (bust with version in filename if needed)
 // Other static files get 1 year cache as well
@@ -7443,6 +7449,7 @@ app.use('/addon/:config', async (req, res, next) => {
 app.use('/addon/:config/subtitle', (error, req, res, next) => {
     const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] Subtitle Error:', error]);
+    sentry.captureError(error, { module: 'SubtitleErrorHandler', path: req.path, method: req.method });
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.status(500).end(`${t('server.errors.subtitleUnavailable', {}, 'ERROR: Subtitle unavailable')}\n\n`);
 });
@@ -7451,6 +7458,7 @@ app.use('/addon/:config/subtitle', (error, req, res, next) => {
 app.use('/addon/:config/translate', (error, req, res, next) => {
     const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] Translation Error:', error]);
+    sentry.captureError(error, { module: 'TranslationErrorHandler', path: req.path, method: req.method });
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.status(500).end(`${t('server.errors.translationUnavailable', {}, 'ERROR: Translation unavailable')}\n\n`);
 });
@@ -7459,6 +7467,7 @@ app.use('/addon/:config/translate', (error, req, res, next) => {
 app.use('/addon/:config/translate-selector', (error, req, res, next) => {
     const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] Translation Selector Error:', error]);
+    sentry.captureError(error, { module: 'TranslateSelectorErrorHandler', path: req.path, method: req.method });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     const message = escapeHtml(t('server.errors.subtitleSelectorFailed', {}, 'Failed to load subtitle selector'));
     res.status(500).end(`<html><body><p>${message}</p></body></html>`);
@@ -7468,6 +7477,7 @@ app.use('/addon/:config/translate-selector', (error, req, res, next) => {
 app.use('/addon/:config/file-translate', (error, req, res, next) => {
     const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] File Translation Error:', error]);
+    sentry.captureError(error, { module: 'FileTranslateErrorHandler', path: req.path, method: req.method });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     const message = escapeHtml(t('server.errors.fileTranslationPageFailed', {}, 'Failed to load file translation page'));
     res.status(500).end(`<html><body><p>${message}</p></body></html>`);
@@ -7477,6 +7487,7 @@ app.use('/addon/:config/file-translate', (error, req, res, next) => {
 app.use('/addon/:config/sub-toolbox', (error, req, res, next) => {
     const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] Sub Toolbox Error:', error]);
+    sentry.captureError(error, { module: 'SubToolboxErrorHandler', path: req.path, method: req.method });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     const message = escapeHtml(t('server.errors.subToolboxPageFailed', {}, 'Failed to load Sub Toolbox page'));
     res.status(500).end(`<html><body><p>${message}</p></body></html>`);
@@ -7486,6 +7497,14 @@ app.use('/addon/:config/sub-toolbox', (error, req, res, next) => {
 app.use((error, req, res, next) => {
     const t = res.locals?.t || getTranslatorFromRequest(req, res);
     log.error(() => ['[Server] General Error:', error]);
+
+    // Send error to Sentry
+    sentry.captureError(error, {
+        module: 'ExpressErrorHandler',
+        path: req.path,
+        method: req.method
+    });
+
     res.status(500).json({ error: t('server.errors.internalServerError', {}, 'Internal server error') });
 });
 
