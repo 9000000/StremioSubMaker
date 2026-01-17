@@ -746,7 +746,7 @@ Translate to {target_language}.`;
             fileTranslationEnabled: false, // legacy flag (mirrors subToolboxEnabled)
             syncSubtitlesEnabled: false, // legacy flag (mirrors subToolboxEnabled)
             excludeHearingImpairedSubtitles: false, // If true, hide SDH/HI subtitles from results
-            mobileMode: false, // On Android: wait for full translation before responding
+            mobileMode: false, // Opt-in: wait for full translation before responding (no automatic device detection)
             singleBatchMode: false, // Try translating whole file at once
             advancedSettings: {
                 enabled: false, // Auto-set to true if any setting differs from defaults (forces bypass cache)

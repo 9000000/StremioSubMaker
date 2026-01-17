@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.33
+
+**Bug Fixes:**
+
+- **Fixed Stremio Community/libmpv request spam:** Resolved an issue where Stremio Community clients using libmpv would generate excessive requests when opening the subtitle menu. The root cause was the addon returning `202 Accepted` with a `Retry-After: 3` header for duplicate translation requests, which caused libmpv to poll every 3 seconds indefinitely. The fix removes the retry header and returns a normal response, stopping the polling loop.
+
+**New Features:**
+
+- **Translation Burst Detection:** Added detection for when Stremio/libmpv prefetches ALL translation URLs simultaneously (common with Stremio Community). When 3+ translation requests arrive within 1 second from the same user, only the first request proceeds - the rest receive a "loading" message. This prevents starting multiple expensive AI translations during prefetch. Configurable via:
+  - `TRANSLATION_BURST_WINDOW_MS` (default: 1000ms)
+  - `TRANSLATION_BURST_THRESHOLD` (default: 3 requests)
+  - `DISABLE_TRANSLATION_BURST_DETECTION=true` to disable
+
+- **Download Burst Detection:** Added detection for when Stremio prefetches all subtitle download URLs at once. When 5+ download requests (cache misses) arrive within 500ms, only the first proceeds - the rest are deferred to save provider API quota. Configurable via:
+  - `DOWNLOAD_BURST_WINDOW_MS` (default: 500ms)
+  - `DOWNLOAD_BURST_THRESHOLD` (default: 5 requests)
+  - `DISABLE_DOWNLOAD_BURST_DETECTION=true` to disable
+
+- **Disable Download Cache Option:** Added `DISABLE_DOWNLOAD_CACHE=true` environment variable to completely disable the in-memory download cache if needed.
+
 ## SubMaker v1.4.32
 
 **New Features:**

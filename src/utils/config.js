@@ -1001,7 +1001,7 @@ function getDefaultConfig(modelName = null) {
     syncSubtitlesEnabled: false, // legacy flag (mirrors subToolboxEnabled)
     // If true, filter out SDH/HI (hearing impaired) subtitles from provider results
     excludeHearingImpairedSubtitles: false,
-    mobileMode: false, // Hold translation responses until full translation is ready (Android cache workaround)
+    mobileMode: false, // Hold translation responses until full translation is ready (opt-in only, no automatic device detection)
     singleBatchMode: false, // Translate whole file at once (streaming partials)
     // Minimum size for a subtitle file to be considered valid (bytes)
     // Prevents attempting to load/translate obviously broken files

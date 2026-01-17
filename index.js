@@ -1517,6 +1517,124 @@ const cacheResetHistory = new LRUCache({
 // Feature toggle: keep embedded original tracks in cache (default ON; set to "false" to opt out)
 const KEEP_EMBEDDED_ORIGINALS = String(process.env.KEEP_EMBEDDED_ORIGINALS || 'true').toLowerCase() !== 'false';
 
+/**
+ * Translation Prefetch/Burst Detection
+ *
+ * Stremio/libmpv prefetches ALL subtitle URLs when the subtitle menu opens.
+ * This includes translation URLs, which would trigger multiple translations at once.
+ *
+ * This tracker detects "burst" patterns (many requests within a short window) and
+ * prevents starting actual translations during prefetch. The first request after
+ * a burst (when user actually selects a subtitle) will trigger the translation.
+ *
+ * Environment variables:
+ * - TRANSLATION_BURST_WINDOW_MS: Time window for burst detection (default: 1000ms)
+ * - TRANSLATION_BURST_THRESHOLD: Number of requests to trigger burst mode (default: 3)
+ * - DISABLE_TRANSLATION_BURST_DETECTION: Set to 'true' to disable this feature
+ */
+const TRANSLATION_BURST_WINDOW_MS = parseInt(process.env.TRANSLATION_BURST_WINDOW_MS, 10) || 1000;
+const TRANSLATION_BURST_THRESHOLD = parseInt(process.env.TRANSLATION_BURST_THRESHOLD, 10) || 3;
+const DISABLE_TRANSLATION_BURST_DETECTION = process.env.DISABLE_TRANSLATION_BURST_DETECTION === 'true';
+
+// Track translation requests per config hash to detect bursts
+const translationBurstTracker = new LRUCache({
+    max: 5000, // Track up to 5k users
+    ttl: 10000, // 10 second TTL - burst detection window
+    updateAgeOnGet: false,
+});
+
+/**
+ * Check if a translation request is part of a prefetch burst
+ * @param {string} configKey - User's config hash
+ * @param {string} sourceFileId - Subtitle file being translated
+ * @param {string} targetLang - Target language
+ * @returns {{ isBurst: boolean, count: number, firstSourceId: string|null }}
+ */
+function checkTranslationBurst(configKey, sourceFileId, targetLang) {
+    if (DISABLE_TRANSLATION_BURST_DETECTION) {
+        return { isBurst: false, count: 0, firstSourceId: null };
+    }
+
+    const now = Date.now();
+    const burstKey = `burst:${configKey}`;
+    let entry = translationBurstTracker.get(burstKey) || { requests: [], firstSourceId: null };
+
+    // Clean up old requests outside the window
+    entry.requests = entry.requests.filter(r => now - r.timestamp < TRANSLATION_BURST_WINDOW_MS);
+
+    // Add this request
+    entry.requests.push({ sourceFileId, targetLang, timestamp: now });
+
+    // Track the first request in the window (this one will be allowed to proceed)
+    if (entry.requests.length === 1) {
+        entry.firstSourceId = sourceFileId;
+    }
+
+    translationBurstTracker.set(burstKey, entry);
+
+    const isBurst = entry.requests.length >= TRANSLATION_BURST_THRESHOLD;
+    const isFirstInBurst = sourceFileId === entry.firstSourceId;
+
+    // A request is considered "burst blocked" if:
+    // 1. We're in burst mode (many requests in window)
+    // 2. This is NOT the first request in the burst
+    return {
+        isBurst: isBurst && !isFirstInBurst,
+        count: entry.requests.length,
+        firstSourceId: entry.firstSourceId
+    };
+}
+
+// Separate tracker for download bursts (lower threshold since downloads are less expensive)
+const DOWNLOAD_BURST_WINDOW_MS = parseInt(process.env.DOWNLOAD_BURST_WINDOW_MS, 10) || 500;
+const DOWNLOAD_BURST_THRESHOLD = parseInt(process.env.DOWNLOAD_BURST_THRESHOLD, 10) || 5;
+const DISABLE_DOWNLOAD_BURST_DETECTION = process.env.DISABLE_DOWNLOAD_BURST_DETECTION === 'true';
+
+const downloadBurstTracker = new LRUCache({
+    max: 5000,
+    ttl: 10000,
+    updateAgeOnGet: false,
+});
+
+/**
+ * Check if a download request is part of a prefetch burst
+ * Only tracks downloads that are NOT in cache (cache hits don't count toward burst)
+ * @param {string} configKey - User's config hash
+ * @param {string} fileId - Subtitle file ID
+ * @returns {{ isBurst: boolean, count: number }}
+ */
+function checkDownloadBurst(configKey, fileId) {
+    if (DISABLE_DOWNLOAD_BURST_DETECTION) {
+        return { isBurst: false, count: 0 };
+    }
+
+    const now = Date.now();
+    const burstKey = `dl-burst:${configKey}`;
+    let entry = downloadBurstTracker.get(burstKey) || { requests: [], firstFileId: null };
+
+    // Clean up old requests outside the window
+    entry.requests = entry.requests.filter(r => now - r.timestamp < DOWNLOAD_BURST_WINDOW_MS);
+
+    // Add this request
+    entry.requests.push({ fileId, timestamp: now });
+
+    // Track the first request
+    if (entry.requests.length === 1) {
+        entry.firstFileId = fileId;
+    }
+
+    downloadBurstTracker.set(burstKey, entry);
+
+    const isBurst = entry.requests.length >= DOWNLOAD_BURST_THRESHOLD;
+    const isFirstInBurst = fileId === entry.firstFileId;
+
+    return {
+        isBurst: isBurst && !isFirstInBurst,
+        count: entry.requests.length,
+        firstFileId: entry.firstFileId
+    };
+}
+
 // Keep router cache aligned with latest session config across updates/deletes (including Redis pub/sub events)
 if (typeof sessionManager.on === 'function') {
     sessionManager.on('sessionUpdated', ({ token, source }) => {
@@ -4644,7 +4762,21 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
             return;
         }
 
-        // STEP 2: Cache miss - check if already in flight
+        // STEP 2: Cache miss - check for burst (many downloads in short window = prefetch)
+        const downloadBurst = checkDownloadBurst(configKey, fileId);
+        if (downloadBurst.isBurst) {
+            // Stremio is prefetching all subtitles - return empty to save API quota
+            // User can click again to actually download
+            log.debug(() => `[Download] Burst detected: ${downloadBurst.count} downloads in ${DOWNLOAD_BURST_WINDOW_MS}ms. Deferring ${fileId} (first was ${downloadBurst.firstFileId})`);
+            const { createInvalidSubtitleMessage } = require('./src/handlers/subtitles');
+            const deferMessage = createInvalidSubtitleMessage('Click again to load this subtitle.', config?.uiLanguage || 'en');
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${fileId}.srt"`);
+            setSubtitleCacheHeaders(res, 'loading');
+            return res.send(deferMessage);
+        }
+
+        // STEP 3: Check if already in flight
         const isAlreadyInFlight = inFlightRequests.has(dedupKey);
 
         if (isAlreadyInFlight) {
@@ -4653,12 +4785,12 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
             log.debug(() => `[Download Cache] MISS for ${fileId} in ${langCode} - Starting new download`);
         }
 
-        // STEP 3: Download with deduplication (prevents concurrent downloads of same subtitle)
+        // STEP 4: Download with deduplication (prevents concurrent downloads of same subtitle)
         const content = await deduplicate(dedupKey, () =>
             handleSubtitleDownload(fileId, langCode, config)
         );
 
-        // STEP 4: Save to cache for future requests (shared with translation flow)
+        // STEP 5: Save to cache for future requests (shared with translation flow)
         saveDownloadCached(fileId, content);
 
         // Decide headers based on content (serve VTT originals when applicable)
@@ -4814,11 +4946,11 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleF
         }
         t = getTranslatorFromRequest(req, res, config);
         const configKey = ensureConfigHash(config, configStr);
-        const userAgent = (req.headers['user-agent'] || '').toLowerCase();
-        const isAndroid = userAgent.includes('android');
         const mobileQuery = String(req.query.mobileMode || req.query.mobile || '').toLowerCase();
         const queryForcesMobile = ['1', 'true', 'yes', 'on'].includes(mobileQuery);
-        const waitForFullTranslation = (config.mobileMode === true) || queryForcesMobile || (isAndroid && config.mobileMode !== false);
+        // Mobile mode is now ONLY enabled when explicitly configured or forced via query string
+        // Automatic Android detection has been removed for consistency across all devices
+        const waitForFullTranslation = (config.mobileMode === true) || queryForcesMobile;
 
         // Create deduplication key based on source file and target language
         const dedupKey = `translate:${configKey}:${sourceFileId}:${targetLang}`;
@@ -4873,15 +5005,30 @@ app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleF
             log.warn(() => '[PurgeTrigger] Click tracking error:', e.message);
         }
 
+        // Burst Detection: Detect when Stremio/libmpv prefetches ALL translation URLs at once
+        // This prevents starting multiple expensive translations during prefetch
+        const burstCheck = checkTranslationBurst(configKey, sourceFileId, targetLang);
+        if (burstCheck.isBurst) {
+            // This is part of a prefetch burst - return a "click to translate" message
+            // The first request in the burst (firstSourceId) is allowed through
+            log.debug(() => `[Translation] Burst detected: ${burstCheck.count} requests in ${TRANSLATION_BURST_WINDOW_MS}ms. Blocking prefetch for ${sourceFileId} (first was ${burstCheck.firstSourceId})`);
+            const clickToTranslateMsg = createLoadingSubtitle(config?.uiLanguage || 'en');
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="click_to_translate_${targetLang}.srt"`);
+            setSubtitleCacheHeaders(res, 'loading');
+            return res.send(clickToTranslateMsg);
+        }
+
         // Check if already in flight BEFORE logging to reduce confusion
         const isAlreadyInFlight = inFlightRequests.has(dedupKey);
 
         if (isAlreadyInFlight && waitForFullTranslation) {
             // Don't keep piling up long-held connections in mobile mode; the first request will deliver the final SRT
-            log.debug(() => `[Translation] Mobile mode duplicate request for ${sourceFileId} to ${targetLang} - short-circuiting with 202 while primary request is held`);
-            res.status(202);
+            // IMPORTANT: Use 200 (not 202) and NO Retry-After header to prevent Stremio/libmpv from
+            // continuously polling. 202 + Retry-After causes exponential request spam when libmpv
+            // prefetches all translation URLs simultaneously.
+            log.debug(() => `[Translation] Mobile mode duplicate request for ${sourceFileId} to ${targetLang} - returning loading message (primary request in progress)`);
             setSubtitleCacheHeaders(res, 'loading');
-            res.setHeader('Retry-After', '3');
             return res.send(t('server.errors.translationInProgress', {}, 'Translation already in progress; waiting on primary request.'));
         } else if (isAlreadyInFlight) {
             log.debug(() => `[Translation] Duplicate request detected for ${sourceFileId} to ${targetLang} - checking for partial results`);
