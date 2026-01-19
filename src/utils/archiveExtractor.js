@@ -84,26 +84,35 @@ Please pick another subtitle or provider.`;
  * @param {Array<string>} entries - List of files in archive
  * @returns {string}
  */
-function createEpisodeNotFoundSubtitle(episode, season, entries) {
+function createEpisodeNotFoundSubtitle(episode, season, entries = []) {
     try {
         const seasonStr = String(season).padStart(2, '0');
         const episodeStr = String(episode).padStart(2, '0');
         const seasonEpisodeStr = `S${seasonStr}E${episodeStr}`;
 
         // Try to extract episode numbers from filenames for helpful message
-        const foundEpisodes = [];
-        const episodePattern = /(?:e|ep|episode|x)0*(\d{1,3})(?![0-9])/gi;
+        const foundEpisodes = (entries || [])
+            .map(filename => {
+                // Match explicit episode labels (Episode 12, Ep12, Cap 12, OVA 3, etc.)
+                // Supports: episode, episodio, capitulo, cap, ep, e, ova, oad, x
+                const labeled = String(filename || '').match(/(?:episode|episodio|capitulo|cap|ep|e|ova|oad|x)\s*0*(\d{1,4})/i);
+                if (labeled && labeled[1]) return parseInt(labeled[1], 10);
 
-        for (const entry of entries) {
-            const matches = entry.matchAll(episodePattern);
-            for (const match of matches) {
-                const ep = parseInt(match[1], 10);
-                if (ep > 0 && ep < 1000 && !foundEpisodes.includes(ep)) {
-                    foundEpisodes.push(ep);
+                // Fallback: any standalone 1-4 digit number not obviously a resolution/year
+                const generic = String(filename || '').match(/(?:^|[^0-9])(\d{1,4})(?=[^0-9]|$)/);
+                if (generic && generic[1]) {
+                    const n = parseInt(generic[1], 10);
+                    if (Number.isNaN(n)) return null;
+                    // Skip common resolutions and years
+                    if ([480, 720, 1080, 2160].includes(n)) return null;
+                    if (n >= 1900 && n <= 2099) return null;
+                    return n;
                 }
-            }
-        }
-        foundEpisodes.sort((a, b) => a - b);
+                return null;
+            })
+            .filter(ep => ep !== null && ep > 0 && ep < 4000)
+            .sort((a, b) => a - b);
+
         const uniqueEpisodes = [...new Set(foundEpisodes)];
         const availableInfo = uniqueEpisodes.length > 0
             ? `Pack contains ~${uniqueEpisodes.length} files, episodes ${uniqueEpisodes[0]}-${uniqueEpisodes[uniqueEpisodes.length - 1]}`
@@ -734,6 +743,7 @@ module.exports = {
     isArchive,
     extractSubtitleFromArchive,
     createArchiveTooLargeSubtitle,
+    createZipTooLargeSubtitle: createArchiveTooLargeSubtitle, // Alias for backward compatibility
     createEpisodeNotFoundSubtitle,
     createCorruptedArchiveSubtitle,
     findSubtitleFile,

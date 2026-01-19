@@ -1,4 +1,4 @@
-﻿const OpenSubtitlesService = require('../services/opensubtitles');
+const OpenSubtitlesService = require('../services/opensubtitles');
 const OpenSubtitlesV3Service = require('../services/opensubtitles-v3');
 const SubDLService = require('../services/subdl');
 const SubSourceService = require('../services/subsource');
@@ -2370,6 +2370,14 @@ function createSubtitleHandler(config) {
             skippedProviders.push({ provider: 'StremioCommunitySubtitles', reason: scsHealth.reason });
           } else {
             log.debug(() => '[Subtitles] SCS provider is enabled');
+            
+            // Warn if user's timeout is too low for SCS (it takes 10-22s to respond)
+            // SCS is inherently slow due to server-side hash matching against a large database
+            const userTimeoutMs = (config.subtitleProviderTimeout || 12) * 1000;
+            if (userTimeoutMs < 28000) {
+              log.debug(() => `[Subtitles] Note: SCS may be cut off by ${userTimeoutMs}ms timeout (SCS needs 28-35s). Increase timeout in settings for reliable SCS results.`);
+            }
+            
             const scs = new StremioCommunitySubtitlesService();
             searchPromises.push(
               scs.searchSubtitles(searchParams)

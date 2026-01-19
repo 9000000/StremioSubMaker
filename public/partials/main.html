@@ -451,8 +451,9 @@
                                     <div id="scsNote"
                                         style="font-size: 0.8rem; color: var(--text-secondary); padding: 0.5rem; background: var(--surface-light); border-radius: 6px;">
                                         <span data-i18n="config.providers.scs.note">SCS provides community-uploaded
-                                            subtitles. Results depend on community contributions for your specific video
-                                            file.</span>
+                                            subtitles. <strong>Requires 28-30s timeout</strong> (default is 12s) due to
+                                            slow server-side processing. Set timeout to 30s for reliable SCS
+                                            results.</span>
                                     </div>
                                 </div>
 
@@ -533,9 +534,9 @@
                                         style="font-size: 1rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));">⚠️</span>
                                     <span
                                         style="font-size: 0.8rem; font-weight: 500; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.3);"
-                                        data-i18n="config.providers.timeout.slowWarning">SCS, Wyzie and SubSource might
-                                        be slow. If you get no subtitle results, we recommend higher timeout
-                                        values.</span>
+                                        data-i18n="config.providers.timeout.slowWarning">SCS requires 28-30s due to slow
+                                        server processing.
+                                        Wyzie and SubSource may also be slow. Set to 30s for reliable results.</span>
                                 </div>
                             </div>
                             <div id="providerTimeoutNote"

@@ -7,7 +7,8 @@ const { version } = require('../utils/version');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const log = require('../utils/logger');
 const { isTrueishFlag, inferHearingImpairedFromName } = require('../utils/subtitleFlags');
-const { detectArchiveType, extractSubtitleFromArchive, isArchive } = require('../utils/archiveExtractor');
+const { detectArchiveType, extractSubtitleFromArchive, isArchive, createZipTooLargeSubtitle } = require('../utils/archiveExtractor');
+const { analyzeResponseContent, createInvalidResponseSubtitle } = require('../utils/responseAnalyzer');
 
 const OPENSUBTITLES_V3_BASE_URL = 'https://opensubtitles-v3.strem.io/subtitles/';
 const USER_AGENT = `SubMaker v${version}`;
@@ -18,21 +19,6 @@ const MAX_ZIP_BYTES = 25 * 1024 * 1024; // hard cap for ZIP downloads (~25MB) to
 // When true: Makes HEAD requests to get accurate Content-Disposition filenames (~3-6s for 30 subs)
 // Set V3_EXTRACT_FILENAMES=true to enable accurate filename extraction (slower but better matching)
 const V3_EXTRACT_FILENAMES = process.env.V3_EXTRACT_FILENAMES === 'true';
-
-// Create a concise SRT when a ZIP is too large to process
-function createZipTooLargeSubtitle(limitBytes, actualBytes) {
-  const toMb = (bytes) => Math.round((bytes / (1024 * 1024)) * 10) / 10;
-  const limitMb = toMb(limitBytes);
-  const actualMb = toMb(actualBytes);
-
-  const message = `1
-00:00:00,000 --> 04:00:00,000
-Subtitle pack is too large to process.
-Size: ${actualMb} MB (limit: ${limitMb} MB).
-Please pick another subtitle or provider.`;
-
-  return appendHiddenInformationalNote(message);
-}
 
 /**
  * OpenSubtitles V3 Service - Uses official Stremio OpenSubtitles V3 addon
@@ -397,6 +383,9 @@ class OpenSubtitlesV3Service {
 
         const buf = Buffer.isBuffer(response.data) ? response.data : Buffer.from(response.data);
 
+        // Analyze response content to detect HTML error pages, Cloudflare blocks, etc.
+        const contentAnalysis = analyzeResponseContent(buf);
+
         // Check for archive by magic bytes (ZIP or RAR)
         const archiveType = detectArchiveType(buf);
 
@@ -411,6 +400,15 @@ class OpenSubtitlesV3Service {
             season: null,
             episode: null
           });
+        }
+
+        // If not an archive and not valid subtitle content, show error
+        if (contentAnalysis.type !== 'subtitle' && contentAnalysis.type !== 'unknown') {
+          // Check if it's an error response (HTML, Cloudflare, etc.)
+          if (contentAnalysis.type.startsWith('html') || contentAnalysis.type === 'json_error' || contentAnalysis.type === 'text_error' || contentAnalysis.type === 'empty' || contentAnalysis.type === 'truncated') {
+            log.error(() => `[OpenSubtitles V3] Download failed: ${contentAnalysis.type} - ${contentAnalysis.hint}`);
+            return createInvalidResponseSubtitle('OpenSubtitles V3', contentAnalysis, buf.length);
+          }
         }
 
         // Non-ZIP path: decode with BOM awareness

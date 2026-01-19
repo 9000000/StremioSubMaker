@@ -361,7 +361,13 @@ class WyzieSubsService {
             if (error.response?.status === 404) {
                 log.debug(() => `[WyzieSubs] No results (404) for requested content`);
             } else if (error.response?.status === 400) {
-                log.debug(() => `[WyzieSubs] Bad request (400): ${error.response?.data?.message || error.message}`);
+                // Wyzie returns 400 when no subtitles found (quirky API design)
+                const msg = error.response?.data?.message || error.message;
+                if (msg?.toLowerCase().includes('no subtitles')) {
+                    log.debug(() => `[WyzieSubs] No subtitles found for requested content`);
+                } else {
+                    log.debug(() => `[WyzieSubs] Bad request (400): ${msg}`);
+                }
             } else {
                 log.warn(() => `[WyzieSubs] Search failed: ${error.message}`);
             }

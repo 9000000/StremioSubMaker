@@ -19,180 +19,13 @@ const providerMetadataCache = require('../utils/providerMetadataCache');
 const zlib = require('zlib');
 const log = require('../utils/logger');
 const { isTrueishFlag } = require('../utils/subtitleFlags');
-const { detectArchiveType, extractSubtitleFromArchive, isArchive } = require('../utils/archiveExtractor');
+const { detectArchiveType, extractSubtitleFromArchive, isArchive, createEpisodeNotFoundSubtitle, createZipTooLargeSubtitle } = require('../utils/archiveExtractor');
+const { analyzeResponseContent, createInvalidResponseSubtitle } = require('../utils/responseAnalyzer');
 
 const SUBSOURCE_API_URL = 'https://api.subsource.net/api/v1';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const MAX_LINK_CACHE = 2000; // in-memory direct-link cache size
 const MAX_ZIP_BYTES = 25 * 1024 * 1024; // hard cap for ZIP downloads (~25MB) to avoid huge packs
-
-/**
- * Create an informative SRT subtitle when an episode is not found in a season pack
- * @param {number} episode - Episode number that was not found
- * @param {number} season - Season number
- * @param {Array<string>} availableFiles - List of files that were found in the pack
- * @returns {string} - SRT subtitle content
- */
-function createEpisodeNotFoundSubtitle(episode, season, availableFiles = []) {
-  const seasonEpisodeStr = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
-
-  // Try to extract episode numbers from available files to help user
-  const foundEpisodes = availableFiles
-    .map(filename => {
-      // Match explicit episode labels (Episode 12, Ep12, Cap 12, etc.)
-      const labeled = filename.match(/(?:episode|episodio|capitulo|cap|ep|e|ova|oad)\s*(\d{1,4})/i);
-      if (labeled && labeled[1]) return parseInt(labeled[1], 10);
-
-      // Fallback: any standalone 1-4 digit number not obviously a resolution/year
-      const generic = filename.match(/(?:^|[^0-9])(\d{1,4})(?=[^0-9]|$)/);
-      if (generic && generic[1]) {
-        const n = parseInt(generic[1], 10);
-        if (Number.isNaN(n)) return null;
-        // Skip common resolutions/years
-        if ([480, 720, 1080, 2160].includes(n)) return null;
-        if (n >= 1900 && n <= 2099) return null;
-        return n;
-      }
-      return null;
-    })
-    .filter(ep => ep !== null && ep < 4000)
-    .sort((a, b) => a - b);
-
-  const uniqueEpisodes = [...new Set(foundEpisodes)];
-  const availableInfo = uniqueEpisodes.length > 0
-    ? `Pack contains ~${uniqueEpisodes.length} files, episodes ${uniqueEpisodes[0]}-${uniqueEpisodes[uniqueEpisodes.length - 1]}`
-    : 'No episode numbers detected in pack.';
-
-  const message = `1
-00:00:00,000 --> 04:00:00,000
-Episode ${seasonEpisodeStr} not found in this subtitle pack.
-${availableInfo}
-Try another subtitle or a different provider.`;
-
-  return appendHiddenInformationalNote(message);
-}
-
-// Create a concise SRT when a ZIP is too large to process
-function createZipTooLargeSubtitle(limitBytes, actualBytes) {
-  const toMb = (bytes) => Math.round((bytes / (1024 * 1024)) * 10) / 10;
-  const limitMb = toMb(limitBytes);
-  const actualMb = toMb(actualBytes);
-
-  const message = `1
-00:00:00,000 --> 04:00:00,000
-Subtitle pack is too large to process.
-Size: ${actualMb} MB (limit: ${limitMb} MB).
-Please pick another subtitle or provider.`;
-
-  return appendHiddenInformationalNote(message);
-}
-
-/**
- * Analyze response content to determine what was actually received
- * @param {Buffer} buffer - Response buffer
- * @returns {Object} - { type: string, hint: string, isRetryable: boolean }
- */
-function analyzeResponseContent(buffer) {
-  if (!buffer || buffer.length === 0) {
-    return { type: 'empty', hint: 'Empty response received', isRetryable: true };
-  }
-
-  // Check for common file signatures
-  const isZip = buffer.length >= 4 &&
-    buffer[0] === 0x50 && buffer[1] === 0x4B &&
-    buffer[2] === 0x03 && buffer[3] === 0x04;
-  if (isZip) return { type: 'zip', hint: 'Valid ZIP file', isRetryable: false };
-
-  // Check for gzip (might be compressed response that wasn't decompressed)
-  const isGzip = buffer.length >= 2 && buffer[0] === 0x1F && buffer[1] === 0x8B;
-  if (isGzip) return { type: 'gzip', hint: 'Gzip-compressed content (possibly not decompressed)', isRetryable: true };
-
-  // Try to interpret as text for further analysis
-  let textContent = '';
-  try {
-    textContent = buffer.slice(0, Math.min(2000, buffer.length)).toString('utf8').trim();
-  } catch (_) {
-    return { type: 'binary', hint: 'Unknown binary content', isRetryable: false };
-  }
-
-  const textLower = textContent.toLowerCase();
-
-  // Check for HTML (error pages, CAPTCHA, etc.)
-  if (textLower.includes('<!doctype html') || textLower.includes('<html') || textLower.includes('<head')) {
-    // Try to extract useful info from HTML
-    if (textLower.includes('cloudflare') || textLower.includes('cf-ray')) {
-      return { type: 'html_cloudflare', hint: 'Cloudflare challenge/block page', isRetryable: true };
-    }
-    if (textLower.includes('captcha') || textLower.includes('challenge')) {
-      return { type: 'html_captcha', hint: 'CAPTCHA or security challenge page', isRetryable: true };
-    }
-    if (textLower.includes('404') || textLower.includes('not found')) {
-      return { type: 'html_404', hint: 'Page not found (404)', isRetryable: false };
-    }
-    if (textLower.includes('500') || textLower.includes('internal server error')) {
-      return { type: 'html_500', hint: 'Server error page (500)', isRetryable: true };
-    }
-    if (textLower.includes('503') || textLower.includes('service unavailable')) {
-      return { type: 'html_503', hint: 'Service unavailable (503)', isRetryable: true };
-    }
-    if (textLower.includes('rate limit') || textLower.includes('too many requests')) {
-      return { type: 'html_429', hint: 'Rate limit exceeded', isRetryable: true };
-    }
-    return { type: 'html', hint: 'HTML page instead of subtitle file', isRetryable: true };
-  }
-
-  // Check for JSON error responses
-  if (textContent.startsWith('{') || textContent.startsWith('[')) {
-    try {
-      const json = JSON.parse(textContent);
-      if (json.error || json.message || json.status === 'error') {
-        const errorMsg = json.error || json.message || 'Unknown API error';
-        return { type: 'json_error', hint: `API error: ${String(errorMsg).slice(0, 100)}`, isRetryable: true };
-      }
-      return { type: 'json', hint: 'JSON response (unexpected for download)', isRetryable: false };
-    } catch (_) {
-      // Not valid JSON, maybe truncated
-    }
-  }
-
-  // Check for plain text error messages
-  if (textLower.includes('error') || textLower.includes('failed') || textLower.includes('denied')) {
-    return { type: 'text_error', hint: 'Text error message received', isRetryable: true };
-  }
-
-  // Check if it looks like subtitle content (SRT/VTT)
-  if (/^\d+\s*[\r\n]+\d{2}:\d{2}/.test(textContent) || textContent.startsWith('WEBVTT')) {
-    return { type: 'subtitle', hint: 'Direct subtitle content (not ZIP)', isRetryable: false };
-  }
-
-  // Very short response
-  if (buffer.length < 50) {
-    return { type: 'truncated', hint: `Very short response (${buffer.length} bytes)`, isRetryable: true };
-  }
-
-  return { type: 'unknown', hint: `Unrecognized content (${buffer.length} bytes)`, isRetryable: false };
-}
-
-/**
- * Create an informative SRT when a response declared as ZIP contains invalid content
- * @param {string} contentType - The Content-Type header
- * @param {Object} analysis - Result from analyzeResponseContent()
- * @param {number} size - Response size in bytes
- * @returns {string} - SRT subtitle content
- */
-function createInvalidZipSubtitle(contentType, analysis, size) {
-  const sizeInfo = size > 0 ? ` (${size} bytes)` : '';
-  const retryHint = analysis.isRetryable
-    ? 'This may be temporary - try again in a few minutes.'
-    : 'Try a different subtitle or provider.';
-
-  const message = `1
-00:00:00,000 --> 04:00:00,000
-SubSource download failed: ${analysis.hint}${sizeInfo}
-${retryHint}`;
-
-  return appendHiddenInformationalNote(message);
-}
 
 class SubSourceService {
   // Static/singleton axios client - shared across all instances for connection reuse
@@ -1170,7 +1003,7 @@ class SubSourceService {
             const hexBytes = responseBuffer.slice(0, Math.min(16, responseBuffer.length)).toString('hex').match(/.{2}/g)?.join(' ') || '';
             log.debug(() => `[SubSource] First bytes: ${hexBytes}`);
           }
-          return createInvalidZipSubtitle(contentType, contentAnalysis, responseBuffer.length);
+          return createInvalidResponseSubtitle('SubSource', contentAnalysis, responseBuffer.length);
         }
 
         log.debug(() => `[SubSource] Detected ${(archiveType || 'ZIP').toUpperCase()} archive`);

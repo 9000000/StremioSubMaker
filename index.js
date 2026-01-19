@@ -433,19 +433,6 @@ async function fetchWithRedirects(url, options = {}, maxRedirects = 5) {
     }
 }
 
-async function extractAudioWithFfmpeg(streamUrl, options = {}, logger = null) {
-    const logStep = (message, level = 'info') => {
-        try {
-            if (typeof logger === 'function') logger(message, level);
-        } catch (_) { /* ignore logger errors */ }
-    };
-    // FFmpeg support disabled outside SubMaker xSync to avoid bundled binary installs
-    logStep('FFmpeg extraction is disabled in this build', 'warn');
-    const error = new Error('FFmpeg extraction is disabled in this build');
-    error.code = 'FFMPEG_DISABLED';
-    throw error;
-}
-
 async function downloadStreamAudio(streamUrl, options = {}, logger = null) {
     const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : AUTOSUB_MAX_AUDIO_BYTES;
     const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : AUTOSUB_FETCH_TIMEOUT_MS;

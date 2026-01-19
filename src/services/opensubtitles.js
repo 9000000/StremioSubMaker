@@ -9,7 +9,8 @@ const { version } = require('../utils/version');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const log = require('../utils/logger');
 const { isTrueishFlag } = require('../utils/subtitleFlags');
-const { detectArchiveType, extractSubtitleFromArchive, isArchive } = require('../utils/archiveExtractor');
+const { detectArchiveType, extractSubtitleFromArchive, isArchive, createEpisodeNotFoundSubtitle, createZipTooLargeSubtitle } = require('../utils/archiveExtractor');
+const { analyzeResponseContent, createInvalidResponseSubtitle } = require('../utils/responseAnalyzer');
 
 const OPENSUBTITLES_API_URL = 'https://api.opensubtitles.com/api/v1';
 const USER_AGENT = `SubMaker v${version}`;
@@ -138,73 +139,6 @@ function clearCachedAuthFailure(cacheKey) {
   }
 
   credentialFailureCache.delete(cacheKey);
-}
-
-/**
- * Create an informative SRT subtitle when an episode is not found in a season pack
- * @param {number} episode - Episode number that was not found
- * @param {number} season - Season number
- * @param {Array<string>} availableFiles - List of files that were found in the pack
- * @returns {string} - SRT subtitle content
- */
-function createEpisodeNotFoundSubtitle(episode, season, availableFiles = []) {
-  try {
-    const seasonEpisodeStr = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
-
-    const foundEpisodes = (availableFiles || [])
-      .map(filename => {
-        // Match explicit episode labels (Episode 12, Ep12, Cap 12, etc.)
-        const labeled = String(filename || '').match(/(?:episode|episodio|capitulo|cap|ep|e|ova|oad)\s*(\d{1,4})/i);
-        if (labeled && labeled[1]) return parseInt(labeled[1], 10);
-
-        // Fallback: any standalone 1-4 digit number not obviously a resolution/year
-        const generic = String(filename || '').match(/(?:^|[^0-9])(\d{1,4})(?=[^0-9]|$)/);
-        if (generic && generic[1]) {
-          const n = parseInt(generic[1], 10);
-          if (Number.isNaN(n)) return null;
-          if ([480, 720, 1080, 2160].includes(n)) return null;
-          if (n >= 1900 && n <= 2099) return null;
-          return n;
-        }
-        return null;
-      })
-      .filter(ep => ep !== null && ep < 4000)
-      .sort((a, b) => a - b);
-
-    const uniqueEpisodes = [...new Set(foundEpisodes)];
-    const availableInfo = uniqueEpisodes.length > 0
-      ? `Pack contains ~${uniqueEpisodes.length} files, episodes ${uniqueEpisodes[0]}-${uniqueEpisodes[uniqueEpisodes.length - 1]}`
-      : 'No episode numbers detected in pack.';
-
-    const message = `1
-00:00:00,000 --> 04:00:00,000
-Episode ${seasonEpisodeStr} not found in this subtitle pack.
-${availableInfo}
-Try another subtitle or a different provider.`;
-
-    return appendHiddenInformationalNote(message);
-  } catch (_) {
-    const fallback = `1
-00:00:00,000 --> 04:00:00,000
-Episode not found in this subtitle pack.
-`;
-    return appendHiddenInformationalNote(fallback);
-  }
-}
-
-// Create a concise SRT when a ZIP is too large to process
-function createZipTooLargeSubtitle(limitBytes, actualBytes) {
-  const toMb = (bytes) => Math.round((bytes / (1024 * 1024)) * 10) / 10;
-  const limitMb = toMb(limitBytes);
-  const actualMb = toMb(actualBytes);
-
-  const message = `1
-00:00:00,000 --> 04:00:00,000
-Subtitle pack is too large to process.
-Size: ${actualMb} MB (limit: ${limitMb} MB).
-Please pick another subtitle or provider.`;
-
-  return appendHiddenInformationalNote(message);
 }
 
 /**
@@ -808,6 +742,9 @@ class OpenSubtitlesService {
         ? subtitleResponse.data
         : Buffer.from(subtitleResponse.data);
 
+      // Analyze response content to detect HTML error pages, Cloudflare blocks, etc.
+      const contentAnalysis = analyzeResponseContent(buf);
+
       // Check for archive by magic bytes (ZIP or RAR)
       const archiveType = detectArchiveType(buf);
 
@@ -822,6 +759,14 @@ class OpenSubtitlesService {
           season: seasonPackSeason,
           episode: seasonPackEpisode
         });
+      }
+
+      // If not an archive, check if it's an error response (HTML, Cloudflare, etc.)
+      if (contentAnalysis.type !== 'subtitle' && contentAnalysis.type !== 'unknown') {
+        if (contentAnalysis.type.startsWith('html') || contentAnalysis.type === 'json_error' || contentAnalysis.type === 'text_error' || contentAnalysis.type === 'empty' || contentAnalysis.type === 'truncated' || contentAnalysis.type === 'gzip') {
+          log.error(() => `[OpenSubtitles] Download failed: ${contentAnalysis.type} - ${contentAnalysis.hint}`);
+          return createInvalidResponseSubtitle('OpenSubtitles', contentAnalysis, buf.length);
+        }
       }
 
       // Non-ZIP: decode with BOM awareness

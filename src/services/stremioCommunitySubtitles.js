@@ -37,7 +37,7 @@ const CHROME_CIPHERS = [
 // idle sockets before they can cause HPE_INVALID_CONSTANT parser errors
 const scsHttpsAgent = new https.Agent({
     keepAlive: true,           // ENABLED: Reuse connections for performance
-    timeout: 30000,            // 30 second socket timeout (server can take 16+ seconds)
+    timeout: 35000,            // 35 second socket timeout (30s axios max + buffer)
     freeSocketTimeout: 15000,  // Close idle sockets after 15s to prevent stale connection issues
     maxSockets: 10,            // Limit concurrent connections per host
     maxFreeSockets: 2,         // Keep only 2 idle sockets
@@ -143,6 +143,32 @@ async function makeRequestWithRetry(requestFn, context) {
 const SCS_API_URL = 'https://stremio-community-subtitles.top';
 const SCS_FALLBACK_TOKEN = 'yNejf3661w9R1Agdh7ARxE8MzhSVpL2TzMn5jueHFzw'; // Default community token
 const USER_AGENT = `SubMaker v${version}`;
+
+// ============================================================================
+// SCS TIMEOUT CONFIGURATION
+// ============================================================================
+// Empirical testing shows SCS server response times vary significantly based on query type:
+//   - Base request (no hash/filename): ~10s
+//   - With hash only: ~15s
+//   - With filename only: ~16s
+//   - With hash + filename: ~21-22s
+//
+// The slowness is server-side (time-to-first-byte), NOT network latency.
+// TLS handshake is fast (~115ms), but the server takes 10-22s to process.
+// This is expected behavior for SCS as it does hash matching against a large database.
+// ============================================================================
+
+// Minimum timeout for SCS requests - MUST be at least 25s to handle basic queries
+// This overrides any lower user-configured timeout because SCS simply won't work with less
+const SCS_MIN_TIMEOUT_MS = 28000;
+
+// Extended timeout for hash/filename matching queries - these take longer on the server
+// When videoHash or filename is provided, SCS does additional database matching
+// Capped at 30s to match user max setting (hash queries may timeout but basic queries work)
+const SCS_HASH_MATCH_TIMEOUT_MS = 30000;
+
+// Maximum timeout - matches user's max allowed setting
+const SCS_MAX_TIMEOUT_MS = 30000;
 
 // Circuit breaker pattern for SCS service resilience
 // Prevents repeated failed requests when service is down (SSL errors, Cloudflare blocks, etc.)
@@ -358,7 +384,7 @@ class StremioCommunitySubtitlesService {
         httpAgent,
         httpsAgent: scsHttpsAgent, // Use custom SCS agent with TLS config for SSL compatibility
         lookup: dnsLookup,
-        timeout: 25000 // SCS server can be slow (16+ seconds observed)
+        timeout: SCS_HASH_MATCH_TIMEOUT_MS // Default to extended timeout (SCS server takes 10-22s)
     });
 
     constructor() {
@@ -396,6 +422,8 @@ class StremioCommunitySubtitlesService {
             // videoHash is now only set when Stremio provides a real OpenSubtitles hash
             // (our derived MD5 hashes are no longer passed - they're useless for SCS matching)
             const hasRealHash = !!videoHash;
+            const hasFilename = !!filename;
+            const usesMatchingParams = hasRealHash || hasFilename;
 
             // SCS requires content ID. It works best with videoHash, but filename is sufficient.
             // We always have IMDB ID from SubMaker, so we can search by content + filename
@@ -404,13 +432,34 @@ class StremioCommunitySubtitlesService {
                 return [];
             }
 
+            // ============================================================================
+            // INTELLIGENT TIMEOUT CALCULATION
+            // ============================================================================
+            // SCS server response times vary by query type:
+            //   - No matching params: ~10s (use SCS_MIN_TIMEOUT_MS)
+            //   - With hash/filename: ~15-22s (use SCS_HASH_MATCH_TIMEOUT_MS)
+            //
+            // We OVERRIDE user's configured timeout if it's too low, because SCS simply
+            // cannot respond faster than 10s even for basic queries.
+            // ============================================================================
+            let effectiveTimeout;
+            if (usesMatchingParams) {
+                // Hash/filename matching takes 15-22s, use extended timeout
+                effectiveTimeout = Math.max(SCS_HASH_MATCH_TIMEOUT_MS, providerTimeout || 0);
+            } else {
+                // Basic content search takes ~10s, use minimum timeout
+                effectiveTimeout = Math.max(SCS_MIN_TIMEOUT_MS, providerTimeout || 0);
+            }
+            // Cap at maximum
+            effectiveTimeout = Math.min(effectiveTimeout, SCS_MAX_TIMEOUT_MS);
+
             // Log what matching mode SCS will use
             if (hasRealHash) {
-                log.debug(() => `[SCS] Hash matching enabled: ${videoHash.substring(0, 8)}...`);
-            } else if (filename) {
-                log.debug(() => '[SCS] No hash available, using filename matching');
+                log.debug(() => `[SCS] Hash matching enabled: ${videoHash.substring(0, 8)}... (timeout: ${effectiveTimeout}ms)`);
+            } else if (hasFilename) {
+                log.debug(() => `[SCS] No hash available, using filename matching (timeout: ${effectiveTimeout}ms)`);
             } else {
-                log.debug(() => '[SCS] Searching by content ID only (no hash or filename)');
+                log.debug(() => `[SCS] Searching by content ID only (timeout: ${effectiveTimeout}ms)`);
             }
 
             // Construct Stremio-style path params
@@ -447,9 +496,11 @@ class StremioCommunitySubtitlesService {
 
             log.debug(() => `[SCS] Search: type=${stremioType}, id=${contentId}, hash=${videoHash || 'none'}, filename=${filename ? filename.substring(0, 50) : 'none'}`);
 
-            // SCS server can be slow (16+ seconds observed), use configured timeout from user settings
-            // Build request config with timeout if provided, otherwise use client default (25s)
-            const requestConfig = providerTimeout ? { timeout: providerTimeout } : {};
+            // Build request config with intelligent timeout
+            const requestConfig = { timeout: effectiveTimeout };
+
+            // Track request timing for performance monitoring
+            const searchStartTime = Date.now();
 
             // Use retry wrapper for SSL error resilience
             const response = await makeRequestWithRetry(
@@ -457,12 +508,21 @@ class StremioCommunitySubtitlesService {
                 'search'
             );
 
+            // Log performance timing (SCS is expected to be slow, but this helps diagnose issues)
+            const searchDuration = Date.now() - searchStartTime;
+            if (searchDuration > 15000) {
+                log.info(() => `[SCS] Search completed in ${(searchDuration / 1000).toFixed(1)}s (slow but expected for hash matching)`);
+            } else {
+                log.debug(() => `[SCS] Search completed in ${(searchDuration / 1000).toFixed(1)}s`);
+            }
+
             if (!response.data || !response.data.subtitles) {
                 log.debug(() => `[SCS] No subtitles in response`);
                 return [];
             }
 
             log.debug(() => `[SCS] Found ${response.data.subtitles.length} subtitle(s)${hasRealHash ? ' (with real videoHash)' : ''}`);
+
 
             // Track unique languages for debugging and hash match assignment
             const langStats = new Map();
@@ -537,8 +597,10 @@ class StremioCommunitySubtitlesService {
      * @param {string} fileId - The file ID (e.g. comm_XXXX)
      */
     async downloadSubtitle(fileId, options = {}) {
-        // Use configured timeout from user settings, fallback to 25s default (SCS server can be slow)
-        const timeout = options?.timeout || 25000;
+        // Downloads are typically faster than searches (~5-10s vs 10-22s)
+        // Use SCS_MIN_TIMEOUT_MS as baseline, but allow user override if higher
+        const timeout = Math.max(SCS_MIN_TIMEOUT_MS, options?.timeout || 0);
+
         // Check circuit breaker first
         const circuitCheck = isRequestAllowed();
         if (!circuitCheck.allowed) {
@@ -557,15 +619,24 @@ class StremioCommunitySubtitlesService {
             // SCS expects .vtt or .ass extension in the download URL
             const url = `/${this.manifestToken}/download/${identifier}.vtt`;
 
-            log.debug(() => `[SCS] Downloading from: ${url}`);
+            log.debug(() => `[SCS] Downloading from: ${url} (timeout: ${timeout}ms)`);
+
+            // Track download timing
+            const downloadStartTime = Date.now();
+
             // Use retry wrapper for SSL error resilience
             const response = await makeRequestWithRetry(
                 () => this.client.get(url, {
                     responseType: 'arraybuffer',
-                    timeout: timeout // Use configurable timeout (minimum 25s for slow server)
+                    timeout: timeout
                 }),
                 'download'
             );
+
+            // Log download timing
+            const downloadDuration = Date.now() - downloadStartTime;
+            log.debug(() => `[SCS] Download completed in ${(downloadDuration / 1000).toFixed(1)}s`);
+
 
             const buffer = Buffer.from(response.data);
             const text = buffer.toString('utf-8');

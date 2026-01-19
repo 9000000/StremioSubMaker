@@ -8,15 +8,33 @@ All notable changes to this project will be documented in this file.
 
 - **Changed default API key rotation frequency to "Per Batch":** When enabling Gemini API key rotation, the default rotation frequency is now "Per Batch" (rotates key for each translation batch) instead of "Per Request" (once per file). This provides better rate limit distribution across multiple API keys. "Per Batch" is now also listed first in the dropdown as the recommended option.
 
+- **Centralized shared subtitle helper functions:** Refactored `createEpisodeNotFoundSubtitle` and `createZipTooLargeSubtitle` from duplicate local implementations in each provider (`subsource.js`, `subdl.js`, `opensubtitles.js`, `opensubtitles-v3.js`, `subsRo.js`) into a single shared implementation in `archiveExtractor.js`. This eliminates ~500 lines of duplicated code while maintaining all functionality including episode number extraction, season pack detection, and user-friendly error messages.
+
+- **Centralized response content analysis:** Moved `analyzeResponseContent` function from `subsource.js` to the shared `responseAnalyzer.js` utility. All providers (SubSource, SubDL, OpenSubtitles, OpenSubtitles V3, Subs.ro) now use the centralized version for consistent detection of HTML error pages, Cloudflare blocks, CAPTCHA pages, JSON errors, gzip responses, and other non-subtitle content.
+
+- **Enhanced response analysis patterns:** Improved the `analyzeResponseContent` function with additional detection patterns: added 'challenge' keyword detection for CAPTCHA challenges, added 'failed' keyword detection for error responses, and added detection for `status: 'error'` string patterns in JSON responses.
+
+- **Improved SCS timeout warning:** Added debug logging when the user's configured timeout is too low for Stremio Community Subtitles (SCS). SCS requires ~30 seconds due to server-side hash matching. When timeout is below 28s, a debug message now suggests increasing the timeout for reliable SCS results.
+
+- **Enhanced SCS performance logging:** Added detailed timing logs for SCS search and download operations, making it easier to diagnose slow SCS responses and understand performance characteristics.
+
 **Cleanup:**
 
 - **Removed Sentry debug endpoints:** Removed `/debug-sentry` and `/api/sentry-test` endpoints that were only used for verifying Sentry integration during initial setup. Core Sentry error tracking remains active for production error monitoring.
 
 - **Removed Gemini 2.5 Pro from model selection:** Removed `gemini-2.5-pro` from the Translation Model dropdown. Gemini 3.0 Pro remains available for users who need a Pro-tier model.
 
+- **Removed duplicate subtitle helper functions from providers:** Cleaned up ~500 lines of duplicated code by removing local copies of `createEpisodeNotFoundSubtitle`, `createZipTooLargeSubtitle`, and `analyzeResponseContent` from `subsource.js`, `subdl.js`, `opensubtitles.js`, `opensubtitles-v3.js`, and `subsRo.js`. These providers now import the shared implementations from `archiveExtractor.js` and `responseAnalyzer.js`.
+
+- **Removed spurious auto-save on Learn Mode toggle:** Fixed Learn Mode toggle and radio buttons triggering `saveConfig()` on every change. These controls now only update `currentConfig` without saving, consistent with other config page controls that require explicit save.
+
 **Bug Fixes:**
 
 - **Fixed OpenSubtitles config section padding asymmetry:** The OpenSubtitles provider section had asymmetric padding (only bottom padding), causing it to appear closer to the section above compared to other provider entries. Changed to symmetric padding matching other providers.
+
+- **Fixed createInvalidResponseSubtitle signature:** Updated the function signature in `responseAnalyzer.js` to make `responseSize` parameter optional with a default of 0, preventing errors when providers call it without the size argument.
+
+- **Fixed UTF-8 BOM in subtitles.js:** Removed UTF-8 BOM character from the beginning of `src/handlers/subtitles.js` that was causing potential parsing issues.
 
 ## SubMaker v1.4.34
 

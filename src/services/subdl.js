@@ -6,73 +6,13 @@ const { detectAndConvertEncoding } = require('../utils/encodingDetector');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const { redactSensitiveData } = require('../utils/logger');
 const log = require('../utils/logger');
-const { detectArchiveType, extractSubtitleFromArchive, isArchive } = require('../utils/archiveExtractor');
+const { detectArchiveType, extractSubtitleFromArchive, isArchive, createEpisodeNotFoundSubtitle, createZipTooLargeSubtitle } = require('../utils/archiveExtractor');
+const { analyzeResponseContent, createInvalidResponseSubtitle } = require('../utils/responseAnalyzer');
 
 
 const SUBDL_API_URL = 'https://api.subdl.com/api/v1';
 const USER_AGENT = 'StremioSubtitleTranslator v1.0';
 const MAX_ZIP_BYTES = 25 * 1024 * 1024; // hard cap for ZIP downloads (~25MB) to avoid huge packs
-
-/**
- * Create an informative SRT subtitle when an episode is not found in a season pack
- * @param {number} episode - Episode number that was not found
- * @param {number} season - Season number
- * @param {Array<string>} availableFiles - List of files that were found in the pack
- * @returns {string} - SRT subtitle content
- */
-function createEpisodeNotFoundSubtitle(episode, season, availableFiles = []) {
-  const seasonEpisodeStr = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
-
-  // Try to extract episode numbers from available files to help user
-  const foundEpisodes = availableFiles
-    .map(filename => {
-      // Match explicit episode labels (Episode 12, Ep12, Cap 12, etc.)
-      const labeled = filename.match(/(?:episode|episodio|capitulo|cap|ep|e|ova|oad)\s*(\d{1,4})/i);
-      if (labeled && labeled[1]) return parseInt(labeled[1], 10);
-
-      // Fallback: any standalone 1-4 digit number not obviously a resolution/year
-      const generic = filename.match(/(?:^|[^0-9])(\d{1,4})(?=[^0-9]|$)/);
-      if (generic && generic[1]) {
-        const n = parseInt(generic[1], 10);
-        if (Number.isNaN(n)) return null;
-        // Skip common resolutions/years
-        if ([480, 720, 1080, 2160].includes(n)) return null;
-        if (n >= 1900 && n <= 2099) return null;
-        return n;
-      }
-      return null;
-    })
-    .filter(ep => ep !== null && ep < 4000)
-    .sort((a, b) => a - b);
-
-  const uniqueEpisodes = [...new Set(foundEpisodes)];
-  const availableInfo = uniqueEpisodes.length > 0
-    ? `Pack contains ~${uniqueEpisodes.length} files, episodes ${uniqueEpisodes[0]}-${uniqueEpisodes[uniqueEpisodes.length - 1]}`
-    : 'No episode numbers detected in pack.';
-
-  const message = `1
-00:00:00,000 --> 04:00:00,000
-Episode ${seasonEpisodeStr} not found in this subtitle pack.
-${availableInfo}
-Try another subtitle or a different provider.`;
-
-  return appendHiddenInformationalNote(message);
-}
-
-// Create a concise SRT when a ZIP is too large to process
-function createZipTooLargeSubtitle(limitBytes, actualBytes) {
-  const toMb = (bytes) => Math.round((bytes / (1024 * 1024)) * 10) / 10;
-  const limitMb = toMb(limitBytes);
-  const actualMb = toMb(actualBytes);
-
-  const message = `1
-00:00:00,000 --> 04:00:00,000
-Subtitle pack is too large to process.
-Size: ${actualMb} MB (limit: ${limitMb} MB).
-Please pick another subtitle or provider.`;
-
-  return appendHiddenInformationalNote(message);
-}
 
 class SubDLService {
   // Static/singleton axios client - shared across all instances for connection reuse
@@ -478,26 +418,27 @@ class SubDLService {
         throw new Error('Downloaded file is empty');
       }
 
-      // Check if response looks like an error page (HTML) instead of archive
-      const dataString = subtitleResponse.data.toString('utf8', 0, Math.min(100, subtitleResponse.data.length));
-      if (dataString.includes('<!DOCTYPE') || dataString.includes('<html') || dataString.includes('404') || dataString.includes('error')) {
-        log.error(() => '[SubDL] Response appears to be an error page, not an archive file');
-        log.error(() => ['[SubDL] Response preview:', dataString.substring(0, 200)]);
-        throw new Error('Server returned an error page instead of a subtitle file. The subtitle may have been removed from SubDL.');
-      }
+      // Analyze response content to detect HTML error pages, Cloudflare blocks, etc.
+      const responseBuffer = Buffer.isBuffer(subtitleResponse.data) ? subtitleResponse.data : Buffer.from(subtitleResponse.data);
+      const contentAnalysis = analyzeResponseContent(responseBuffer);
 
       // Check for valid archive signature (ZIP or RAR)
-      const archiveType = detectArchiveType(subtitleResponse.data);
+      const archiveType = detectArchiveType(responseBuffer);
       if (!archiveType) {
-        log.error(() => '[SubDL] Invalid archive signature detected (not ZIP or RAR)');
-        log.error(() => ['[SubDL] First 20 bytes:', Array.from(subtitleResponse.data.slice(0, 20)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' ')]);
-        throw new Error('Downloaded file is not a valid archive. Server may have returned an error or the file may be corrupted.');
+        // Not a valid archive - provide user-friendly error message
+        log.error(() => `[SubDL] Response is not a valid archive. Content analysis: ${contentAnalysis.type} - ${contentAnalysis.hint}`);
+        if (responseBuffer.length > 0 && responseBuffer.length < 500) {
+          log.debug(() => ['[SubDL] Response preview:', responseBuffer.toString('utf8', 0, Math.min(200, responseBuffer.length))]);
+        } else {
+          log.debug(() => ['[SubDL] First 20 bytes:', Array.from(responseBuffer.slice(0, 20)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' ')]);
+        }
+        return createInvalidResponseSubtitle('SubDL', contentAnalysis, responseBuffer.length);
       }
 
       log.debug(() => `[SubDL] Detected ${archiveType.toUpperCase()} archive`);
 
       // Use the centralized archive extractor that handles both ZIP and RAR
-      return await extractSubtitleFromArchive(subtitleResponse.data, {
+      return await extractSubtitleFromArchive(responseBuffer, {
         providerName: 'SubDL',
         maxBytes: MAX_ZIP_BYTES,
         isSeasonPack: isSeasonPack,

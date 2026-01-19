@@ -27,7 +27,8 @@ const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const log = require('../utils/logger');
 const { version } = require('../utils/version');
 const { sanitizeApiKeyForHeader } = require('../utils/security');
-const { detectArchiveType, extractSubtitleFromArchive, isArchive } = require('../utils/archiveExtractor');
+const { detectArchiveType, extractSubtitleFromArchive, isArchive, createEpisodeNotFoundSubtitle, createZipTooLargeSubtitle } = require('../utils/archiveExtractor');
+const { analyzeResponseContent, createInvalidResponseSubtitle } = require('../utils/responseAnalyzer');
 
 const SUBS_RO_API_URL = 'https://subs.ro/api/v1.0';
 const USER_AGENT = `SubMaker v${version}`;
@@ -100,72 +101,6 @@ function normalizeLanguageCode(lang) {
     if (!lang) return 'und';
     const lower = lang.toLowerCase().trim();
     return SUBSRO_TO_ISO2[lower] || 'und';
-}
-
-/**
- * Create an informative SRT subtitle when an episode is not found in a season pack
- * @param {number} episode - Episode number that was not found
- * @param {number} season - Season number
- * @param {Array<string>} availableFiles - List of files that were found in the pack
- * @returns {string} - SRT subtitle content
- */
-function createEpisodeNotFoundSubtitle(episode, season, availableFiles = []) {
-    try {
-        const seasonEpisodeStr = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
-
-        const foundEpisodes = (availableFiles || [])
-            .map(filename => {
-                const labeled = String(filename || '').match(/(?:episode|episodio|capitulo|cap|ep|e|ova|oad)\s*(\d{1,4})/i);
-                if (labeled && labeled[1]) return parseInt(labeled[1], 10);
-
-                const generic = String(filename || '').match(/(?:^|[^0-9])(\d{1,4})(?=[^0-9]|$)/);
-                if (generic && generic[1]) {
-                    const n = parseInt(generic[1], 10);
-                    if (Number.isNaN(n)) return null;
-                    if ([480, 720, 1080, 2160].includes(n)) return null;
-                    if (n >= 1900 && n <= 2099) return null;
-                    return n;
-                }
-                return null;
-            })
-            .filter(ep => ep !== null && ep < 4000)
-            .sort((a, b) => a - b);
-
-        const uniqueEpisodes = [...new Set(foundEpisodes)];
-        const availableInfo = uniqueEpisodes.length > 0
-            ? `Pack contains ~${uniqueEpisodes.length} files, episodes ${uniqueEpisodes[0]}-${uniqueEpisodes[uniqueEpisodes.length - 1]}`
-            : 'No episode numbers detected in pack.';
-
-        const message = `1
-00:00:00,000 --> 04:00:00,000
-Episode ${seasonEpisodeStr} not found in this subtitle pack.
-${availableInfo}
-Try another subtitle or a different provider.`;
-
-        return appendHiddenInformationalNote(message);
-    } catch (_) {
-        const fallback = `1
-00:00:00,000 --> 04:00:00,000
-Episode not found in this subtitle pack.
-`;
-        return appendHiddenInformationalNote(fallback);
-    }
-}
-
-/**
- * Create an informative SRT subtitle for ZIP too large error
- * @param {number} limitBytes - Maximum allowed size
- * @param {number} actualBytes - Actual size received
- * @returns {string} - SRT formatted error message
- */
-function createZipTooLargeSubtitle(limitBytes, actualBytes) {
-    const toMb = (bytes) => (bytes / 1024 / 1024).toFixed(1);
-    const message = `1
-00:00:00,000 --> 04:00:00,000
-Subs.ro Download Failed
-This subtitle pack is too large (${toMb(actualBytes)} MB, limit: ${toMb(limitBytes)} MB).
-Please try a different subtitle from the list.`;
-    return appendHiddenInformationalNote(message);
 }
 
 /**
@@ -609,34 +544,28 @@ class SubsRoService {
                     });
 
                 } else {
-                    // Not a ZIP - try to handle as direct text content
-                    log.debug(() => `[SubsRo] Response is not a ZIP (${buffer.length} bytes), treating as direct content`);
+                    // Not an archive - analyze what we received
+                    const contentAnalysis = analyzeResponseContent(buffer);
+                    log.debug(() => `[SubsRo] Response is not an archive (${buffer.length} bytes). Content analysis: ${contentAnalysis.type} - ${contentAnalysis.hint}`);
 
-                    // Check if it looks like an error response
+                    // If it's an error response (HTML, Cloudflare, JSON error, etc.), show user-friendly message
+                    if (contentAnalysis.type.startsWith('html') || contentAnalysis.type === 'json_error' || contentAnalysis.type === 'text_error' || contentAnalysis.type === 'empty' || contentAnalysis.type === 'truncated' || contentAnalysis.type === 'gzip') {
+                        log.error(() => `[SubsRo] Download failed: ${contentAnalysis.type} - ${contentAnalysis.hint}`);
+                        return createInvalidResponseSubtitle('SubsRo', contentAnalysis, buffer.length);
+                    }
+
+                    // If it looks like subtitle content, decode and return it
+                    if (contentAnalysis.type === 'subtitle') {
+                        const text = detectAndConvertEncoding(buffer, 'SubsRo');
+                        return text;
+                    }
+
+                    // For unknown content, try to decode it as subtitle
                     const text = detectAndConvertEncoding(buffer, 'SubsRo');
-                    const trimmed = text.trim().toLowerCase();
-
-                    // Check for HTML error pages
-                    if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html')) {
-                        throw new Error('Received HTML error page instead of subtitle content');
-                    }
-
-                    // Check for JSON error responses
-                    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-                        try {
-                            const json = JSON.parse(text);
-                            if (json.message || json.error) {
-                                throw new Error(`API error: ${json.message || json.error}`);
-                            }
-                        } catch (parseError) {
-                            // Not valid JSON, continue with content
-                        }
-                    }
-
-                    // Validate that it looks like subtitle content
-                    const hasTimecodes = /\d{2}:\d{2}:\d{2}[,.:]\d{2,3}/.test(text);
+                    const hasTimecodes = /\d{2}:\d{2}:\d{2}[,.:]+\d{2,3}/.test(text);
                     if (!hasTimecodes && text.length < 100) {
-                        throw new Error('Response does not appear to be valid subtitle content');
+                        log.error(() => `[SubsRo] Response does not appear to be valid subtitle content`);
+                        return createInvalidResponseSubtitle('SubsRo', { type: 'unknown', hint: 'Unrecognized content format', isRetryable: false }, buffer.length);
                     }
 
                     return text;

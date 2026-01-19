@@ -28,15 +28,18 @@ function analyzeResponseContent(buffer) {
     if (isRar) return { type: 'rar', hint: 'Valid RAR file', isRetryable: false };
 
     // Check for Gzip (compressed content) - 1f 8b
+    // Gzip is retryable because the server might decompress on retry, or it may indicate
+    // a misconfigured response that the server could fix
     const isGzip = buffer.length >= 2 && buffer[0] === 0x1F && buffer[1] === 0x8B;
-    if (isGzip) return { type: 'gzip', hint: 'Gzip compressed content', isRetryable: false };
+    if (isGzip) return { type: 'gzip', hint: 'Gzip-compressed content (possibly not decompressed)', isRetryable: true };
 
-    // Try to decode as text
+    // Try to interpret as text for further analysis
+    // Use 2000 bytes to catch longer error messages in HTML pages
     let textContent;
     try {
-        textContent = buffer.toString('utf8', 0, Math.min(1024, buffer.length)).toLowerCase();
+        textContent = buffer.toString('utf8', 0, Math.min(2000, buffer.length)).trim().toLowerCase();
     } catch (_) {
-        return { type: 'binary', hint: 'Binary content (not text)', isRetryable: false };
+        return { type: 'binary', hint: 'Unknown binary content', isRetryable: false };
     }
 
     // Check for HTML content (likely error pages)
@@ -45,7 +48,7 @@ function analyzeResponseContent(buffer) {
         if (textContent.includes('cloudflare') || textContent.includes('cf-ray')) {
             return { type: 'html_cloudflare', hint: 'Cloudflare challenge/block page', isRetryable: true };
         }
-        if (textContent.includes('captcha') || textContent.includes('recaptcha') || textContent.includes('hcaptcha')) {
+        if (textContent.includes('captcha') || textContent.includes('recaptcha') || textContent.includes('hcaptcha') || textContent.includes('challenge')) {
             return { type: 'html_captcha', hint: 'CAPTCHA challenge page', isRetryable: true };
         }
         if (textContent.includes('404') || textContent.includes('not found')) {
@@ -68,7 +71,8 @@ function analyzeResponseContent(buffer) {
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
         try {
             const json = JSON.parse(buffer.toString('utf8', 0, Math.min(2048, buffer.length)));
-            if (json.error || json.message || json.status === false) {
+            // Check for various API error patterns: explicit error/message fields, boolean false status, or string 'error' status
+            if (json.error || json.message || json.status === false || json.status === 'error') {
                 const errorHint = json.error || json.message || 'Unknown error';
                 return { type: 'json_error', hint: `JSON error: ${String(errorHint).slice(0, 100)}`, isRetryable: true };
             }
@@ -79,7 +83,7 @@ function analyzeResponseContent(buffer) {
     }
 
     // Check for plain text error messages
-    if (textContent.includes('error') || textContent.includes('denied') || textContent.includes('forbidden')) {
+    if (textContent.includes('error') || textContent.includes('failed') || textContent.includes('denied') || textContent.includes('forbidden')) {
         return { type: 'text_error', hint: 'Text error message received', isRetryable: true };
     }
 
@@ -99,13 +103,12 @@ function analyzeResponseContent(buffer) {
 /**
  * Create an informative SRT subtitle when a provider returns invalid response
  * @param {string} providerName - Name of the provider (e.g., 'SubSource', 'SubDL')
- * @param {string} contentType - Content-Type header from response
  * @param {Object} analysis - Analysis result from analyzeResponseContent
- * @param {number} responseSize - Size of response in bytes
+ * @param {number} responseSize - Size of response in bytes (optional)
  * @returns {string} - SRT formatted error message
  */
-function createInvalidResponseSubtitle(providerName, contentType, analysis, responseSize) {
-    const sizeInfo = responseSize ? ` (${responseSize} bytes)` : '';
+function createInvalidResponseSubtitle(providerName, analysis, responseSize = 0) {
+    const sizeInfo = responseSize > 0 ? ` (${responseSize} bytes)` : '';
 
     let mainMessage = `${providerName} download failed: ${analysis.hint}${sizeInfo}`;
     let suggestion = analysis.isRetryable
@@ -135,6 +138,9 @@ function createInvalidResponseSubtitle(providerName, contentType, analysis, resp
             break;
         case 'truncated':
             suggestion = 'Response was incomplete. Network issues may be affecting the download.';
+            break;
+        case 'gzip':
+            suggestion = 'Server returned compressed data that could not be processed. Try again.';
             break;
         default:
             break;

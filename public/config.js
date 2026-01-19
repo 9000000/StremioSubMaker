@@ -2506,14 +2506,12 @@ Translate to {target_language}.`;
                 if (learnPlacementGroup) learnPlacementGroup.style.display = enabled ? '' : 'none';
                 if (learnTargetsCard) learnTargetsCard.style.display = enabled ? '' : 'none';
                 validateLanguageSelection('learn');
-                saveConfig();
             });
         }
         document.querySelectorAll('input[name="learnOrder"]').forEach(r => {
             r.addEventListener('change', (e) => {
                 if (e.target.checked) {
                     currentConfig.learnOrder = e.target.value;
-                    saveConfig();
                 }
             });
         });
