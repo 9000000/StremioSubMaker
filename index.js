@@ -7571,6 +7571,50 @@ app.use('/addon/:config', (req, res, next) => {
     next();
 });
 
+// Bare manifest route for Stremio Community addon list
+// This returns a generic manifest without user-specific config, directing users to configure
+app.get('/manifest.json', (req, res) => {
+    try {
+        setNoStore(res);
+        const host = getSafeHost(req);
+        const localhost = isLocalhost(req);
+        const protocol = localhost
+            ? (req.get('x-forwarded-proto') || req.protocol)
+            : (req.get('x-forwarded-proto') || 'https');
+        const baseUrl = `${protocol}://${host}`;
+
+        const isElfHosted = process.env.ELFHOSTED === 'true';
+        const addonName = isElfHosted
+            ? 'SubMaker | ElfHosted'
+            : 'SubMaker - Subtitle Translator';
+
+        const manifest = {
+            id: 'com.stremio.submaker',
+            version: version,
+            name: addonName,
+            description: 'Take control of your subtitles! Fetch and translate subtitles from OpenSubtitles, SubScene, and SubDL with AI translation powered by Gemini, OpenAI, Anthropic, and more. Configure the addon to get started.',
+            logo: `${baseUrl}/logo.png`,
+            icon: `${baseUrl}/logo.png`,
+            background: `${baseUrl}/background.svg`,
+            catalogs: [],
+            resources: ['subtitles'],
+            types: ['movie', 'series', 'anime'],
+            idPrefixes: ['tt', 'tmdb', 'anidb', 'kitsu', 'mal', 'anilist'],
+            behaviorHints: {
+                configurable: true,
+                configurationRequired: true
+            },
+            contactEmail: 'support@submaker.example.com'
+        };
+
+        log.info(() => `[Manifest] Bare manifest request from ${getClientIp(req)}`);
+        res.json(manifest);
+    } catch (error) {
+        log.error(() => ['[Manifest] Bare manifest error:', error]);
+        res.status(500).json({ error: 'Failed to generate manifest' });
+    }
+});
+
 // Stremio addon manifest route (AFTER middleware so URLs get replaced)
 app.get('/addon/:config/manifest.json', async (req, res) => {
     try {

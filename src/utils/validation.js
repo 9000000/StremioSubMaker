@@ -6,10 +6,13 @@ const log = require('./logger');
  */
 
 // Validate fileId (subtitle file identifier)
+// SCS IDs are Base64-encoded JSON containing filename, which can be very long
+// e.g., scs_comm_eyJ...v_fname":"Shakugan.no.Shana.S02E02.1080p.Blu-Ray.10-Bit.Dual-Audio.TrueHD.x265-iAHD.mkv"...}
+// Typical SCS IDs are 250-400 chars, so allow up to 600 for safety
 const fileIdSchema = Joi.string()
   .pattern(/^[a-zA-Z0-9_-]+$/)
   .min(1)
-  .max(200)
+  .max(600)
   .required();
 
 // Validate language code (ISO-639-2 or ISO-639-1)

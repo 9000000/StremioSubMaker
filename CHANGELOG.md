@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.36
+
+**New Features:**
+
+- **Added bare manifest for Stremio Community addon list:** Added `/manifest.json` endpoint that returns a generic addon manifest without requiring user configuration. This allows SubMaker to be published to the Stremio Community addon list. When users install from the community list, Stremio will automatically redirect them to the configuration page.
+
+**Bug Fixes:**
+
+- **Fixed SCS subtitles crashing Stremio for long filenames:** SCS (Stremio Community Subtitles) uses Base64-encoded JSON as file IDs which include the video filename. Long filenames caused IDs to exceed the 200-character validation limit, returning a JSON error instead of a subtitle. This crashed Stremio's player with `TypeError: list[0] must be Buffer`. Increased fileId limit from 200 to 600 characters.
+
 ## SubMaker v1.4.35
 
 **Improvements:**
