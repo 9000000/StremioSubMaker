@@ -307,7 +307,7 @@ body.modal-open {
 /* Removed heavy fixed gradient layer to avoid full-viewport repaints on scroll */
 
 .container {
-    max-width: 1400px;
+    max-width: fit-content;
     margin: 0 auto;
     padding: 2rem 20%;
     position: relative;
