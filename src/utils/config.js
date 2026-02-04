@@ -884,8 +884,8 @@ function getModelSpecificDefaults(modelName) {
  */
 function getDefaultConfig(modelName = null) {
   // Determine the model to use for defaults
-  // Default to gemma-3-27b-it which has better rate limits for free tier users
-  const effectiveModel = modelName || process.env.GEMINI_MODEL || 'gemma-3-27b-it';
+  // Default to gemini-3-flash-preview as the primary recommended model
+  const effectiveModel = modelName || process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
   const modelDefaults = getModelSpecificDefaults(effectiveModel);
 
   // Read advanced settings from environment variables with fallback to model-specific defaults
