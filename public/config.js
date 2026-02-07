@@ -770,7 +770,7 @@ Translate to {target_language}.`;
                 enableBatchContext: false, // Include original surrounding context and previous translations
                 contextSize: 3, // Number of surrounding entries to include as context
                 sendTimestampsToAI: false, // Let AI handle timestamps directly
-                translationWorkflow: 'original', // 'original', 'ai', or 'xml'
+                translationWorkflow: 'xml', // 'original', 'ai', or 'xml'
                 enableJsonOutput: false, // Request JSON structured output from AI
                 mismatchRetries: 1 // Retries when AI returns wrong entry count (0-3)
             }
@@ -1831,7 +1831,7 @@ Translate to {target_language}.`;
         const mismatchRetriesChanged = mismatchRetriesEl ? (parseInt(mismatchRetriesEl.value) !== (defaults.mismatchRetries ?? 1)) : false;
         // Translation workflow change
         const workflowEl = document.getElementById('sendTimestampsToAI');
-        const workflowChanged = workflowEl ? (workflowEl.value !== (defaults.translationWorkflow || 'original')) : false;
+        const workflowChanged = workflowEl ? (workflowEl.value !== (defaults.translationWorkflow || 'xml')) : false;
         // JSON output change
         const jsonOutputEl = document.getElementById('enableJsonOutput');
         const jsonOutputChanged = jsonOutputEl ? (jsonOutputEl.checked !== (defaults.enableJsonOutput === true)) : false;
@@ -5538,8 +5538,8 @@ Translate to {target_language}.`;
         if (contextSizeEl) contextSizeEl.value = currentConfig.advancedSettings?.contextSize || 3;
         const sendTimestampsEl = document.getElementById('sendTimestampsToAI');
         if (sendTimestampsEl) {
-            const workflow = currentConfig.advancedSettings?.translationWorkflow || 
-                ((currentConfig.advancedSettings?.sendTimestampsToAI === true) ? 'ai' : 'original');
+            const workflow = currentConfig.advancedSettings?.translationWorkflow ||
+                ((currentConfig.advancedSettings?.sendTimestampsToAI === true) ? 'ai' : 'xml');
             sendTimestampsEl.value = workflow;
         }
 
@@ -5789,7 +5789,7 @@ Translate to {target_language}.`;
                 enableBatchContext: (function () { const el = document.getElementById('enableBatchContext'); return el ? el.checked : false; })(),
                 contextSize: (function () { const el = document.getElementById('contextSize'); return el ? parseInt(el.value) : 3; })(),
                 sendTimestampsToAI: (function () { const el = document.getElementById('sendTimestampsToAI'); return el ? el.value === 'ai' : false; })(),
-                translationWorkflow: (function () { const el = document.getElementById('sendTimestampsToAI'); return el ? el.value : 'original'; })(),
+                translationWorkflow: (function () { const el = document.getElementById('sendTimestampsToAI'); return el ? el.value : 'xml'; })(),
                 enableJsonOutput: (function () { const el = document.getElementById('enableJsonOutput'); return el ? el.checked : false; })(),
                 mismatchRetries: (function () { const el = document.getElementById('mismatchRetries'); return el ? Math.max(0, Math.min(3, parseInt(el.value) || 1)) : 1; })()
             }

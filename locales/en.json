@@ -1125,9 +1125,9 @@
           "label": "Translation Workflow",
           "description": "Switching between modes is recommended if you have translation sync problems.",
           "tooltip": "\"Original Timestamps\" sends a numbered list and reattaches original timecodes. \"Send Timestamps to AI\" sends full SRT and trusts the AI to preserve timecodes. \"XML Tags\" wraps each entry in <s id=\"N\"> tags for robust ID-based recovery — recommended if you have sync problems.",
-          "original": "Original Timestamps (Default)",
+          "original": "Original Timestamps (Legacy)",
           "ai": "Send Timestamps to AI",
-          "xml": "XML Tags (Robust)"
+          "xml": "XML Tags (Default)"
         },
         "jsonOutput": {
           "label": "Enable JSON Structured Output (Beta)",
