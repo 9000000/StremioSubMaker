@@ -215,7 +215,9 @@ class SubDLService {
             provider: 'subdl',
             subdl_id: sdId,
             subtitles_id: subtitleId,
-            releases: releases
+            releases: releases,
+            // Store API episode number for filtering (not exposed to other layers)
+            _subdlEpisode: sub.episode != null ? parseInt(sub.episode) : null
           };
 
           // Mark season packs from API metadata
@@ -231,51 +233,31 @@ class SubDLService {
           return result;
         });
 
-        // Filter out wrong episodes for TV shows and anime
-        // Season packs are already correctly identified from API metadata
-        if (isTvOrAnime && season) {
+        // Filter out wrong episodes using SubDL's API metadata
+        // We have sub.episode, episode_from, episode_end — use them directly instead of regex
+        if (isTvOrAnime) {
           const beforeCount = subtitles.length;
 
           subtitles = subtitles.filter(sub => {
             // Always keep season packs (already marked from API metadata)
             if (sub.is_season_pack) return true;
 
-            const primaryName = sub.name || '';
-            const primaryNameLower = primaryName.toLowerCase();
+            // Use the _subdlEpisode metadata we stored from the API response
+            const subEp = sub._subdlEpisode;
 
-            // Season/Episode pattern matching
-            const seasonEpisodePatterns = [
-              new RegExp(`s0*${season}e0*${episode}\\b`, 'i'),
-              new RegExp(`\\b${season}x0*${episode}\\b`, 'i'),
-              new RegExp(`s0*${season}[\\s._-]*x[\\s._-]*e?0*${episode}\\b`, 'i'),
-              new RegExp(`\\b0*${season}[\\s._-]*x[\\s._-]*e?0*${episode}\\b`, 'i'),
-              new RegExp(`s0*${season}\\.e0*${episode}\\b`, 'i'),
-              new RegExp(`season\\s*0*${season}.*episode\\s*0*${episode}\\b`, 'i')
-            ];
-
-            if (seasonEpisodePatterns.some(pattern => pattern.test(primaryNameLower))) {
-              return true;
+            // If the API says this subtitle is for a specific episode, check it matches
+            if (subEp != null && subEp !== episode) {
+              return false; // Wrong episode — drop it
             }
 
-            // Check if subtitle has a DIFFERENT episode number (wrong episode)
-            const episodeMatch = primaryNameLower.match(/s0*(\d+)e0*(\d+)|(\d+)x0*(\d+)/i);
-            if (episodeMatch) {
-              const subSeason = parseInt(episodeMatch[1] || episodeMatch[3]);
-              const subEpisode = parseInt(episodeMatch[2] || episodeMatch[4]);
-
-              if (subSeason === season && subEpisode !== episode) {
-                return false;
-              }
-            }
-
-            // No episode info found — keep it, ranking will handle it
+            // subEp matches requested episode, or subEp is null (ambiguous) — keep it
             return true;
           });
 
           const filteredCount = beforeCount - subtitles.length;
           const seasonPackCount = subtitles.filter(s => s.is_season_pack).length;
           if (filteredCount > 0) {
-            log.debug(() => `[SubDL] Filtered out ${filteredCount} wrong episode subtitles (requested: S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')})`);
+            log.debug(() => `[SubDL] Filtered out ${filteredCount} wrong episode subtitles (requested: S${String(effectiveSeason).padStart(2, '0')}E${String(episode).padStart(2, '0')})`);
           }
           if (seasonPackCount > 0) {
             log.debug(() => `[SubDL] Included ${seasonPackCount} season pack subtitles (API-confirmed)`);
