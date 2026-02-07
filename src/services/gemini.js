@@ -402,12 +402,14 @@ class GeminiService {
 
         // Safety settings: disable all content filters for subtitle translation
         // Subtitles contain fictional dialogue that frequently triggers false positives
+        // Use 'OFF' threshold — stronger than 'BLOCK_NONE' and respected by newer models
+        // (Gemini 2.0+ may still block with BLOCK_NONE but honours OFF)
+        // HARM_CATEGORY_CIVIC_INTEGRITY is deprecated; use enableEnhancedCivicAnswers instead
         const safetySettings = [
-          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'OFF' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'OFF' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'OFF' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'OFF' },
         ];
 
         // Call Gemini API (use header auth for consistency and security)
@@ -570,12 +572,13 @@ class GeminiService {
         }
 
         // Safety settings: disable all content filters for subtitle translation
+        // Use 'OFF' threshold — stronger than 'BLOCK_NONE' and respected by newer models
+        // HARM_CATEGORY_CIVIC_INTEGRITY is deprecated; use enableEnhancedCivicAnswers instead
         const safetySettings = [
-          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-          { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'OFF' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'OFF' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'OFF' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'OFF' },
         ];
 
         const response = await axios.post(

@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 **Improvements:**
 
+- **Gemini safety filters upgraded from `BLOCK_NONE` to `OFF`:** The `BLOCK_NONE` threshold was not being respected by newer Gemini models (2.0+), which could still block subtitle content despite the setting. Switched both `generateContent` and `streamGenerateContent` requests to use the `OFF` threshold, which fully disables the safety filter. Also removed the deprecated `HARM_CATEGORY_CIVIC_INTEGRITY` category (Google now recommends `enableEnhancedCivicAnswers` instead).
+
 - **Mobile mode polling interval increased to 5 seconds:** `waitForFinalCachedTranslation` previously polled every 1 second, creating significant I/O pressure with multiple mobile clients. Now 5 seconds, reducing storage reads by ~80%.
 
 - **Partial delivery circuit breaker on persistent save failures:** After consecutive partial cache save failures exceed the threshold, partial delivery is now disabled entirely for that translation via a `partialDeliveryDisabled` flag, avoiding wasted I/O on a broken storage path.
