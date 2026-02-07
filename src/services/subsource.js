@@ -982,7 +982,7 @@ class SubSourceService {
       // If the response is actually direct subtitle content but was mis-labeled as ZIP
       if (contentAnalysis.type === 'subtitle' && (contentType.includes('application/zip') || contentType.includes('application/x-zip'))) {
         log.debug(() => `[SubSource] Response declared as ZIP but contains direct subtitle content; processing as subtitle`);
-        const content = detectAndConvertEncoding(responseBuffer, 'SubSource');
+        const content = detectAndConvertEncoding(responseBuffer, 'SubSource', options.languageHint || null);
         return content;
       }
 
@@ -1007,13 +1007,14 @@ class SubSourceService {
           maxBytes: MAX_ZIP_BYTES,
           isSeasonPack: isSeasonPack,
           season: seasonPackSeason,
-          episode: seasonPackEpisode
+          episode: seasonPackEpisode,
+          languageHint: options.languageHint || null
         });
       }
 
       // Direct SRT content - detect encoding and convert to UTF-8
       log.debug(() => '[SubSource] Subtitle downloaded successfully');
-      const content = detectAndConvertEncoding(responseBuffer, 'SubSource');
+      const content = detectAndConvertEncoding(responseBuffer, 'SubSource', options.languageHint || null);
 
       // If content appears to be WebVTT, keep it intact (we serve original to Stremio)
       const ct = contentType.toLowerCase();

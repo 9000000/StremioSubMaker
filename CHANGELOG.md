@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.40
+
+**Improvements:**
+
+- **CORS wildcard domain allowlisting:** Added support for wildcard domain suffixes in origin checks. `*.elfhosted.com` and `*.midnightignite.me` are now always allowed. Additional suffixes can be added via the `ALLOWED_ORIGIN_WILDCARD_SUFFIXES` env var (comma-separated, e.g. `.example.com,.other.org`).
+
+- **Allow localhost origins through CORS:** Requests from `localhost` / `127.0.0.1` (e.g. Stremio desktop at `http://localhost:11470`) are now allowed regardless of user-agent. Previously these were blocked when the browser UA didn't contain a Stremio hint.
+
+- **MAL and AniList ID mapping services:** Added `src/services/mal.js` (uses Jikan API `/anime/{id}/external` to find IMDB links) and `src/services/anilist.js` (uses AniList GraphQL API to check `externalLinks` for IMDB, with a fallback to MAL ID → Jikan chain). MAL (`mal:`) and AniList (`anilist:`) prefixed IDs were previously recognized by `parseStremioId` but had no mapping implementation — the handler logged "No IMDB mapping available" and all IMDB-only providers (OpenSubtitles, SubDL, SubSource) silently returned zero results. Both services follow the same patterns as the existing AniDB/Kitsu services (24h cache, 10min negative cache, 2 retries with 2s/6s backoff, 429 rate-limit handling).
+
+- **ID resolution timeout cap (30s):** The entire anime ID mapping + TMDB→IMDB resolution chain (Cinemeta 8s + Wikidata 8s + Kitsu retries) now runs inside a `Promise.race` with a 30-second budget. Previously this pre-resolution step had no overall timeout — worst case could exceed 20s before subtitle providers even started. On timeout, the handler logs a warning and proceeds to providers with whatever IMDB ID was resolved so far (or none). The timeout timer is properly cleaned up via `.finally(() => clearTimeout(...))` to avoid dangling unhandled rejections.
+
+- **SCS now supports native anime ID lookups as fallback:** `searchParams` now includes `animeId` and `animeIdType` fields. When anime content fails to map to an IMDB ID (e.g., AniDB/Kitsu mapping miss), SCS can now search using the native anime ID (e.g., `kitsu:8640:1:2`) instead of silently returning zero results. IMDB ID is still preferred when available since SCS's database is primarily IMDB-indexed. Previously, SCS had dead code referencing a `params.kitsuId` field that was never populated.
+
+**Bug Fixes:**
+
+- **Rewrote AniDB service — previous implementation used a fictional API:** The old `AniDBService` called `https://api.anidb.net/api/anime/{id}`, which doesn't exist (AniDB uses a UDP-based API requiring a registered client). Every request failed with a connection error, got cached as `null` for 10 minutes, and AniDB→IMDB mapping was completely non-functional. Replaced with Wikidata SPARQL using property P5646 (AniDB anime ID) → P345 (IMDB ID), the same proven pattern used for TMDB→IMDB elsewhere. Includes retry logic (2 retries at 2s/6s), input sanitization, and 24h/10min caching for hits/misses.
+
+- **AniDB now has a Cinemeta title search fallback:** Unlike Kitsu (which fell back to Cinemeta title search when mappings failed), AniDB previously just returned `null` if the (broken) API call failed. The Wikidata query now also fetches the entity's English label, and when the entity exists but has no IMDB mapping, the service searches Cinemeta by that title — matching Kitsu's fallback behavior.
+
+- **Fixed `parseStremioId` returning `null` for 2-part IMDB IDs:** If Stremio sent `tt1234567:5` (2 parts), the IMDB section only handled `parts.length === 1` (movie) and `parts.length === 3` (episode), so length 2 fell through and returned `null`. Now handles `tt1234567:5` as season 1, episode 5 — consistent with how TMDB and anime 3-part IDs treat implicit season 1.
+
+- **Clarified `parseStremioId` TMDB 2-part type inference:** Added documentation that `tmdb:{id}` with no season/episode keeps `type: 'movie'` (since providers need season/episode for series queries) but `tmdbMediaType` is correctly derived from the `stremioType` hint, which drives the Cinemeta lookup type in `resolveImdbIdFromTmdb`. This ensures TMDB series IDs resolve to the correct IMDB ID even without explicit season/episode.
+
+- **Fixed Wikidata SPARQL query not validating `tmdbId` format:** Both `queryWikidataTmdbToImdb` functions (in `subtitles.js` and `kitsu.js`) interpolated `tmdbId` directly into the SPARQL query string without validation. While TMDB IDs from Stremio are always numeric, a non-numeric value containing `"` or `\` could break or inject into the query. Added a `/^\d+$/` guard that rejects non-numeric TMDB IDs before they reach the SPARQL template.
+
+- **Fixed `searchParams` not passing `tmdb_id` to providers that support it:** WyzieSubs and SubsRo both support native TMDB ID search, but the subtitle handler only passed `imdb_id` in the search parameters. When TMDB→IMDB mapping failed (e.g. Cinemeta down, Wikidata miss), these providers received `null` for both IDs and silently returned zero results — even though they could have searched by TMDB ID directly. `searchParams` now includes `tmdb_id: videoInfo.tmdbId` so WyzieSubs and SubsRo can fall back to TMDB search when no IMDB ID is available.
+
+- **Fixed `parseStremioId` not handling anime movie IDs (`kitsu:8640`, `anidb:1234`):** Anime IDs like `kitsu:8640` split into 2 parts, but the anime branch only handled `parts.length === 1` (dead code — a single part like `"kitsu"` without a numeric ID can never match), `3`, and `4`. Length 2 fell through to the IMDB handler, which tried to normalize `"kitsu"` as an IMDB ID and returned `imdbId: "kitsu"`. Fixed the anime branch to handle `parts.length === 2` correctly, producing a proper `animeId: "kitsu:8640"` with `isAnime: true`.
+
+- **Fixed TMDB→IMDB mapping cache locking failures for 24 hours:** Both Cinemeta errors and "not found" results were cached in `tmdbToImdbCache` with the full 24-hour TTL. A temporary Cinemeta outage would block all TMDB→IMDB lookups for that ID for a full day. Negative results (mapping not found) now cache for 10 minutes, and error results cache for 5 minutes, allowing recovery without hammering the API.
+
+- **Fixed AniDB service having no retry logic and caching failures for 24 hours:** Unlike Kitsu (which had 2 retries with 2s/6s backoff), AniDB made a single HTTP attempt and cached `null` for 24 hours on any error. Added matching retry logic (2 retries at 2s and 6s delays for 5xx, ECONNRESET, ETIMEDOUT, ENOTFOUND errors) and reduced the negative cache TTL from 24 hours to 10 minutes. The same shorter negative cache TTL was also applied to Kitsu's failed lookups.
+
+- **Language-hinted encoding detection for Arabic, Hebrew, and other non-Latin scripts:** The encoding detector (`detectAndConvertEncoding`) now accepts an optional `languageHint` parameter. When the subtitle's language is known (from provider metadata or route params), the detector uses it to override chardet's guess when it picks an implausible encoding. For example, if chardet detects `ISO-8859-1` but the language hint says Arabic, `windows-1256` is tried first. A Unicode script validation step (`validateDecodedForLanguage`) confirms the decoded content actually contains characters from the expected script block (e.g., U+0600–U+06FF for Arabic, U+0590–U+05FF for Hebrew), catching silent misdetections where chardet produces valid-but-wrong Latin characters. Coverage includes Arabic, Hebrew, Persian, Urdu, Greek, Turkish, Russian, Ukrainian, Bulgarian, Serbian, Polish, Czech, Hungarian, Romanian, Thai, Vietnamese, Chinese, Japanese, Korean, and Baltic languages.
+
+- **Language hint propagated through all subtitle download paths:** `handleSubtitleDownload` now passes the `language` parameter from the route through to every provider's `downloadSubtitle()` call via `options.languageHint`. The translation pre-flight download path in `handleTranslation` similarly derives the hint from `options.sourceLanguage` or `config.sourceLanguages`. All 7 providers (OpenSubtitles Auth, OpenSubtitles V3, SubDL, SubSource, WyzieSubs, SubsRo, Stremio Community Subtitles) and the centralized archive extractor forward the hint to `detectAndConvertEncoding`.
+
+- **`tryFallbackEncodings` now prioritizes language-hinted encodings:** When chardet fails entirely or produces high replacement ratios, the fallback encoding loop now tries language-specific encodings first (with script validation) before falling back to the general encoding list. This prevents the "lowest replacement ratio" heuristic from silently picking a wrong Latin codepage for Arabic/Hebrew content.
+
 ## SubMaker v1.4.39
 
 **Improvements:**

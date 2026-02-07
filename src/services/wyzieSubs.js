@@ -430,7 +430,7 @@ class WyzieSubsService {
                 const buffer = Buffer.from(response.data);
 
                 // Handle encoding detection and conversion
-                const text = detectAndConvertEncoding(buffer, 'WyzieSubs');
+                const text = detectAndConvertEncoding(buffer, 'WyzieSubs', options.languageHint || null);
 
                 // Basic validation
                 if (!text || text.trim().length === 0) {

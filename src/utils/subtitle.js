@@ -291,7 +291,10 @@ function parseStremioId(id, stremioType) {
       : undefined;
 
     if (parts.length === 2) {
-      // Movie: tmdb:{id}
+      // tmdb:{id} with no season/episode — could be movie or series
+      // Use stremioType hint for tmdbMediaType (drives Cinemeta lookup type),
+      // but keep parsed type as 'movie' since providers need season/episode
+      // for series queries and we don't have them here
       return {
         tmdbId,
         tmdbMediaType,
@@ -326,9 +329,10 @@ function parseStremioId(id, stremioType) {
   if (parts[0] && /^(anidb|kitsu|mal|anilist)/.test(parts[0])) {
     const animeIdType = parts[0]; // Platform name (anidb, kitsu, etc.)
 
-    if (parts.length === 1) {
+    if (parts.length === 2) {
       // Anime movie or series (format: platform:id)
-      const animeId = parts[0];
+      // Example: kitsu:8640 -> platform=kitsu, id=8640
+      const animeId = `${parts[0]}:${parts[1]}`; // Full ID with platform prefix
       return {
         animeId,
         animeIdType,
@@ -380,6 +384,21 @@ function parseStremioId(id, stremioType) {
       imdbId,
       type: 'movie'
     };
+  }
+
+  if (parts.length === 2) {
+    // IMDB ID with single numeric part — treat as episode with implicit season 1
+    // e.g., tt1234567:5 -> season 1, episode 5
+    const episodeNum = parseInt(parts[1], 10);
+    if (!isNaN(episodeNum)) {
+      return {
+        imdbId,
+        type: 'episode',
+        season: 1,
+        episode: episodeNum
+      };
+    }
+    return null;
   }
 
   if (parts.length === 3) {

@@ -443,7 +443,8 @@ class SubDLService {
         maxBytes: MAX_ZIP_BYTES,
         isSeasonPack: isSeasonPack,
         season: seasonPackSeason,
-        episode: seasonPackEpisode
+        episode: seasonPackEpisode,
+        languageHint: options.languageHint || null
       });
 
     } catch (error) {

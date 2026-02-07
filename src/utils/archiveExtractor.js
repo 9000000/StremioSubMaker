@@ -382,9 +382,9 @@ async function readFileFromArchive(archive, filename, archiveType) {
  * @param {string} providerName - Provider name for logging
  * @returns {string}
  */
-function decodeWithBomAwareness(buffer, providerName) {
+function decodeWithBomAwareness(buffer, providerName, languageHint) {
     // Use centralized encoding detector for proper Arabic/Hebrew/RTL support
-    return detectAndConvertEncoding(buffer, providerName);
+    return detectAndConvertEncoding(buffer, providerName, languageHint || null);
 }
 
 /**
@@ -610,7 +610,8 @@ async function extractSubtitleFromArchive(buffer, options = {}) {
         maxBytes = 25 * 1024 * 1024,
         isSeasonPack = false,
         season = null,
-        episode = null
+        episode = null,
+        languageHint = null
     } = options;
 
     log.debug(() => `[${providerName}] extractSubtitleFromArchive: starting (buffer=${buffer?.length || 0} bytes, isSeasonPack=${isSeasonPack}, season=${season}, episode=${episode})`);
@@ -713,14 +714,14 @@ async function extractSubtitleFromArchive(buffer, options = {}) {
     // Handle SRT files with encoding detection
     if (isSrt) {
         log.debug(() => `[${providerName}] Processing SRT file with encoding detection...`);
-        const content = detectAndConvertEncoding(fileBuffer, providerName);
+        const content = detectAndConvertEncoding(fileBuffer, providerName, languageHint);
         log.debug(() => `[${providerName}] Extracted SRT: ${filename} (${content.length} chars)`);
         return content;
     }
 
     // Handle other formats with BOM-aware decoding and conversion
     log.debug(() => `[${providerName}] Processing non-SRT file with BOM-aware decoding...`);
-    const raw = decodeWithBomAwareness(fileBuffer, providerName);
+    const raw = decodeWithBomAwareness(fileBuffer, providerName, languageHint);
     log.debug(() => `[${providerName}] Decoded content: ${raw.length} chars, converting to VTT...`);
 
     const result = await convertSubtitleToVtt(raw, filename, providerName);

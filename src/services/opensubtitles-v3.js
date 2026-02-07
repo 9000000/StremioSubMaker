@@ -398,7 +398,8 @@ class OpenSubtitlesV3Service {
             maxBytes: MAX_ZIP_BYTES,
             isSeasonPack: false,
             season: null,
-            episode: null
+            episode: null,
+            languageHint: options.languageHint || null
           });
         }
 
@@ -412,7 +413,7 @@ class OpenSubtitlesV3Service {
         }
 
         // Use centralized encoding detector for proper Arabic/Hebrew/RTL support
-        let text = detectAndConvertEncoding(buf, 'OpenSubtitles V3');
+        let text = detectAndConvertEncoding(buf, 'OpenSubtitles V3', options.languageHint || null);
 
         const trimmed = (text || '').trimStart();
         if (trimmed.startsWith('WEBVTT')) {

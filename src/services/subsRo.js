@@ -540,7 +540,8 @@ class SubsRoService {
                         maxBytes: MAX_ZIP_BYTES,
                         isSeasonPack: isSeasonPack,
                         season: seasonPackSeason,
-                        episode: seasonPackEpisode
+                        episode: seasonPackEpisode,
+                        languageHint: options.languageHint || null
                     });
 
                 } else {
@@ -556,12 +557,12 @@ class SubsRoService {
 
                     // If it looks like subtitle content, decode and return it
                     if (contentAnalysis.type === 'subtitle') {
-                        const text = detectAndConvertEncoding(buffer, 'SubsRo');
+                        const text = detectAndConvertEncoding(buffer, 'SubsRo', options.languageHint || null);
                         return text;
                     }
 
                     // For unknown content, try to decode it as subtitle
-                    const text = detectAndConvertEncoding(buffer, 'SubsRo');
+                    const text = detectAndConvertEncoding(buffer, 'SubsRo', options.languageHint || null);
                     const hasTimecodes = /\d{2}:\d{2}:\d{2}[,.:]+\d{2,3}/.test(text);
                     if (!hasTimecodes && text.length < 100) {
                         log.error(() => `[SubsRo] Response does not appear to be valid subtitle content`);

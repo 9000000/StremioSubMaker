@@ -757,7 +757,8 @@ class OpenSubtitlesService {
           maxBytes: MAX_ZIP_BYTES,
           isSeasonPack: isSeasonPack,
           season: seasonPackSeason,
-          episode: seasonPackEpisode
+          episode: seasonPackEpisode,
+          languageHint: options.languageHint || null
         });
       }
 
@@ -770,7 +771,7 @@ class OpenSubtitlesService {
       }
 
       // Non-ZIP: use centralized encoding detector for proper Arabic/Hebrew/RTL support
-      let text = detectAndConvertEncoding(buf, 'OpenSubtitles');
+      let text = detectAndConvertEncoding(buf, 'OpenSubtitles', options.languageHint || null);
 
       const trimmed = (text || '').trimStart();
       if (trimmed.startsWith('WEBVTT')) {

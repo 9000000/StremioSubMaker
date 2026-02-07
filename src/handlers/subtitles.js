@@ -6,6 +6,8 @@ const TranslationEngine = require('../services/translationEngine');
 const { createTranslationProvider } = require('../services/translationProviderFactory');
 const AniDBService = require('../services/anidb');
 const KitsuService = require('../services/kitsu');
+const MALService = require('../services/mal');
+const AniListService = require('../services/anilist');
 const StremioCommunitySubtitlesService = require('../services/stremioCommunitySubtitles');
 const WyzieSubsService = require('../services/wyzieSubs');
 const SubsRoService = require('../services/subsRo');
@@ -43,6 +45,8 @@ async function getStorageAdapter() {
 // Initialize anime ID mapping services
 const anidbService = new AniDBService();
 const kitsuService = new KitsuService();
+const malService = new MALService();
+const anilistService = new AniListService();
 
 // Redact/noise-reduce helper for logging large cache keys
 function shortKey(v) {
@@ -336,7 +340,7 @@ async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
       mapped = await queryWikidataTmdbToImdb(videoInfo.tmdbId, mediaType);
     }
 
-    tmdbToImdbCache.set(cacheKey, mapped || null);
+    tmdbToImdbCache.set(cacheKey, mapped || null, { ttl: mapped ? undefined : 10 * 60 * 1000 }); // Cache misses for 10min only (not 24h)
 
     if (mapped) {
       videoInfo.imdbId = mapped;
@@ -347,7 +351,7 @@ async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
     log.warn(() => [`[Subtitles] Could not map TMDB ${mediaType} ${videoInfo.tmdbId} to IMDB`]);
     return null;
   } catch (error) {
-    tmdbToImdbCache.set(cacheKey, null);
+    tmdbToImdbCache.set(cacheKey, null, { ttl: 5 * 60 * 1000 }); // Cache errors for 5min only
     log.error(() => [`[Subtitles] TMDB → IMDB mapping failed for ${videoInfo.tmdbId} (${mediaType}):`, error.message]);
     return null;
   }
@@ -363,6 +367,12 @@ async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
  */
 async function queryWikidataTmdbToImdb(tmdbId, mediaType) {
   try {
+    // Sanitize tmdbId: TMDB IDs must be numeric. Reject anything else to prevent SPARQL injection.
+    if (!/^\d+$/.test(String(tmdbId))) {
+      log.warn(() => `[Subtitles] Invalid TMDB ID format for Wikidata lookup: ${tmdbId}`);
+      return null;
+    }
+
     // Wikidata properties:
     // P4947 = TMDB movie ID
     // P5607 = TMDB TV series ID  
@@ -2145,42 +2155,83 @@ function createSubtitleHandler(config) {
 
       log.debug(() => `[Subtitles] Video info: ${JSON.stringify(videoInfo)}`);
 
-      // Handle anime content - try to map anime ID to IMDB ID
-      if (videoInfo.isAnime && videoInfo.animeId) {
-        log.debug(() => `[Subtitles] Anime content detected (${videoInfo.animeIdType}), attempting to map to IMDB ID`);
+      // Handle anime content and TMDB→IMDB resolution with a global timeout cap
+      // This prevents the pre-resolution step from taking unbounded time before providers start
+      const ID_RESOLUTION_TIMEOUT_MS = 30000; // 30s budget for all ID resolution
+      try {
+        let resolutionTimer;
+        await Promise.race([
+          (async () => {
+            // Handle anime content - try to map anime ID to IMDB ID
+            if (videoInfo.isAnime && videoInfo.animeId) {
+              log.debug(() => `[Subtitles] Anime content detected (${videoInfo.animeIdType}), attempting to map to IMDB ID`);
 
-        if (videoInfo.animeIdType === 'anidb') {
-          try {
-            const imdbId = await anidbService.getImdbId(videoInfo.anidbId);
-            if (imdbId) {
-              log.info(() => `[Subtitles] Mapped AniDB ${videoInfo.anidbId} to ${imdbId}`);
-              videoInfo.imdbId = imdbId;
-            } else {
-              log.warn(() => `[Subtitles] Could not find IMDB mapping for AniDB ${videoInfo.anidbId}, subtitles may be limited`);
+              if (videoInfo.animeIdType === 'anidb') {
+                try {
+                  const imdbId = await anidbService.getImdbId(videoInfo.anidbId);
+                  if (imdbId) {
+                    log.info(() => `[Subtitles] Mapped AniDB ${videoInfo.anidbId} to ${imdbId}`);
+                    videoInfo.imdbId = imdbId;
+                  } else {
+                    log.warn(() => `[Subtitles] Could not find IMDB mapping for AniDB ${videoInfo.anidbId}, subtitles may be limited`);
+                  }
+                } catch (error) {
+                  log.error(() => `[Subtitles] Error mapping AniDB to IMDB: ${error.message}`);
+                }
+              } else if (videoInfo.animeIdType === 'kitsu') {
+                try {
+                  const imdbId = await kitsuService.getImdbId(videoInfo.animeId);
+                  if (imdbId) {
+                    log.info(() => `[Subtitles] Mapped Kitsu ${videoInfo.animeId} to ${imdbId}`);
+                    videoInfo.imdbId = imdbId;
+                  } else {
+                    log.warn(() => `[Subtitles] Could not find IMDB mapping for Kitsu ${videoInfo.animeId}, subtitles may be limited`);
+                  }
+                } catch (error) {
+                  log.error(() => `[Subtitles] Error mapping Kitsu to IMDB: ${error.message}`);
+                }
+              } else if (videoInfo.animeIdType === 'mal') {
+                try {
+                  const imdbId = await malService.getImdbId(videoInfo.animeId);
+                  if (imdbId) {
+                    log.info(() => `[Subtitles] Mapped MAL ${videoInfo.animeId} to ${imdbId}`);
+                    videoInfo.imdbId = imdbId;
+                  } else {
+                    log.warn(() => `[Subtitles] Could not find IMDB mapping for MAL ${videoInfo.animeId}, subtitles may be limited`);
+                  }
+                } catch (error) {
+                  log.error(() => `[Subtitles] Error mapping MAL to IMDB: ${error.message}`);
+                }
+              } else if (videoInfo.animeIdType === 'anilist') {
+                try {
+                  const imdbId = await anilistService.getImdbId(videoInfo.animeId, malService);
+                  if (imdbId) {
+                    log.info(() => `[Subtitles] Mapped AniList ${videoInfo.animeId} to ${imdbId}`);
+                    videoInfo.imdbId = imdbId;
+                  } else {
+                    log.warn(() => `[Subtitles] Could not find IMDB mapping for AniList ${videoInfo.animeId}, subtitles may be limited`);
+                  }
+                } catch (error) {
+                  log.error(() => `[Subtitles] Error mapping AniList to IMDB: ${error.message}`);
+                }
+              } else {
+                log.debug(() => `[Subtitles] Unknown anime ID type: ${videoInfo.animeIdType}, will search by anime metadata`);
+              }
             }
-          } catch (error) {
-            log.error(() => `[Subtitles] Error mapping AniDB to IMDB: ${error.message}`);
-          }
-        } else if (videoInfo.animeIdType === 'kitsu') {
-          try {
-            const imdbId = await kitsuService.getImdbId(videoInfo.animeId);
-            if (imdbId) {
-              log.info(() => `[Subtitles] Mapped Kitsu ${videoInfo.animeId} to ${imdbId}`);
-              videoInfo.imdbId = imdbId;
-            } else {
-              log.warn(() => `[Subtitles] Could not find IMDB mapping for Kitsu ${videoInfo.animeId}, subtitles may be limited`);
-            }
-          } catch (error) {
-            log.error(() => `[Subtitles] Error mapping Kitsu to IMDB: ${error.message}`);
-          }
+
+            await ensureImdbId(videoInfo, type, 'Subtitles');
+          })(),
+          new Promise((_, reject) => {
+            resolutionTimer = setTimeout(() => reject(new Error('ID resolution timeout')), ID_RESOLUTION_TIMEOUT_MS);
+          })
+        ]).finally(() => clearTimeout(resolutionTimer));
+      } catch (timeoutErr) {
+        if (timeoutErr.message === 'ID resolution timeout') {
+          log.warn(() => `[Subtitles] ID resolution timed out after ${ID_RESOLUTION_TIMEOUT_MS}ms, proceeding with ${videoInfo.imdbId ? 'partial' : 'no'} IMDB ID`);
         } else {
-          log.debug(() => `[Subtitles] No IMDB mapping available for ${videoInfo.animeIdType} IDs yet, will search by anime metadata`);
-          // For mal/anilist IDs, we'll need to implement mapping services
-          // Continue anyway - subtitle providers will skip search if no IMDB ID
+          log.error(() => `[Subtitles] Unexpected error during ID resolution: ${timeoutErr.message}`);
         }
       }
-
-      await ensureImdbId(videoInfo, type, 'Subtitles');
 
       // Check if this is a session token error - if so, return error entry immediately
       if (config.__sessionTokenError === true) {
@@ -2275,6 +2326,9 @@ function createSubtitleHandler(config) {
 
       const searchParams = {
         imdb_id: videoInfo.imdbId,
+        tmdb_id: videoInfo.tmdbId || null, // Pass TMDB ID for providers that support native TMDB search (WyzieSubs, SubsRo)
+        animeId: videoInfo.animeId || null, // Pass anime ID for providers that support native anime IDs (e.g., SCS with kitsu:1234)
+        animeIdType: videoInfo.animeIdType || null, // Platform name (kitsu, anidb, mal, anilist)
         type: videoInfo.type,
         season: videoInfo.season,
         episode: videoInfo.episode,
@@ -3151,7 +3205,7 @@ async function handleSubtitleDownload(fileId, language, config) {
 
         const subdl = new SubDLService(config.subtitleProviders.subdl.apiKey);
         log.debug(() => '[Download] Downloading subtitle via SubDL API');
-        return await subdl.downloadSubtitle(fileId, { timeout: downloadTimeoutMs });
+        return await subdl.downloadSubtitle(fileId, { timeout: downloadTimeoutMs, languageHint: language });
       } else if (fileId.startsWith('subsource_')) {
         // SubSource subtitle
         if (!config.subtitleProviders?.subsource?.enabled) {
@@ -3160,7 +3214,7 @@ async function handleSubtitleDownload(fileId, language, config) {
 
         const subsource = new SubSourceService(config.subtitleProviders.subsource.apiKey);
         log.debug(() => '[Download] Downloading subtitle via SubSource API');
-        return await subsource.downloadSubtitle(fileId, { timeout: downloadTimeoutMs });
+        return await subsource.downloadSubtitle(fileId, { timeout: downloadTimeoutMs, languageHint: language });
       } else if (fileId.startsWith('v3_')) {
         // OpenSubtitles V3 subtitle
         if (!config.subtitleProviders?.opensubtitles?.enabled) {
@@ -3169,7 +3223,7 @@ async function handleSubtitleDownload(fileId, language, config) {
 
         const opensubtitlesV3 = new OpenSubtitlesV3Service();
         log.debug(() => '[Download] Downloading subtitle via OpenSubtitles V3 API');
-        return await opensubtitlesV3.downloadSubtitle(fileId, { timeout: downloadTimeoutMs });
+        return await opensubtitlesV3.downloadSubtitle(fileId, { timeout: downloadTimeoutMs, languageHint: language });
       } else if (fileId.startsWith('scs_')) {
         // Stremio Community Subtitles
         if (!config.subtitleProviders?.scs?.enabled) {
@@ -3179,7 +3233,7 @@ async function handleSubtitleDownload(fileId, language, config) {
         const scs = new StremioCommunitySubtitlesService();
         log.debug(() => '[Download] Downloading subtitle via SCS API');
         // Remove scs_ prefix to get the actual comm_ ID
-        return await scs.downloadSubtitle(fileId.replace('scs_', ''), { timeout: downloadTimeoutMs });
+        return await scs.downloadSubtitle(fileId.replace('scs_', ''), { timeout: downloadTimeoutMs, languageHint: language });
       } else if (fileId.startsWith('wyzie_')) {
         // Wyzie Subs (free aggregator)
         if (!config.subtitleProviders?.wyzie?.enabled) {
@@ -3188,7 +3242,7 @@ async function handleSubtitleDownload(fileId, language, config) {
 
         const wyzie = new WyzieSubsService();
         log.debug(() => '[Download] Downloading subtitle via Wyzie Subs API');
-        return await wyzie.downloadSubtitle(fileId, { timeout: downloadTimeoutMs });
+        return await wyzie.downloadSubtitle(fileId, { timeout: downloadTimeoutMs, languageHint: language });
       } else if (fileId.startsWith('subsro_')) {
         // Subs.ro subtitle (Romanian subtitle database)
         if (!config.subtitleProviders?.subsro?.enabled) {
@@ -3197,7 +3251,7 @@ async function handleSubtitleDownload(fileId, language, config) {
 
         const subsro = new SubsRoService(config.subtitleProviders.subsro.apiKey);
         log.debug(() => '[Download] Downloading subtitle via Subs.ro API');
-        return await subsro.downloadSubtitle(fileId, { timeout: downloadTimeoutMs });
+        return await subsro.downloadSubtitle(fileId, { timeout: downloadTimeoutMs, languageHint: language });
       } else {
         const wantsAuth = openSubsImplementation === 'auth';
         const missingCreds = wantsAuth && !openSubsHasCreds;
@@ -3213,7 +3267,7 @@ async function handleSubtitleDownload(fileId, language, config) {
 
         const opensubtitles = new OpenSubtitlesService(config.subtitleProviders.opensubtitles);
         log.debug(() => '[Download] Downloading subtitle via OpenSubtitles Auth API');
-        return await opensubtitles.downloadSubtitle(fileId, { timeout: downloadTimeoutMs });
+        return await opensubtitles.downloadSubtitle(fileId, { timeout: downloadTimeoutMs, languageHint: language });
       }
     })();
 
@@ -3893,52 +3947,57 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
           // Calculate download timeout from user config (same as main download handler)
           const downloadTimeoutMs = Math.max(12000, (config.subtitleProviderTimeout || 12) * 1000);
 
+          // Use source language as encoding hint when available
+          const sourceLanguageHint = options.sourceLanguage
+            || (Array.isArray(config.sourceLanguages) && config.sourceLanguages[0])
+            || null;
+
           if (sourceFileId.startsWith('subdl_')) {
             if (!config.subtitleProviders?.subdl?.enabled) {
               throw new Error('SubDL provider is disabled');
             }
             const subdl = new SubDLService(config.subtitleProviders.subdl.apiKey);
-            sourceContent = await subdl.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs });
+            sourceContent = await subdl.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs, languageHint: sourceLanguageHint });
           } else if (sourceFileId.startsWith('subsource_')) {
             if (!config.subtitleProviders?.subsource?.enabled) {
               throw new Error('SubSource provider is disabled');
             }
             const subsource = new SubSourceService(config.subtitleProviders.subsource.apiKey);
-            sourceContent = await subsource.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs });
+            sourceContent = await subsource.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs, languageHint: sourceLanguageHint });
           } else if (sourceFileId.startsWith('v3_')) {
             if (!config.subtitleProviders?.opensubtitles?.enabled) {
               throw new Error('OpenSubtitles provider is disabled');
             }
             const opensubtitlesV3 = new OpenSubtitlesV3Service();
-            sourceContent = await opensubtitlesV3.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs });
+            sourceContent = await opensubtitlesV3.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs, languageHint: sourceLanguageHint });
           } else if (sourceFileId.startsWith('scs_')) {
             // Stremio Community Subtitles
             if (!config.subtitleProviders?.scs?.enabled) {
               throw new Error('SCS provider is disabled');
             }
             const scs = new StremioCommunitySubtitlesService();
-            sourceContent = await scs.downloadSubtitle(sourceFileId.replace('scs_', ''), { timeout: downloadTimeoutMs });
+            sourceContent = await scs.downloadSubtitle(sourceFileId.replace('scs_', ''), { timeout: downloadTimeoutMs, languageHint: sourceLanguageHint });
           } else if (sourceFileId.startsWith('wyzie_')) {
             // Wyzie Subs (free aggregator)
             if (!config.subtitleProviders?.wyzie?.enabled) {
               throw new Error('Wyzie Subs provider is disabled');
             }
             const wyzie = new WyzieSubsService();
-            sourceContent = await wyzie.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs });
+            sourceContent = await wyzie.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs, languageHint: sourceLanguageHint });
           } else if (sourceFileId.startsWith('subsro_')) {
             // Subs.ro subtitle (Romanian subtitle database)
             if (!config.subtitleProviders?.subsro?.enabled) {
               throw new Error('Subs.ro provider is disabled');
             }
             const subsro = new SubsRoService(config.subtitleProviders.subsro.apiKey);
-            sourceContent = await subsro.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs });
+            sourceContent = await subsro.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs, languageHint: sourceLanguageHint });
           } else {
             // OpenSubtitles subtitle (Auth implementation - default fallback)
             if (!config.subtitleProviders?.opensubtitles?.enabled) {
               throw new Error('OpenSubtitles provider is disabled');
             }
             const opensubtitles = new OpenSubtitlesService(config.subtitleProviders.opensubtitles);
-            sourceContent = await opensubtitles.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs });
+            sourceContent = await opensubtitles.downloadSubtitle(sourceFileId, { timeout: downloadTimeoutMs, languageHint: sourceLanguageHint });
           }
 
           // Save to download cache for subsequent operations
@@ -5123,8 +5182,9 @@ async function resolveHistoryTitle(videoId, fallbackTitle = '', seasonHint = nul
           }
         }
       }
-      // For other anime platforms (anidb, mal, anilist), we don't have direct API access
-      // Fall back to filename/videoId as title
+      // For other anime platforms (anidb, mal, anilist), title resolution for history
+      // display is not yet implemented. The ID mapping services exist but are optimized
+      // for IMDB resolution, not title fetching. Fall back to filename/videoId as title.
 
     } else {
       // Handle IMDB/TMDB IDs - use Cinemeta

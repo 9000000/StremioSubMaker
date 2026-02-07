@@ -2139,6 +2139,16 @@ const allowedOriginsNormalized = Array.from(new Set([
     ...DEFAULT_STREMIO_WEB_ORIGINS.map(normalizeOrigin)
 ]));
 const STREMIO_ORIGIN_WILDCARD_SUFFIXES = ['.strem.io', '.stremio.one', '.stremio.com'];
+// Allow additional wildcard domain suffixes via env (comma-separated, e.g. ".example.com,.other.org")
+const extraWildcardSuffixes = (process.env.ALLOWED_ORIGIN_WILDCARD_SUFFIXES || '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+    .map(s => s.startsWith('.') ? s : `.${s}`);
+// Always allow these hosting domains
+for (const suffix of ['.elfhosted.com', '.midnightignite.me']) {
+    if (!extraWildcardSuffixes.includes(suffix)) extraWildcardSuffixes.push(suffix);
+}
 const STREMIO_ORIGIN_PREFIXES = ['stremio://', 'capacitor://', 'app://', 'file://'];
 const STREMIO_ORIGIN_EQUALS = ['capacitor://localhost', 'app://strem.io'];
 const DEFAULT_STREMIO_UA_HINTS = [
@@ -2204,7 +2214,15 @@ function isOriginAllowed(origin, req) {
         return isStremioUserAgent(userAgent);
     }
     if (allowedOriginsNormalized.includes(normalizedOrigin)) return true;
+    if (isLocalhostOrigin(origin)) return true; // Stremio desktop local server (e.g. http://localhost:11470)
     if (isStremioOrigin(origin)) return true; // Trust official Stremio app origins (capacitor/app/stremio schemes)
+    // Check extra wildcard domain suffixes (e.g. .elfhosted.com via ALLOWED_ORIGIN_WILDCARD_SUFFIXES env)
+    if (extraWildcardSuffixes.length > 0) {
+        const host = extractHostnameFromOrigin(origin);
+        if (host && extraWildcardSuffixes.some(suffix => host === suffix.slice(1) || host.endsWith(suffix))) {
+            return true;
+        }
+    }
     const host = getSafeHost(req);
     return normalizedOrigin === normalizeOrigin(`https://${host}`) || normalizedOrigin === normalizeOrigin(`http://${host}`);
 }

@@ -45,7 +45,7 @@ class KitsuService {
     // Check cache first
     const cacheKey = `anime_${numericId}`;
     const cached = this.cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < this.cacheExpiry) {
+    if (cached && Date.now() - cached.timestamp < (cached.expiry || this.cacheExpiry)) {
       log.debug(() => [`[Kitsu] Cache hit for ID ${numericId}`]);
       return cached.data;
     }
@@ -115,10 +115,11 @@ class KitsuService {
     // All retries failed
     log.warn(() => [`[Kitsu] Failed to fetch anime info for ID ${numericId} after ${retryDelays.length} retries:`, lastError?.message]);
 
-    // Cache null result to avoid repeated failed requests
+    // Cache null result with shorter expiry to allow recovery sooner than 24h
     this.cache.set(cacheKey, {
       data: null,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      expiry: 10 * 60 * 1000 // 10 minutes for failed lookups
     });
 
     return null;
@@ -294,6 +295,12 @@ class KitsuService {
    */
   async queryWikidataTmdbToImdb(tmdbId, mediaType) {
     try {
+      // Sanitize tmdbId: TMDB IDs must be numeric. Reject anything else to prevent SPARQL injection.
+      if (!/^\d+$/.test(String(tmdbId))) {
+        log.warn(() => `[Kitsu] Invalid TMDB ID format for Wikidata lookup: ${tmdbId}`);
+        return null;
+      }
+
       // Wikidata properties:
       // P4947 = TMDB movie ID
       // P5607 = TMDB TV series ID  

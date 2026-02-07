@@ -409,10 +409,11 @@ class StremioCommunitySubtitlesService {
             const hasFilename = !!filename;
             const usesMatchingParams = hasRealHash || hasFilename;
 
-            // SCS requires content ID. It works best with videoHash, but filename is sufficient.
-            // We always have IMDB ID from SubMaker, so we can search by content + filename
-            if (!imdb_id) {
-                log.debug(() => '[SCS] Skipping search: no IMDB ID provided');
+            // SCS requires a content ID. It works best with videoHash, but filename is sufficient.
+            // We can search by IMDB ID or native anime IDs (kitsu, anidb, etc.)
+            const hasAnimeId = !!(params.animeId && params.animeIdType);
+            if (!imdb_id && !hasAnimeId) {
+                log.debug(() => '[SCS] Skipping search: no IMDB ID or anime ID provided');
                 return [];
             }
 
@@ -443,16 +444,19 @@ class StremioCommunitySubtitlesService {
             if (type === 'episode' || type === 'anime-episode') stremioType = 'series';
 
             // For series, ID should be in Stremio format: tt12345:s:e
-            // Also handle Kitsu IDs for anime content
+            // Also handle anime IDs (kitsu, anidb, etc.) for native SCS lookup
             let contentId = imdb_id;
 
-            // Support Kitsu IDs for anime
-            if (params.kitsuId) {
-                contentId = `kitsu:${params.kitsuId}`;
-                if (params.episode) {
-                    contentId = `${contentId}:${params.episode}`;
+            // For anime content, prefer IMDB ID when available (SCS database is primarily IMDB-indexed).
+            // Fall back to native anime IDs (kitsu:1234, anidb:5678) only when IMDB mapping failed.
+            if (!imdb_id && params.animeId && params.animeIdType) {
+                contentId = params.animeId; // Already in platform:id format (e.g., "kitsu:8640")
+                if ((type === 'episode' || type === 'anime-episode') && params.episode) {
+                    contentId = params.season
+                        ? `${contentId}:${params.season}:${params.episode}`
+                        : `${contentId}:${params.episode}`;
                 }
-                log.debug(() => `[SCS] Using Kitsu ID: ${contentId}`);
+                log.debug(() => `[SCS] Using anime ID (no IMDB mapping): ${contentId}`);
             } else if ((type === 'episode' || type === 'anime-episode') && params.season && params.episode) {
                 // Stremio ID format for series: tt12345:1:2
                 contentId = `${imdb_id}:${params.season}:${params.episode}`;
@@ -605,7 +609,7 @@ class StremioCommunitySubtitlesService {
 
             const buffer = Buffer.from(response.data);
             // Use centralized encoding detector for proper Arabic/Hebrew/RTL support
-            const text = detectAndConvertEncoding(buffer, 'SCS');
+            const text = detectAndConvertEncoding(buffer, 'SCS', options.languageHint || null);
 
             // Basic validation
             if (text.trim().length === 0) {
