@@ -2217,6 +2217,28 @@ textarea {
 
 /* (JS positions reset bar vertically in the gap) */
 
+/* Support link hint below reset bar */
+.support-link-hint {
+    text-align: center;
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    opacity: 0.75;
+}
+
+.support-link-hint a {
+    color: var(--primary-light);
+    text-decoration: none;
+    margin-left: 0.35rem;
+    transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.support-link-hint a:hover {
+    color: var(--primary);
+    text-decoration: underline;
+    opacity: 1;
+}
+
 /* Disabled Sub Toolbox option */
 #subToolboxEnabled:disabled {
     cursor: not-allowed;
