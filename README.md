@@ -165,9 +165,9 @@ Enable "Advanced Mode" in Other Settings to unlock:
 
 ### ⏱️ Subtitles Out of Sync?
 
-Change **Translation Workflow** in Settings → Translation Settings:
-- **XML Tags** (default, recommended) — Best for sync issues
-- **Original Timestamps** — Legacy mode, reattaches original timecodes
+Test other **Translation Workflow** in Settings → Translation Settings:
+- **XML Tags** (default) — Most recent implementation, uses XML id tags for subs reconstruction
+- **Original Timestamps** — Legacy mode, reattaches original timecodes using numbered entries
 - **Send Timestamps to AI** — Trusts AI to preserve timecodes
 
 ### 🔄 Bad / Broken Translation?
