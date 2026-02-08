@@ -4,13 +4,9 @@
 
 Watch any content in your language!
 
-SubMaker fetches subtitles from multiple sources and allows you to translate them instantly using Google's Gemini AI (or alternative providers like DeepL, OpenAI, Anthropic, XAI, DeepSeek, Mistral, OpenRouter, or Cloudflare Workers), all without leaving your player.
+SubMaker fetches subtitles from multiple sources, and translates them instantly using AI — without ever leaving your player.
 
-No-Translation mode: simply fetch selected languages from OpenSubtitles, SubSource and SubDL.
-
-Auto-sync subtitles in development!
-
-## 🚀 [Roadmap 🗺️](docs/ROADMAP.md)
+No-Translation mode: simply fetch selected languages from OpenSubtitles, SubSource, SubDL, Wyzie, SCS and Subs.ro.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org)
@@ -24,25 +20,48 @@ Auto-sync subtitles in development!
 
 ### **[https://submaker.elfhosted.com](https://submaker.elfhosted.com)**
 
-Just click the link, configure your languages, and install the addon. Done!
-
-**A huge thanks to [ElfHosted](https://elfhosted.com)** for making SubMaker accessible to everyone in the Stremio community! ❤️
+Configure, install, done. A huge thanks to [ElfHosted](https://elfhosted.com) ❤️
 
 Check their [FREE Stremio Addons Guide](https://stremio-addons-guide.elfhosted.com/) for more great addons and features!
 
-> **For self-hosting, keep reading the installation guide below.**
+> For self-hosting, see [Installation](#-installation) below.
 
 ---
 
 ## ✨ Why SubMaker?
 
-- 🌍 **197 Languages** - Full ISO-639-2 support including regional variants (PT-BR, etc.)
-- 📥 **3 Subtitle Sources** - OpenSubtitles, SubDL, SubSource, with automatic fallback
-- 🎯 **One-Click Translation** - Translate on-the-fly without ever leaving Stremio
-- 🤖 **Context-Aware AI** - Google Gemini by default, plus optional providers (DeepL, OpenAI, Anthropic, XAI, DeepSeek, Mistral, OpenRouter, Cloudflare Workers)
-- ⚡ **Translation Caching** - Permanent subtitles database with dual-layer cache (memory + redis/disk) and deduplication
-- 🔒 **Production-Ready** - Rate limiting, CORS protection, session tokens, HTTPS enforcement
-- 🎨 **Beautiful UI** - Modern configuration interface with live model fetching
+- 🌍 **197 Languages**
+- 📥 **Multiple Subtitle Sources**
+- 🎯 **One-Click Translation**
+- ⚡ **Shared Translation Database**
+- 🧰 **Subtitles Toolbox**
+
+## ✨ Features
+
+### 🌍 Subtitle Sources
+| Provider | Auth Required | Notes |
+|----------|---------------|-------|
+| OpenSubtitles | Optional (recommended) | V3 or authenticated mode |
+| SubDL | API key | [subdl.com/panel/api](https://subdl.com/panel/api) |
+| SubSource | API key | [subsource.net/api-docs](https://subsource.net/api-docs) |
+| Wyzie Subs | None | Aggregator (beta) |
+| Stremio Community Subs | None | Requires 30s timeout (beta) |
+| Subs.ro | API key | Romanian subtitles (beta) |
+
+### 🤖 AI Translation Providers
+| Provider | Notes |
+|----------|-------|
+| **Google Gemini** | Default, free tier available, key rotation supported |
+| OpenAI | GPT models |
+| Anthropic | Claude models |
+| DeepL | Traditional translation API |
+| DeepSeek | |
+| XAI (Grok) | |
+| Mistral | |
+| OpenRouter | Access multiple models |
+| Cloudflare Workers AI | |
+| Google Translate | Unofficial, no key needed |
+| Custom | Ollama, LM Studio, LocalAI, any OpenAI-compatible API |
 
 ---
 
@@ -50,12 +69,11 @@ Check their [FREE Stremio Addons Guide](https://stremio-addons-guide.elfhosted.c
 
 ### Prerequisites
 
-- **Node.js** 18+ ([Download](https://nodejs.org))
-- **Gemini API Key** ([Get one free](https://makersuite.google.com/app/apikey))
-- **OpenSubtitles Account** ([Sign up](https://www.opensubtitles.com/en/newuser))
-- **SubSource API Key** ([Get one free](https://subsource.net/api-docs))
-- **SubDL API Key** ([Get one free](https://subdl.com/panel/api))
-- *(Optional)* Keys for any alternative translation provider you want to enable (DeepL, OpenAI-compatible keys, Anthropic, XAI, DeepSeek, Mistral, OpenRouter, Cloudflare Workers)
+### Prerequisites
+- **Node.js** 18+ — [nodejs.org](https://nodejs.org)
+- **Gemini API Key** — [Get free](https://aistudio.google.com/app/api-keys)
+- At least one subtitle provider key
+- Keys for any alternative subtitles provider or translation provider you want to enable. (Optional)
 
 ### Installation
 
@@ -98,70 +116,88 @@ Fetched languages and translation buttons (Make [Language]) will now appear in y
 ## 🎯 How It Works
 
 ```
-┌─────────────────────────────────────────────┐
-│  1. Watch content in Stremio                │
-│  2. Subtitles appear with "Make [Language]" │
-│  3. Click → Select source subtitle          │
-│  4. AI translates in ~1 to 3 minutes        │
-│  5. Reselect the translated subtitles       │
-│  6. Next time? Instant! (cached on DB)      │
-└─────────────────────────────────────────────┘
+1. Install SubMaker in Stremio
+2. Play content → Subtitles list shows "Make [Language]" buttons
+3. Click → Select source subtitle to translate
+4. Wait ~1-3 minutes → AI translates in batches
+5. Reselect the subtitle → Now translated!
+6. Next time? Instant — cached in database
 ```
 
-### Architecture
+### Pro Tips
+- **Single source language recommended** — Keeps subtitle order consistent
+- **Test sync first** — Try the original subtitle before translating
+- **Triple-click** — Forces re-translation if result looks wrong
+- **Use Flash-Lite** — Fastest model, best for rate limits
 
-```
-Stremio Player
-    ↓
-SubMaker Addon (Express + Stremio SDK)
-    ├── Subtitle Fetcher → [OpenSubtitles, SubDL, SubSource]
-    ├── Translation Engine → [Google Gemini AI] (with optional provider swap/fallbacks)
-    └── Cache Manager → [Memory LRU + Redis/Filesystem]
-
-```
+---
 
 ## ⚙️ Configuration Guide
 
-### Source Languages
-Languages to **translate subtitles from** (Single language recommended)
-- Example: English, Spanish, Portuguese (BR)
+### Sections Overview
 
-### Target Languages
-Languages to **translate subtitles to**
-- Example: French, German, Japanese
+| Section | Purpose |
+|---------|---------|
+| **API Keys** | Subtitle providers and AI translation keys |
+| **Languages** | Source (translate from) and target (translate to) languages |
+| **Settings** | Translation behavior, workflows, and caching |
 
-**Provider Configuration**
-- OpenSubtitles: Optional username/password
-- SubDL: Requires API key
-- SubSource: Requires API key
+### Key Settings
 
-## 🌐 Localization
+| Setting | Recommendation |
+|---------|----------------|
+| Translation Workflow | "XML Tags" for best sync |
+| Database Mode | "Use SubMaker Database" for shared caching |
+| Provider Timeout | 12s default, increase to 30s for SCS/Wyzie |
+| Mobile Mode | Enable for Android/iOS |
 
-- UI strings live in `locales/<code>.json` with the same shape as `locales/en.json` (`lang` + `messages`).
-- To add a new language, copy `locales/en.json`, translate the values, and keep the keys/placeholder tokens (`{provider}`, `{count}`, etc.) intact.
-- The configuration page lets you pick a UI language; that selection flows through to addon pages, subtitles, and API responses via `/api/locale`.
+### Advanced Mode
+Enable "Advanced Mode" in Other Settings to unlock:
+- Batch Context (surrounding context for coherence)
+- Mismatch Retries (retry on wrong entry count)
+- Gemini Parameters (temperature, top-p, thinking budget)
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Translation problem?
+> **📖 Full Guide:** [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
-1. **Force cache overwrite** - Within stremio, click 3 times (within 6 secs) on the problematic translation subtitle
-2. **Bypass Translation Cache** - Change your config to bypass the addons' subtitles database
+### ⏱️ Subtitles Out of Sync?
 
-### Translation Fails?
+Change **Translation Workflow** in Settings → Translation Settings:
+- **XML Tags** (default, recommended) — Best for sync issues
+- **Original Timestamps** — Legacy mode, reattaches original timecodes
+- **Send Timestamps to AI** — Trusts AI to preserve timecodes
 
-1. **Validate API key** - Test at [Google AI Studio](https://makersuite.google.com)
-2. **Check Gemini quota** - Review your API usage
-3. **Test other subtitles** - Try translating a different subtitle
+### 🔄 Bad / Broken Translation?
 
-### Configuration Not Saving?
+1. **Force re-translation** — Triple-click the subtitle in Stremio (within 6 seconds)
+2. **Try a different model** — Switch between Flash-Lite, Flash, or other models
+3. **Bypass cache** — Enable "Bypass Cache" in Translation Settings
 
-1. **Clear browser cache** - Force reload with Ctrl+F5
-2. **Check JavaScript console** - Look for errors (F12)
-3. **Disable browser extensions** - Some block localStorage
-4. **Try incognito mode** - Eliminate cache/extension issues
+### ❌ Translation Fails / Rate Limits?
+
+1. **Validate API key** — Test at [Google AI Studio](https://aistudio.google.com)
+2. **Switch model** — Gemma 27b has higher rate limits than Flash
+3. **Enable key rotation** — Add multiple Gemini keys in API Keys section
+4. **Use secondary provider** — Enable fallback provider in Translation Settings
+
+### 📱 Android / Mobile Issues?
+
+1. **Enable Mobile Mode** — Check "Mobile Mode" in Other Settings
+2. **Wait 1-3 minutes** — Mobile mode delivers complete subtitle when ready
+3. **Use Flash-Lite** — Fastest model for mobile compatibility
+
+### 💾 Configuration Not Saving?
+
+1. **Verify Token** — Is the token installed in Stremio (unique URL) the same one being saved in the config page?
+2. **Hard refresh** — Press `Ctrl+F5` (Windows/Linux) or `Cmd+Shift+R` (Mac)
+3. **Check console** — Press `F12` → Console for errors
+4. **Try incognito** — Rules out extension conflicts
+
+### ⚡ Reset Everything
+Click the "Reset" button at the bottom of the config page to clear all settings and start fresh.
 
 ---
 
@@ -169,15 +205,16 @@ Languages to **translate subtitles to**
 
 **Built With**
 - [Stremio Addon SDK](https://github.com/Stremio/stremio-addon-sdk) - Addon framework
-- [Google Gemini](https://ai.google.dev/) - AI translation
 - [OpenSubtitles](https://www.opensubtitles.com/) - Primary subtitle database
 - [SubDL](https://subdl.com/) - Alternative subtitle source
 - [SubSource](https://subsource.net/) - Alternative subtitle source
+- [Google Gemini](https://ai.google.dev/) - AI translation
 
 **Special Thanks**
 - Stremio team for excellent addon SDK
 - Google for free Gemini API access
 - All Subtitles communities
+- [ElfHosted](https://elfhosted.com/) - our free community hosting provider
 
 ---
 
