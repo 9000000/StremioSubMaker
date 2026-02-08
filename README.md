@@ -43,9 +43,9 @@ Check their [FREE Stremio Addons Guide](https://stremio-addons-guide.elfhosted.c
 |----------|---------------|-------|
 | OpenSubtitles | Optional (recommended) | V3 or authenticated mode |
 | SubDL | API key | [subdl.com/panel/api](https://subdl.com/panel/api) |
-| SubSource | API key | [subsource.net/api-docs](https://subsource.net/api-docs) |
+| SubSource | API key | [subsource.net/](https://subsource.net/) |
 | Wyzie Subs | None | Aggregator (beta) |
-| Stremio Community Subs | None | Requires 30s timeout (beta) |
+| Stremio Community Subtitles | None | Curated subtitles (beta) |
 | Subs.ro | API key | Romanian subtitles (beta) |
 
 ### 🤖 AI Translation Providers
