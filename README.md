@@ -100,7 +100,9 @@ npm start
 ### Open configuration page in your browser
 Visit: http://localhost:7001
 
-### Configure & Install
+---
+
+## 🎯 How It Works
 
 1. **Add Subtitle Sources API keys**
 2. **Add Gemini API Key** (required)
@@ -109,11 +111,7 @@ Visit: http://localhost:7001
 5. **Click "Install in Stremio"** or copy and paste the URL to Stremio
 
 That's it!
-Fetched languages and translation buttons (Make [Language]) will now appear in your Stremio subtitle menu.
-
----
-
-## 🎯 How It Works
+Fetched languages and translation buttons (Make [Language]) will now appear in your Stremio subtitle menu:
 
 ```
 1. Install SubMaker in Stremio
