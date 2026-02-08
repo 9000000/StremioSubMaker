@@ -507,9 +507,20 @@ class StremioCommunitySubtitlesService {
                 const key = sub.lang === normalizedLang ? sub.lang : `${sub.lang}→${normalizedLang}`;
                 langStats.set(key, (langStats.get(key) || 0) + 1);
 
-                // Determine if this is a hash match:
-                // When SCS receives a videoHash, it internally prioritizes hash-matched results
-                // The first result per language is the best match for that hash
+                // HASH MATCH DETECTION HEURISTIC:
+                // SCS uses a 5-tier lookup algorithm on the server side:
+                //   1. User selection (manual choice)
+                //   2. Local community subtitles matched by exact video_hash
+                //   3. Provider subtitles (OpenSubtitles, etc.) with hash_match=true
+                //   4. Filename similarity match (fuzzy matching by release group, quality, S/E)
+                //   5. Fallback (any subtitle for the content/language)
+                //
+                // When we send a real videoHash, SCS prioritizes hash-matched results first.
+                // Since SCS sorts by match quality, the FIRST result per language represents
+                // the best match for that specific video file version.
+                //
+                // Note: SCS doesn't explicitly return hash_match=true in the API response,
+                // so we infer it based on: (1) we sent a real hash, (2) first result per lang.
                 const isFirstForThisLang = !firstPerLang.has(normalizedLang);
                 if (isFirstForThisLang) {
                     firstPerLang.add(normalizedLang);

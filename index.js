@@ -2170,7 +2170,7 @@ const extraWildcardSuffixes = (process.env.ALLOWED_ORIGIN_WILDCARD_SUFFIXES || '
     .filter(Boolean)
     .map(s => s.startsWith('.') ? s : `.${s}`);
 // Always allow these hosting domains
-for (const suffix of ['.elfhosted.com', '.midnightignite.me', '.fortheweak.cloud']) {
+for (const suffix of ['.elfhosted.com', '.midnightignite.me', '.fortheweak.cloud', '.nhyira.dev']) {
     if (!extraWildcardSuffixes.includes(suffix)) extraWildcardSuffixes.push(suffix);
 }
 const STREMIO_ORIGIN_PREFIXES = ['stremio://', 'capacitor://', 'app://', 'file://'];

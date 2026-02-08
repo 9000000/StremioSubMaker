@@ -673,11 +673,18 @@ class SubSourceService {
           const name = (sub.name || '').toLowerCase();
 
           // Check for season pack patterns (season without specific episode)
-          // Patterns: "season 3", "third season", "complete season 3", "s03 complete", etc.
+          // Patterns: "season 3", "third season", "complete season 3", "s03 complete", "1-24 complete", etc.
           const seasonPackPatterns = [
             new RegExp(`(?:complete|full|entire)?\\s*(?:season|s)\\s*0*${targetSeason}(?:\\s+(?:complete|full|pack))?(?!.*e0*\\d)`, 'i'),
             new RegExp(`(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\\s+season(?!.*episode)`, 'i'),
-            new RegExp(`s0*${targetSeason}\\s*(?:complete|full|pack)`, 'i')
+            new RegExp(`s0*${targetSeason}\\s*(?:complete|full|pack)`, 'i'),
+            // Episode range patterns: "1-24 complete", "01~12 complete", "[1-24]", etc.
+            // These are common for anime released as season packs without explicit "season" word
+            /\d{1,3}\s*[-~]\s*\d{1,3}\s*(?:complete|batch|full|pack|\]|$)/i,
+            /\[(?:batch|complete|full)\]/i,
+            // S01. followed by quality/release info without episode number
+            // Examples: Breaking.Bad.S01.2160p.WEBRip, Show.S01.BluRay.x264
+            new RegExp(`\\.s0*${targetSeason}\\.(?!e0*\\d)(?:complete|720p|1080p|2160p|4k|blu\\.?ray|webrip|web[\\-\\.]?dl|hdtv|dvdrip|bdrip|brrip)`, 'i')
           ];
 
           // Anime-specific season pack patterns (often don't include season numbers)
@@ -690,6 +697,9 @@ class SubSourceService {
 
           let isSeasonPack = false;
 
+          // More comprehensive episode number exclusion pattern
+          const hasEpisodeNumber = /s0*\d+e0*\d+|\d+x\d+|episode\s*\d+|ep\.?\s*\d+|\be\.?\s*\d{1,3}\b/i.test(name);
+
           if (type === 'anime-episode') {
             // For anime, use anime-specific patterns and don't require season numbers
             const episodeExclusionPattern = new RegExp(`(?:^|[^0-9])0*${targetEpisode}(?:v\\d+)?(?:[^0-9]|$)`);
@@ -698,7 +708,7 @@ class SubSourceService {
           } else {
             // For regular TV shows, use season-based patterns
             isSeasonPack = seasonPackPatterns.some(pattern => pattern.test(name)) &&
-              !/s0*\d+e0*\d+|\d+x\d+|episode\s*\d+|ep\s*\d+/i.test(name); // Exclude if has episode number
+              !hasEpisodeNumber; // Exclude if has episode number
           }
 
           if (isSeasonPack) {

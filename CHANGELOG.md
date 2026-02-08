@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.44
+
+**Bug Fixes:**
+
+- **Fixed subtitle cache storing sparse/empty results:** When subtitle providers timed out or returned 0 results, the addon was caching these empty results for 10 minutes. Subsequent requests would hit the cache and return 0 subtitles instead of retrying. Now, search results with fewer than 3 subtitles are not cached, allowing fresh searches on the next request. Added a `MIN_CACHED_SUBTITLES_THRESHOLD` constant (default: 3) that controls this behavior.
+
+- **Removed noisy i18n debug logging:** Removed the debug trace logging in `getTranslator()` that was printing stack traces for every non-English translator call (e.g., `[i18n] getTranslator called with lang='en-us' (stack: ...)`).
+
+- **Improved SubDL season pack detection:** Fixed edge cases in SubDL's season pack detection logic. The API's `full_season` field is always `false` (broken), so detection now relies on `episode`, `episode_from`, and `episode_end` fields. Fixed handling where `episode_end=0` is now correctly treated as "not set" (previously caused false negatives). Added `is_multi_episode_pack` flag to distinguish explicit episode ranges (e.g., 1→37) from full season packs. Multi-episode packs now include `episode_range` metadata.
+
 ## SubMaker v1.4.43
 
 **Improvements:**

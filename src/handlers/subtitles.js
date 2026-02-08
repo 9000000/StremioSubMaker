@@ -1368,12 +1368,22 @@ setInterval(() => {
  * @param {Function} fn - Function to execute if not already in flight or cached
  * @returns {Promise} - Promise result
  */
+// Minimum number of subtitles required to use cached results
+// If cache has fewer results, we skip it and do a fresh search
+const MIN_CACHED_SUBTITLES_THRESHOLD = 3;
+
 async function deduplicateSearch(key, fn) {
   // Check completed results cache first (persistent cache)
   const cachedResult = subtitleSearchResultsCache.get(key);
   if (cachedResult) {
-    log.debug(() => `[Subtitle Cache] Found cached search results for: ${shortKey(key)} (${cachedResult.length} subtitles)`);
-    return cachedResult;
+    // Skip cache if results are too sparse - do a fresh search instead
+    if (cachedResult.length < MIN_CACHED_SUBTITLES_THRESHOLD) {
+      log.debug(() => `[Subtitle Cache] Found cached search results for: ${shortKey(key)} (${cachedResult.length} subtitles) - too few, skipping cache`);
+      subtitleSearchResultsCache.delete(key); // Remove sparse cache entry
+    } else {
+      log.debug(() => `[Subtitle Cache] Found cached search results for: ${shortKey(key)} (${cachedResult.length} subtitles)`);
+      return cachedResult;
+    }
   }
 
   // Check in-flight requests (prevents duplicate API calls for concurrent requests)
@@ -1390,10 +1400,14 @@ async function deduplicateSearch(key, fn) {
 
   try {
     const result = await promise;
-    // Cache the completed result for future requests
+    // Cache the completed result for future requests (only if enough results)
     if (result && Array.isArray(result)) {
-      subtitleSearchResultsCache.set(key, result);
-      log.debug(() => `[Subtitle Cache] Cached search results for: ${shortKey(key)} (${result.length} subtitles)`);
+      if (result.length >= MIN_CACHED_SUBTITLES_THRESHOLD) {
+        subtitleSearchResultsCache.set(key, result);
+        log.debug(() => `[Subtitle Cache] Cached search results for: ${shortKey(key)} (${result.length} subtitles)`);
+      } else {
+        log.debug(() => `[Subtitle Cache] Not caching sparse results for: ${shortKey(key)} (${result.length} subtitles < ${MIN_CACHED_SUBTITLES_THRESHOLD})`);
+      }
     }
     return result;
   } finally {
@@ -2297,12 +2311,21 @@ function createSubtitleHandler(config) {
       // Build search parameters for all providers
       // Check if we have a real videoHash from Stremio (OpenSubtitles format from streaming addon)
       // Real hashes come from streaming addons like Torrentio via behaviorHints.videoHash
+      // This is NOT the same as our derived MD5 hash (in videoHash.js) which is only for internal caching
       const hasRealStremioHash = !!(extra?.videoHash && typeof extra.videoHash === 'string' && extra.videoHash.length > 0);
 
+      // Validate videoSize is a positive integer (SCS expects numeric value)
+      const validVideoSize = hasRealStremioHash && extra?.videoSize
+        ? (typeof extra.videoSize === 'number' && extra.videoSize > 0 ? extra.videoSize
+          : (typeof extra.videoSize === 'string' && /^\d+$/.test(extra.videoSize) ? parseInt(extra.videoSize, 10) : null))
+        : null;
+
       if (hasRealStremioHash) {
-        log.debug(() => `[Subtitles] Real Stremio videoHash available: ${extra.videoHash.substring(0, 8)}... (SCS hash matching enabled)`);
+        log.debug(() => `[Subtitles] Real Stremio videoHash available: ${extra.videoHash.substring(0, 8)}...${validVideoSize ? ` (size: ${validVideoSize})` : ''} - SCS hash matching enabled`);
       } else {
-        log.debug(() => `[Subtitles] No Stremio videoHash from streaming addon - SCS will use filename matching only`);
+        // No hash = streaming source doesn't provide it (e.g., HTTP links, some debrid services)
+        // Only torrent-based streaming addons (Torrentio, etc.) provide OpenSubtitles hashes
+        log.debug(() => `[Subtitles] No Stremio videoHash (streaming source doesn't provide it) - SCS will use filename matching only`);
       }
 
       const searchParams = {
@@ -2318,7 +2341,7 @@ function createSubtitleHandler(config) {
         // Only send real hash from Stremio - our derived MD5 is useless for external providers like SCS
         // They store OpenSubtitles hashes, our MD5(filename+id) won't match anything
         videoHash: hasRealStremioHash ? extra.videoHash : null,
-        videoSize: hasRealStremioHash ? extra?.videoSize : null,
+        videoSize: validVideoSize, // Validated to be positive integer or null
         filename: streamFilename,
         // Flag for SCS to know if hash matching is possible
         _isRealStremioHash: hasRealStremioHash,

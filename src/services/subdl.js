@@ -180,21 +180,30 @@ class SubDLService {
         // Parse releases array from SubDL API (when releases=1 is set)
         const releases = Array.isArray(sub.releases) ? sub.releases : [];
 
-        // Detect season packs from API metadata (episode_from/episode_end fields)
-        // - Single episode: episode_from === episode_end (e.g., from=1, end=1)
-        // - Multi-episode pack: episode_from !== episode_end (e.g., from=15, end=24)
-        // - Full season pack: episode=null, episode_from=null, episode_end=0
+        // Detect season packs vs single episodes using API metadata
+        // Patterns observed from API testing:
+        // - Single episode: episode=X, episode_from=X, episode_end=X (all match)
+        // - Multi-episode pack: episode_from !== episode_end, both > 0 (e.g., 1→37, 15→24)
+        // - Full season pack: episode=null, episode_from=null, episode_end=0 or null
+        // NOTE: full_season field is ALWAYS false in the API - completely broken, do not use
         let isSeasonPack = false;
+        let isMultiEpisodePack = false;
         if (isTvOrAnime) {
           const epFrom = sub.episode_from;
           const epEnd = sub.episode_end;
+          const epValue = sub.episode;
 
-          if (epFrom != null && epEnd != null && epFrom !== epEnd) {
-            // Multi-episode pack (e.g., episodes 15-24 or 1-7)
+          // Normalize episode_end (API returns 0 when not set, treat as null)
+          const normalizedEpEnd = (epEnd === 0 || epEnd == null) ? null : epEnd;
+
+          if (epFrom != null && normalizedEpEnd != null && epFrom !== normalizedEpEnd) {
+            // Multi-episode pack with explicit range (e.g., episodes 1-37 or 15-24)
             isSeasonPack = true;
-          } else if (sub.episode == null && epFrom == null) {
+            isMultiEpisodePack = true;
+          } else if (epValue == null && epFrom == null) {
             // No episode info at all — full season pack
             isSeasonPack = true;
+            isMultiEpisodePack = false;
           }
         }
 
@@ -224,11 +233,15 @@ class SubDLService {
         // Mark season packs from API metadata
         if (isSeasonPack) {
           result.is_season_pack = true;
+          result.is_multi_episode_pack = isMultiEpisodePack; // true if explicit range (1-37), false if full season
           result.season_pack_season = effectiveSeason;
           result.season_pack_episode = episode;
+          if (isMultiEpisodePack) {
+            result.episode_range = { from: sub.episode_from, to: sub.episode_end };
+          }
           result.fileId = `${fileId}_seasonpack_s${effectiveSeason}e${episode}`;
           result.id = result.fileId;
-          log.debug(() => `[SubDL] Season pack (API metadata: ep_from=${sub.episode_from}, ep_end=${sub.episode_end}): ${result.name}`);
+          log.debug(() => `[SubDL] ${isMultiEpisodePack ? 'Multi-episode pack' : 'Full season pack'} (ep=${sub.episode}, from=${sub.episode_from}, end=${sub.episode_end}): ${result.name}`);
         }
 
         return result;
