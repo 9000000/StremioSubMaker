@@ -1,11 +1,17 @@
 const axios = require('axios');
 const log = require('../utils/logger');
+const { getShared, setShared, CACHE_PREFIXES, CACHE_TTLS } = require('../utils/sharedCache');
+const { StorageAdapter } = require('../storage');
 
+/**
+ * Kitsu ID mapping service
+ * 
+ * MULTI-INSTANCE: Uses Redis-backed shared cache for cross-pod consistency
+ */
 class KitsuService {
   constructor() {
     this.baseUrl = 'https://kitsu.io/api/edge';
-    this.cache = new Map();
-    this.cacheExpiry = 24 * 60 * 60 * 1000; // 24 hours
+    // Note: Cache is now Redis-backed via sharedCache utility
   }
 
   /**
@@ -32,6 +38,7 @@ class KitsuService {
 
   /**
    * Get anime info from Kitsu API with retry logic
+   * Note: This is an intermediate cache, separate from IMDB mapping
    * @param {string} kitsuId - Kitsu ID
    * @returns {Promise<Object>} - Anime info including mappings
    */
@@ -42,12 +49,16 @@ class KitsuService {
       return null;
     }
 
-    // Check cache first
-    const cacheKey = `anime_${numericId}`;
-    const cached = this.cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < (cached.expiry || this.cacheExpiry)) {
-      log.debug(() => [`[Kitsu] Cache hit for ID ${numericId}`]);
-      return cached.data;
+    // Check Redis cache for anime info
+    const infoCacheKey = `kitsu:anime_info:${numericId}`;
+    try {
+      const cached = await getShared(infoCacheKey, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA);
+      if (cached !== null) {
+        log.debug(() => [`[Kitsu] Redis cache hit for anime info ID ${numericId}`]);
+        return cached === 'null' ? null : JSON.parse(cached);
+      }
+    } catch (e) {
+      log.debug(() => `[Kitsu] Anime info cache lookup failed: ${e.message}`);
     }
 
     // Retry configuration: 2 retries with delays of 2s and 6s
@@ -77,11 +88,10 @@ class KitsuService {
 
         const animeData = response.data;
 
-        // Cache the result
-        this.cache.set(cacheKey, {
-          data: animeData,
-          timestamp: Date.now()
-        });
+        // Cache the result in Redis
+        try {
+          await setShared(infoCacheKey, JSON.stringify(animeData), StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_POSITIVE);
+        } catch (_) { }
 
         if (attempt > 0) {
           log.info(() => [`[Kitsu] Successfully fetched anime info for ID ${numericId} on retry ${attempt}`]);
@@ -115,12 +125,10 @@ class KitsuService {
     // All retries failed
     log.warn(() => [`[Kitsu] Failed to fetch anime info for ID ${numericId} after ${retryDelays.length} retries:`, lastError?.message]);
 
-    // Cache null result with shorter expiry to allow recovery sooner than 24h
-    this.cache.set(cacheKey, {
-      data: null,
-      timestamp: Date.now(),
-      expiry: 10 * 60 * 1000 // 10 minutes for failed lookups
-    });
+    // Cache null result with shorter TTL (10 min) to allow recovery sooner
+    try {
+      await setShared(infoCacheKey, 'null', StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_NEGATIVE);
+    } catch (_) { }
 
     return null;
   }
@@ -131,9 +139,27 @@ class KitsuService {
    * @returns {Promise<string|null>} - IMDB ID if found
    */
   async getImdbId(kitsuId) {
+    const numericId = this.extractNumericId(kitsuId);
+    if (!numericId) {
+      return null;
+    }
+
+    // Check Redis shared cache for IMDB mapping first
+    const imdbCacheKey = `${CACHE_PREFIXES.KITSU_IMDB}${numericId}`;
+    try {
+      const cached = await getShared(imdbCacheKey, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA);
+      if (cached !== null) {
+        log.debug(() => `[Kitsu] Redis cache hit for IMDB mapping ID ${numericId}`);
+        return cached === 'null' ? null : cached;
+      }
+    } catch (e) {
+      log.debug(() => `[Kitsu] IMDB cache lookup failed: ${e.message}`);
+    }
+
     const animeData = await this.getAnimeInfo(kitsuId);
 
     if (!animeData || !animeData.data) {
+      await setShared(imdbCacheKey, 'null', StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_NEGATIVE);
       return null;
     }
 
@@ -156,6 +182,7 @@ class KitsuService {
           if (externalSite === 'imdb' && externalId) {
             const imdbId = externalId.startsWith('tt') ? externalId : `tt${externalId}`;
             log.debug(() => [`[Kitsu] Found IMDB ID ${imdbId} for Kitsu ID ${kitsuId}`]);
+            await setShared(imdbCacheKey, imdbId, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_POSITIVE);
             return imdbId;
           }
 
@@ -164,6 +191,7 @@ class KitsuService {
             log.debug(() => [`[Kitsu] Found TMDB movie ID ${externalId}, attempting to get IMDB ID`]);
             const imdbId = await this.getImdbFromTmdb(externalId, 'movie');
             if (imdbId) {
+              await setShared(imdbCacheKey, imdbId, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_POSITIVE);
               return imdbId;
             }
           }
@@ -172,6 +200,7 @@ class KitsuService {
             log.debug(() => [`[Kitsu] Found TMDB TV ID ${externalId}, attempting to get IMDB ID`]);
             const imdbId = await this.getImdbFromTmdb(externalId, 'tv');
             if (imdbId) {
+              await setShared(imdbCacheKey, imdbId, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_POSITIVE);
               return imdbId;
             }
           }
@@ -206,11 +235,15 @@ class KitsuService {
       const imdbId = await this.searchByTitle(title);
       if (imdbId) {
         log.info(() => [`[Kitsu] Found IMDB ID ${imdbId} via ${type} title search for Kitsu ID ${kitsuId}`]);
+        await setShared(imdbCacheKey, imdbId, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_POSITIVE);
         return imdbId;
       }
     }
 
     log.debug(() => [`[Kitsu] No IMDB ID found for Kitsu ID ${kitsuId}`]);
+    try {
+      await setShared(imdbCacheKey, 'null', StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_NEGATIVE);
+    } catch (_) { }
     return null;
   }
 
@@ -495,11 +528,10 @@ class KitsuService {
   }
 
   /**
-   * Clear cache
+   * Clear cache - Note: This now only logs since cache is Redis-backed
    */
   clearCache() {
-    this.cache.clear();
-    log.debug(() => ['[Kitsu] Cache cleared']);
+    log.debug(() => ['[Kitsu] Cache clear requested (Redis-backed cache - clearing not implemented for multi-instance safety)']);
   }
 }
 

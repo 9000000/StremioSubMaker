@@ -65,6 +65,11 @@ function loadLocale(lang) {
  * @returns {(key: string, vars?: Object, fallback?: string) => string}
  */
 function getTranslator(lang) {
+  // Debug: trace language requests to find PT-BR usage
+  if (lang && lang !== 'en' && lang !== DEFAULT_LANG) {
+    const log = require('./logger');
+    log.debug(() => `[i18n] getTranslator called with lang='${lang}' (stack: ${new Error().stack?.split('\n').slice(2, 5).join(' <- ')})`);
+  }
   const { messages } = loadLocale(lang);
   const enMessages = loadLocale(DEFAULT_LANG).messages || {};
 

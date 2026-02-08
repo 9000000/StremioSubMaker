@@ -5,6 +5,7 @@ const Redis = require('ioredis');
 const crypto = require('crypto');
 const { getIsolationKey } = require('../utils/isolation');
 const { getRedisPassword } = require('../utils/redisHelper');
+const { handleCaughtError } = require('../utils/errorClassifier');
 
 const SESSION_INDEX_KEY = 'session:index';
 

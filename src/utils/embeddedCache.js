@@ -4,6 +4,7 @@
  */
 
 const log = require('./logger');
+const { handleCaughtError } = require('./errorClassifier');
 const { StorageFactory, StorageAdapter } = require('../storage');
 
 let storageAdapter = null;
@@ -65,7 +66,7 @@ async function indexExists(videoHash, type) {
     const indexKey = getIndexKey(videoHash, type);
     return await adapter.exists(indexKey, StorageAdapter.CACHE_TYPES.EMBEDDED);
   } catch (error) {
-    log.warn(() => [`[Embedded Cache] indexExists check failed:`, error.message]);
+    handleCaughtError(error, `[Embedded Cache] indexExists check failed`, log);
     return false; // Assume no index on error (will fallback to normal lookup)
   }
 }
@@ -88,7 +89,7 @@ async function persistIndex(adapter, indexKey, keys, previousKeys = [], scanPatt
         }
       }
     } catch (error) {
-      log.warn(() => [`[Embedded Cache] Failed to list for pruning (${scanPattern}):`, error.message]);
+      handleCaughtError(error, `[Embedded Cache] Failed to list for pruning (${scanPattern})`, log);
     }
   }
 
@@ -101,7 +102,7 @@ async function persistIndex(adapter, indexKey, keys, previousKeys = [], scanPatt
       try {
         await adapter.delete(key, StorageAdapter.CACHE_TYPES.EMBEDDED);
       } catch (error) {
-        log.warn(() => [`[Embedded Cache] Failed to delete pruned key ${key}:`, error.message]);
+        handleCaughtError(error, `[Embedded Cache] Failed to delete pruned key ${key}`, log);
       }
     }
   }
@@ -193,7 +194,7 @@ async function saveOriginalEmbedded(videoHash, trackId, languageCode, content, m
     await pruneOriginalsForVideo(videoHash, metadata.batchId);
     await pruneTranslationsForVideo(videoHash, metadata.batchId);
   } catch (error) {
-    log.warn(() => [`[Embedded Cache] Failed to update original index for ${cacheKey}:`, error.message]);
+    handleCaughtError(error, `[Embedded Cache] Failed to update original index for ${cacheKey}`, log);
   }
   log.debug(() => `[Embedded Cache] Saved original: ${cacheKey}`);
   return { cacheKey, entry };
@@ -218,7 +219,7 @@ async function saveTranslatedEmbedded(videoHash, trackId, sourceLanguageCode, ta
     await addToIndex(adapter, videoHash, 'translation', cacheKey);
     await pruneTranslationsForVideo(videoHash, metadata.batchId);
   } catch (error) {
-    log.warn(() => [`[Embedded Cache] Failed to update translation index for ${cacheKey}:`, error.message]);
+    handleCaughtError(error, `[Embedded Cache] Failed to update translation index for ${cacheKey}`, log);
   }
   log.debug(() => `[Embedded Cache] Saved translation: ${cacheKey}`);
   return { cacheKey, entry };
@@ -289,7 +290,7 @@ async function listEmbeddedTranslations(videoHash) {
       if (!entry) continue;
       results.push({ cacheKey: key, ...entry });
     } catch (error) {
-      log.warn(() => [`[Embedded Cache] Failed to fetch translation ${key}:`, error.message]);
+      handleCaughtError(error, `[Embedded Cache] Failed to fetch translation ${key}`, log);
       try { await removeFromIndex(adapter, videoHash, 'translation', key); } catch (_) { }
     }
   }
@@ -334,7 +335,7 @@ async function listEmbeddedOriginals(videoHash) {
       if (!entry) continue;
       results.push({ cacheKey: key, ...entry });
     } catch (error) {
-      log.warn(() => [`[Embedded Cache] Failed to fetch original ${key}:`, error.message]);
+      handleCaughtError(error, `[Embedded Cache] Failed to fetch original ${key}`, log);
       try { await removeFromIndex(adapter, videoHash, 'original', key); } catch (_) { }
     }
   }
@@ -401,7 +402,7 @@ async function pruneOriginalsForVideo(videoHash, preferredBatchId = null) {
       await adapter.delete(key, StorageAdapter.CACHE_TYPES.EMBEDDED);
       log.debug(() => `[Embedded Cache] Pruned original ${key}`);
     } catch (error) {
-      log.warn(() => [`[Embedded Cache] Failed to prune original ${key}:`, error.message]);
+      handleCaughtError(error, `[Embedded Cache] Failed to prune original ${key}`, log);
     }
   }
 }
@@ -464,7 +465,7 @@ async function pruneTranslationsForVideo(videoHash, preferredBatchId = null) {
       await adapter.delete(key, StorageAdapter.CACHE_TYPES.EMBEDDED);
       log.debug(() => `[Embedded Cache] Pruned translation ${key}`);
     } catch (error) {
-      log.warn(() => [`[Embedded Cache] Failed to prune translation ${key}:`, error.message]);
+      handleCaughtError(error, `[Embedded Cache] Failed to prune translation ${key}`, log);
     }
   }
 }

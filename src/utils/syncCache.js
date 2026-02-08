@@ -8,6 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { StorageFactory, StorageAdapter } = require('../storage');
 const log = require('./logger');
+const { handleCaughtError } = require('./errorClassifier');
 
 // Index metadata is stored alongside sync cache entries so we can avoid
 // per-request SCANs. Index keys are namespaced and sanitized to avoid
@@ -94,7 +95,7 @@ async function indexExists(videoHash, languageCode) {
     const indexKey = getIndexKey(videoHash, languageCode);
     return await adapter.exists(indexKey, StorageAdapter.CACHE_TYPES.SYNC);
   } catch (error) {
-    log.warn(() => [`[Sync Cache] indexExists check failed:`, error.message]);
+    handleCaughtError(error, `[Sync Cache] indexExists check failed`, log);
     return false; // Assume no index on error (will fallback to normal lookup)
   }
 }
@@ -117,7 +118,7 @@ async function persistIndex(adapter, indexKey, keys, previousKeys = [], scanPatt
         }
       }
     } catch (error) {
-      log.warn(() => [`[Sync Cache] Failed to list for pruning (${scanPattern}):`, error.message]);
+      handleCaughtError(error, `[Sync Cache] Failed to list for pruning (${scanPattern})`, log);
     }
   }
 
@@ -130,7 +131,7 @@ async function persistIndex(adapter, indexKey, keys, previousKeys = [], scanPatt
       try {
         await adapter.delete(key, StorageAdapter.CACHE_TYPES.SYNC);
       } catch (error) {
-        log.warn(() => [`[Sync Cache] Failed to delete pruned key ${key}:`, error.message]);
+        handleCaughtError(error, `[Sync Cache] Failed to delete pruned key ${key}`, log);
       }
     }
   }
@@ -222,7 +223,7 @@ async function saveSyncedSubtitle(videoHash, languageCode, sourceSubId, syncData
     try {
       await addToIndex(adapter, videoHash, languageCode, cacheKey);
     } catch (error) {
-      log.warn(() => [`[Sync Cache] Failed to update index for ${cacheKey}:`, error.message]);
+      handleCaughtError(error, `[Sync Cache] Failed to update index for ${cacheKey}`, log);
     }
 
     log.debug(() => `[Sync Cache] Saved: ${cacheKey}`);
@@ -286,7 +287,7 @@ async function getSyncedSubtitles(videoHash, languageCode) {
           timestamp: entry.timestamp || Date.now()
         });
       } catch (error) {
-        log.warn(() => [`[Sync Cache] Failed to fetch entry for ${cacheKey}:`, error.message]);
+        handleCaughtError(error, `[Sync Cache] Failed to fetch entry for ${cacheKey}`, log);
         // On failure, drop the key from index to avoid repeat hits
         try { await removeFromIndex(adapter, videoHash, languageCode, cacheKey); } catch (_) { }
       }
@@ -326,7 +327,7 @@ async function listSyncedLanguages(videoHash) {
 
     return Array.from(langs);
   } catch (error) {
-    log.warn(() => ['[Sync Cache] Failed to list languages for hash', videoHash, ':', error.message]);
+    handleCaughtError(error, `[Sync Cache] Failed to list languages for hash ${videoHash}`, log);
     return [];
   }
 }
@@ -360,8 +361,7 @@ async function getSyncedSubtitle(videoHash, languageCode, sourceSubId) {
     };
 
   } catch (error) {
-    log.warn(() => [`[Sync Cache] Failed to retrieve ${videoHash}_${languageCode}_${sourceSubId}:`, error.message]);
-    return null;
+    return handleCaughtError(error, `[Sync Cache] Failed to retrieve ${videoHash}_${languageCode}_${sourceSubId}`, log, { fallbackValue: null });
   }
 }
 
@@ -382,7 +382,7 @@ async function deleteSyncedSubtitle(videoHash, languageCode, sourceSubId) {
       try {
         await removeFromIndex(adapter, videoHash, languageCode, cacheKey);
       } catch (error) {
-        log.warn(() => [`[Sync Cache] Failed to update index on delete for ${cacheKey}:`, error.message]);
+        handleCaughtError(error, `[Sync Cache] Failed to update index on delete for ${cacheKey}`, log);
       }
       log.debug(() => `[Sync Cache] Deleted: ${cacheKey}`);
     }

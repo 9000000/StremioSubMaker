@@ -1,5 +1,7 @@
 const axios = require('axios');
 const log = require('../utils/logger');
+const { getShared, setShared, CACHE_PREFIXES, CACHE_TTLS } = require('../utils/sharedCache');
+const { StorageAdapter } = require('../storage');
 
 /**
  * AniDB ID mapping service
@@ -10,11 +12,12 @@ const log = require('../utils/logger');
  *   2. Cinemeta title search fallback (using AniDB title from Wikidata)
  *
  * Both are free and require no API keys.
+ * 
+ * MULTI-INSTANCE: Uses Redis-backed shared cache for cross-pod consistency
  */
 class AniDBService {
   constructor() {
-    this.cache = new Map();
-    this.cacheExpiry = 24 * 60 * 60 * 1000; // 24 hours
+    // Note: Cache is now Redis-backed via sharedCache utility
   }
 
   /**
@@ -52,19 +55,23 @@ class AniDBService {
       return null;
     }
 
-    // Check cache first
-    const cacheKey = `anidb_imdb_${numericId}`;
-    const cached = this.cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < (cached.expiry || this.cacheExpiry)) {
-      log.debug(() => `[AniDB] Cache hit for ID ${numericId}`);
-      return cached.data;
+    // Check Redis shared cache first
+    const cacheKey = `${CACHE_PREFIXES.ANIDB_IMDB}${numericId}`;
+    try {
+      const cached = await getShared(cacheKey, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA);
+      if (cached !== null) {
+        log.debug(() => `[AniDB] Redis cache hit for ID ${numericId}`);
+        return cached === 'null' ? null : cached;
+      }
+    } catch (e) {
+      log.debug(() => `[AniDB] Cache lookup failed, proceeding with API: ${e.message}`);
     }
 
     // Step 1: Try Wikidata SPARQL for direct AniDB → IMDB mapping
     const wikidataResult = await this.queryWikidataAnidbToImdb(numericId);
     if (wikidataResult?.imdbId) {
       log.info(() => `[AniDB] Wikidata found IMDB ${wikidataResult.imdbId} for AniDB ${numericId}`);
-      this.cache.set(cacheKey, { data: wikidataResult.imdbId, timestamp: Date.now() });
+      await setShared(cacheKey, wikidataResult.imdbId, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_POSITIVE);
       return wikidataResult.imdbId;
     }
 
@@ -76,17 +83,15 @@ class AniDBService {
       const imdbId = await this.searchCinemetaByTitle(title);
       if (imdbId) {
         log.info(() => `[AniDB] Found IMDB ${imdbId} via Cinemeta title search for AniDB ${numericId} ("${title}")`);
-        this.cache.set(cacheKey, { data: imdbId, timestamp: Date.now() });
+        await setShared(cacheKey, imdbId, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_POSITIVE);
         return imdbId;
       }
     }
 
     log.debug(() => `[AniDB] No IMDB ID found for AniDB ${numericId}`);
-    this.cache.set(cacheKey, {
-      data: null,
-      timestamp: Date.now(),
-      expiry: 10 * 60 * 1000 // 10 minutes for failed lookups
-    });
+    try {
+      await setShared(cacheKey, 'null', StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_NEGATIVE);
+    } catch (_) { }
     return null;
   }
 
@@ -204,8 +209,8 @@ class AniDBService {
         for (const meta of metas) {
           const metaName = meta.name?.toLowerCase();
           if (metaName === searchLower ||
-              metaName?.includes(searchLower) ||
-              searchLower.includes(metaName)) {
+            metaName?.includes(searchLower) ||
+            searchLower.includes(metaName)) {
             if (meta.imdb_id) {
               log.debug(() => `[AniDB] Cinemeta match: "${meta.name}" (${meta.imdb_id})`);
               return meta.imdb_id;
@@ -227,11 +232,10 @@ class AniDBService {
   }
 
   /**
-   * Clear cache
+   * Clear cache - Note: This now only logs since cache is Redis-backed
    */
   clearCache() {
-    this.cache.clear();
-    log.debug(() => '[AniDB] Cache cleared');
+    log.debug(() => '[AniDB] Cache clear requested (Redis-backed cache - clearing not implemented for multi-instance safety)');
   }
 }
 

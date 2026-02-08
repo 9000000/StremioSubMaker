@@ -22,11 +22,13 @@ const embeddedCache = require('../utils/embeddedCache');
 const { StorageFactory, StorageAdapter } = require('../storage');
 const { getCached: getDownloadCached, saveCached: saveDownloadCached } = require('../utils/downloadCache');
 const log = require('../utils/logger');
+const { handleCaughtError } = require('../utils/errorClassifier');
 const { isHearingImpairedSubtitle } = require('../utils/subtitleFlags');
 const { generateCacheKeys } = require('../utils/cacheKeys');
 const { deduplicateSubtitles, logDeduplicationStats } = require('../utils/subtitleDeduplication');
 const { version } = require('../../package.json');
 const { isProviderHealthy, circuitBreaker } = require('../utils/httpAgents');
+const { getShared, setShared, incrementCounter, decrementCounter, getCounter, CACHE_PREFIXES, CACHE_TTLS } = require('../utils/sharedCache');
 
 const fs = require('fs');
 const path = require('path');
@@ -106,14 +108,53 @@ function maybeConvertToSRT(content, config) {
   }
 }
 
-// Use LRUCache with max 50k users and a 24h TTL so stale counts expire naturally
-const userTranslationCounts = new LRUCache({
-  max: 50000, // Max 50k unique users tracked
-  ttl: 24 * 60 * 60 * 1000, // 24 hours - auto-cleanup stale entries
-  updateAgeOnGet: false,
-});
+// MULTI-INSTANCE: User concurrency tracking moved to Redis for cross-pod enforcement
+// Using atomic counters with TTL for automatic cleanup of orphaned counts
+const USER_CONCURRENCY_PREFIX = 'user_translations:';
+const USER_CONCURRENCY_TTL_SECONDS = 30 * 60; // 30 min TTL (safety net for orphaned counts)
 const DEFAULT_MAX_CONCURRENT_TRANSLATIONS_PER_USER = 3;
 const GEMMA_MAX_CONCURRENT_TRANSLATIONS_PER_USER = 2;
+
+/**
+ * Atomically increment user's concurrent translation count in Redis
+ * @param {string} userHash - User config hash
+ * @returns {Promise<number>} New count, or -1 on failure (allow translation as fallback)
+ */
+async function incrementUserConcurrency(userHash) {
+  const effectiveUserHash = (userHash && userHash.length > 0) ? userHash : 'anonymous';
+  const key = `${USER_CONCURRENCY_PREFIX}${effectiveUserHash}`;
+  const newCount = await incrementCounter(key, USER_CONCURRENCY_TTL_SECONDS);
+  if (newCount > 0) {
+    log.debug(() => `[Concurrency] Incremented user ${effectiveUserHash} to ${newCount}`);
+  }
+  return newCount;
+}
+
+/**
+ * Atomically decrement user's concurrent translation count in Redis
+ * @param {string} userHash - User config hash
+ * @returns {Promise<number>} New count, or -1 on failure
+ */
+async function decrementUserConcurrency(userHash) {
+  const effectiveUserHash = (userHash && userHash.length > 0) ? userHash : 'anonymous';
+  const key = `${USER_CONCURRENCY_PREFIX}${effectiveUserHash}`;
+  const newCount = await decrementCounter(key);
+  if (newCount >= 0) {
+    log.debug(() => `[Concurrency] Decremented user ${effectiveUserHash} to ${newCount}`);
+  }
+  return newCount;
+}
+
+/**
+ * Get current concurrent translation count for a user from Redis
+ * @param {string} userHash - User config hash
+ * @returns {Promise<number>} Current count (0 if not found or on error)
+ */
+async function getUserConcurrencyCount(userHash) {
+  const effectiveUserHash = (userHash && userHash.length > 0) ? userHash : 'anonymous';
+  const key = `${USER_CONCURRENCY_PREFIX}${effectiveUserHash}`;
+  return await getCounter(key);
+}
 
 function resolveProviderConfig(config, key) {
   if (!config || !key) return null;
@@ -151,12 +192,10 @@ const translationStatus = new LRUCache({
   updateAgeOnGet: false,
 });
 
-// TMDB → IMDB mapping cache to avoid repeated Cinemeta lookups
-const tmdbToImdbCache = new LRUCache({
-  max: 5000,
-  ttl: 24 * 60 * 60 * 1000, // 24 hours
-  updateAgeOnGet: true,
-});
+// MULTI-INSTANCE: TMDB → IMDB mapping cache moved to Redis via PROVIDER_METADATA
+// Key format: tmdb_imdb:{tmdbId}:{mediaType}
+const TMDB_IMDB_CACHE_TTL_POSITIVE = 24 * 60 * 60; // 24 hours for successful lookups
+const TMDB_IMDB_CACHE_TTL_NEGATIVE = 10 * 60;      // 10 minutes for failed lookups
 
 // History metadata cache (title/season/episode) to avoid repeat Cinemeta lookups
 const historyTitleCache = new LRUCache({
@@ -276,6 +315,7 @@ function ensureInformationalSubtitleSize(srt, note = null, uiLanguage = 'en') {
 }
 
 // Resolve IMDB ID when only TMDB ID is available (Stremio can send tmdb:{id})
+// MULTI-INSTANCE: Uses Redis-backed shared cache for cross-pod consistency
 async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
   if (!videoInfo || videoInfo.imdbId || !videoInfo.tmdbId) {
     return videoInfo ? videoInfo.imdbId : null;
@@ -292,17 +332,26 @@ async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
     return 'movie';
   })();
 
-  const cacheKey = `${videoInfo.tmdbId}:${mediaType}`;
-  if (tmdbToImdbCache.has(cacheKey)) {
-    const cached = tmdbToImdbCache.get(cacheKey);
-    if (cached) {
+  const cacheKey = `${CACHE_PREFIXES.TMDB_IMDB}${videoInfo.tmdbId}:${mediaType}`;
+
+  // Check Redis shared cache first
+  try {
+    const cached = await getShared(cacheKey, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA);
+    if (cached !== null) {
+      log.debug(() => `[Subtitles] Redis cache hit for TMDB ${videoInfo.tmdbId}:${mediaType}`);
+      // Handle cached null values (stored as 'null' string)
+      if (cached === 'null') {
+        return null;
+      }
       videoInfo.imdbId = cached;
+      return cached;
     }
-    return cached;
+  } catch (e) {
+    log.debug(() => `[Subtitles] TMDB cache lookup failed: ${e.message}`);
   }
 
   try {
-    log.debug(() => [`[Subtitles] Attempting TMDB → IMDB mapping`, { tmdbId: videoInfo.tmdbId, mediaType }]);
+    log.debug(() => [`[Subtitles] Attempting TMDB \u2192 IMDB mapping`, { tmdbId: videoInfo.tmdbId, mediaType }]);
 
     const stremioTypesToTry = (() => {
       if (mediaType === 'movie') return ['movie'];
@@ -340,7 +389,11 @@ async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
       mapped = await queryWikidataTmdbToImdb(videoInfo.tmdbId, mediaType);
     }
 
-    tmdbToImdbCache.set(cacheKey, mapped || null, { ttl: mapped ? undefined : 10 * 60 * 1000 }); // Cache misses for 10min only (not 24h)
+    // Cache result in Redis
+    const ttl = mapped ? TMDB_IMDB_CACHE_TTL_POSITIVE : TMDB_IMDB_CACHE_TTL_NEGATIVE;
+    try {
+      await setShared(cacheKey, mapped || 'null', StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, ttl);
+    } catch (_) { }
 
     if (mapped) {
       videoInfo.imdbId = mapped;
@@ -351,8 +404,11 @@ async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
     log.warn(() => [`[Subtitles] Could not map TMDB ${mediaType} ${videoInfo.tmdbId} to IMDB`]);
     return null;
   } catch (error) {
-    tmdbToImdbCache.set(cacheKey, null, { ttl: 5 * 60 * 1000 }); // Cache errors for 5min only
-    log.error(() => [`[Subtitles] TMDB → IMDB mapping failed for ${videoInfo.tmdbId} (${mediaType}):`, error.message]);
+    // Cache errors for 5min only
+    try {
+      await setShared(cacheKey, 'null', StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, 5 * 60);
+    } catch (_) { }
+    log.error(() => [`[Subtitles] TMDB \u2192 IMDB mapping failed for ${videoInfo.tmdbId} (${mediaType}):`, error.message]);
     return null;
   }
 }
@@ -760,13 +816,14 @@ ${retryAdvice}`, null, uiLanguage);
 
 /**
  * Check if a user can start a new translation without hitting the concurrency limit
- * Used by the 3-click reset safety check to prevent purging cache if re-translation would fail
+ * MULTI-INSTANCE: Uses Redis-backed atomic counters for cross-pod enforcement
  * @param {string} userHash - The user's config hash (for per-user limit tracking)
- * @returns {boolean} - True if the user can start a translation, false if at the limit
+ * @param {Object} config - Optional config to determine per-model limits
+ * @returns {Promise<boolean>} - True if the user can start a translation, false if at the limit
  */
-function canUserStartTranslation(userHash, config = null) {
+async function canUserStartTranslation(userHash, config = null) {
   const effectiveUserHash = (userHash && userHash.length > 0) ? userHash : 'anonymous';
-  const currentCount = userTranslationCounts.get(effectiveUserHash) || 0;
+  const currentCount = await getUserConcurrencyCount(effectiveUserHash);
   const limit = getMaxConcurrentTranslationsForConfig(config);
   const canStart = currentCount < limit;
 
@@ -2100,7 +2157,7 @@ function createSubtitleHandler(config) {
                     log.warn(() => `[Subtitles] Could not find IMDB mapping for AniDB ${videoInfo.anidbId}, subtitles may be limited`);
                   }
                 } catch (error) {
-                  log.error(() => `[Subtitles] Error mapping AniDB to IMDB: ${error.message}`);
+                  log.error(() => [`[Subtitles] Error mapping AniDB to IMDB: ${error.message}`, error]);
                 }
               } else if (videoInfo.animeIdType === 'kitsu') {
                 try {
@@ -2112,7 +2169,7 @@ function createSubtitleHandler(config) {
                     log.warn(() => `[Subtitles] Could not find IMDB mapping for Kitsu ${videoInfo.animeId}, subtitles may be limited`);
                   }
                 } catch (error) {
-                  log.error(() => `[Subtitles] Error mapping Kitsu to IMDB: ${error.message}`);
+                  log.error(() => [`[Subtitles] Error mapping Kitsu to IMDB: ${error.message}`, error]);
                 }
               } else if (videoInfo.animeIdType === 'mal') {
                 try {
@@ -2124,7 +2181,7 @@ function createSubtitleHandler(config) {
                     log.warn(() => `[Subtitles] Could not find IMDB mapping for MAL ${videoInfo.animeId}, subtitles may be limited`);
                   }
                 } catch (error) {
-                  log.error(() => `[Subtitles] Error mapping MAL to IMDB: ${error.message}`);
+                  log.error(() => [`[Subtitles] Error mapping MAL to IMDB: ${error.message}`, error]);
                 }
               } else if (videoInfo.animeIdType === 'anilist') {
                 try {
@@ -2136,7 +2193,7 @@ function createSubtitleHandler(config) {
                     log.warn(() => `[Subtitles] Could not find IMDB mapping for AniList ${videoInfo.animeId}, subtitles may be limited`);
                   }
                 } catch (error) {
-                  log.error(() => `[Subtitles] Error mapping AniList to IMDB: ${error.message}`);
+                  log.error(() => [`[Subtitles] Error mapping AniList to IMDB: ${error.message}`, error]);
                 }
               } else {
                 log.debug(() => `[Subtitles] Unknown anime ID type: ${videoInfo.animeIdType}, will search by anime metadata`);
@@ -3074,7 +3131,8 @@ function createSubtitleHandler(config) {
 
     } catch (error) {
       const handlerDuration = Date.now() - handlerStartTime;
-      log.error(() => `[Subtitles] Handler error after ${handlerDuration}ms: ${error.message}`);
+      // Pass Error object in array so Sentry captures it (especially for TypeErrors/programming bugs)
+      log.error(() => [`[Subtitles] Handler error after ${handlerDuration}ms: ${error.message}`, error]);
       return { subtitles: [] };
     }
   };
@@ -3245,8 +3303,10 @@ async function handleSubtitleDownload(fileId, language, config) {
             log.warn(() => `[Download] Subtitle content too small (${content.length} bytes < ${minSize}). First 100 chars: "${trimmed.slice(0, 100)}"`);
           }
 
-          const tTooSmall = getTranslator(config.uiLanguage || 'en');
-          return createInvalidSubtitleMessage(tTooSmall('subtitle.invalidSubtitleTooSmall', {}, reason), config.uiLanguage || 'en');
+          const effectiveUiLang = config.uiLanguage || 'en';
+          log.debug(() => `[Download] Creating invalid subtitle message with uiLanguage=${effectiveUiLang} (raw config.uiLanguage=${config.uiLanguage})`);
+          const tTooSmall = getTranslator(effectiveUiLang);
+          return createInvalidSubtitleMessage(tTooSmall('subtitle.invalidSubtitleTooSmall', {}, reason), effectiveUiLang);
         }
       }
     } catch (_) { }
@@ -3842,8 +3902,9 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
     }
 
     // Enforce per-user concurrency limit only when starting a new translation
+    // MULTI-INSTANCE: This check is now also coordinated via Redis
     const effectiveUserHash = (userHash && userHash.length > 0) ? userHash : 'anonymous';
-    const currentCount = userTranslationCounts.get(effectiveUserHash) || 0;
+    const currentCount = await getUserConcurrencyCount(effectiveUserHash);
     const maxConcurrent = getMaxConcurrentTranslationsForConfig(config);
     if (currentCount >= maxConcurrent) {
       log.warn(() => `[Translation] Concurrency limit reached for user=${effectiveUserHash}: ${currentCount} in progress (limit ${maxConcurrent}).`);
@@ -3963,7 +4024,8 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
       translationStatus.set(sharedInFlightKey, { inProgress: true, startedAt: Date.now(), userHash: effectiveUserHash });
     }
     await markSharedTranslationInFlight(sharedLockKey, effectiveUserHash);
-    userTranslationCounts.set(effectiveUserHash, currentCount + 1);
+    // MULTI-INSTANCE: Increment concurrency counter in Redis with TTL safety
+    await incrementUserConcurrency(effectiveUserHash);
 
     // Create a promise for this translation that all simultaneous requests will wait for
     // Pass the already-downloaded sourceContent to avoid re-downloading
@@ -4314,7 +4376,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
                   partialDeliveryDisabled = true;
                 }
               }
-            }).catch(() => {}); // Prevent unhandled rejection from breaking the chain
+            }).catch(() => { }); // Prevent unhandled rejection from breaking the chain
             await partialSaveChain;
             return saved;
           };
@@ -4607,14 +4669,14 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
 
     throw error;
   } finally {
-    // Decrement per-user concurrency counter
+    // MULTI-INSTANCE: Decrement per-user concurrency counter in Redis
+    // This is critical for preventing concurrency leaks across pods
     try {
-      const key = userHash || 'anonymous';
-      const current = userTranslationCounts.get(key) || 0;
-      if (current > 1) userTranslationCounts.set(key, current - 1);
-      else userTranslationCounts.delete(key);
-      log.debug(() => `[Translation] User concurrency updated user=${key} count=${userTranslationCounts.get(key) || 0}`);
-    } catch (_) { }
+      const effectiveUserHash = (userHash && userHash.length > 0) ? userHash : 'anonymous';
+      await decrementUserConcurrency(effectiveUserHash);
+    } catch (e) {
+      log.warn(() => `[Translation] Failed to decrement user concurrency: ${e.message}`);
+    }
   }
 }
 

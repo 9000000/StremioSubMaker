@@ -7,5 +7,7 @@ module.exports = {
   StorageAdapter,
   FilesystemStorageAdapter,
   RedisStorageAdapter,
-  StorageFactory
+  StorageFactory,
+  // Re-export getStorageAdapter for sharedCache.js
+  getStorageAdapter: StorageFactory.getStorageAdapter.bind(StorageFactory)
 };

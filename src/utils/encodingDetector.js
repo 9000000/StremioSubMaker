@@ -364,7 +364,7 @@ function detectAndConvertEncoding(content, source = 'Unknown', languageHint = nu
       return tryFallbackEncodings(buffer, source, languageHint);
     }
   } catch (error) {
-    log.error(() => `[${source}] Error detecting/converting encoding: ${error.message}`);
+    log.error(() => [`[${source}] Error detecting/converting encoding: ${error.message}`, error]);
     // Last resort: try UTF-8
     try {
       return Buffer.from(content).toString('utf-8');

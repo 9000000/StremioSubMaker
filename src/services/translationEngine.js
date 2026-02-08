@@ -21,7 +21,9 @@ const GeminiService = require('./gemini');
 const { DEFAULT_TRANSLATION_PROMPT } = GeminiService;
 const crypto = require('crypto');
 const log = require('../utils/logger');
+const { handleCaughtError } = require('../utils/errorClassifier');
 const { normalizeTargetLanguageForPrompt } = require('./utils/normalizeTargetLanguageForPrompt');
+const { recordKeyError: recordKeyErrorRedis, isKeyCoolingDown: isKeyCoolingDownRedis, getNextRotationIndex, resetKeyHealth } = require('../utils/sharedCache');
 
 // Extract normalized tokens from a language label/code (split on common separators)
 function tokenizeLanguageValue(value) {
@@ -131,144 +133,148 @@ function getBatchSizeForModel(model) {
 }
 
 // Module-level shared key health tracking across engine instances.
-// Keys with repeated errors are skipped by all engines within the same process,
-// preventing a bad key from being retried by a new translation request.
-const _sharedKeyHealthErrors = new Map(); // apiKey -> { count: number, lastError: number }
+// MULTI-INSTANCE: Now backed by Redis via sharedCache utilities.
+// Keys with repeated errors are skipped by all engines across ALL PODS,
+// preventing a bad key from being retried by any instance.
+// Local Map is kept as a fast cache layer; Redis is source of truth.
+const _sharedKeyHealthErrors = new Map(); // Local cache: apiKey -> { count: number, lastError: number }
 
 class TranslationEngine {
   constructor(geminiService, model = null, advancedSettings = {}, options = {}) {
-      this.gemini = geminiService?.primary || geminiService;
-      this.fallbackProvider = geminiService?.fallback || null;
-      this.providerName = options.providerName || 'gemini';
-      this.fallbackProviderName = options.fallbackProviderName || (this.fallbackProvider ? 'fallback' : '');
-      if (!this.fallbackProviderName && this.fallbackProvider?.providerName) {
-        this.fallbackProviderName = this.fallbackProvider.providerName;
-      }
-      this.model = model;
-      this.batchSize = getBatchSizeForModel(model);
-      this.singleBatchMode = options.singleBatchMode === true;
-      this.enableStreaming = options.enableStreaming !== false
-        && typeof (this.gemini?.streamTranslateSubtitle) === 'function';
-      this.maxTokensPerBatch = this.singleBatchMode ? SINGLE_BATCH_MAX_TOKENS_PER_CHUNK : MAX_TOKENS_PER_BATCH;
-      this.advancedSettings = advancedSettings || {};
-
-      // Context settings (disabled by default)
-      this.enableBatchContext = this.advancedSettings.enableBatchContext === true;
-      this.contextSize = parseInt(this.advancedSettings.contextSize) || 3;
-
-      // Mismatch retry: number of retries when AI returns wrong entry count (default: 1)
-      const rawMismatchRetries = parseInt(this.advancedSettings.mismatchRetries);
-      this.mismatchRetries = Number.isFinite(rawMismatchRetries) ? Math.max(0, Math.min(3, rawMismatchRetries)) : 1;
-
-      // Translation workflow mode: 'original' (numbered list), 'ai' (send timestamps), 'xml' (XML-tagged entries)
-      const rawWorkflow = String(this.advancedSettings.translationWorkflow || '').toLowerCase();
-      if (rawWorkflow === 'xml') {
-        this.translationWorkflow = 'xml';
-        this.sendTimestampsToAI = false;
-      } else if (rawWorkflow === 'ai' || this.advancedSettings.sendTimestampsToAI === true) {
-        this.translationWorkflow = 'ai';
-        this.sendTimestampsToAI = true;
-      } else {
-        this.translationWorkflow = 'original';
-        this.sendTimestampsToAI = false;
-      }
-
-      // JSON structured output mode (disabled by default, opt-in via config)
-      // Force-disable for non-LLM providers — they don't support structured output
-      const NON_LLM_PROVIDERS = new Set(['deepl', 'googletranslate']);
-      this.isNativeBatchProvider = NON_LLM_PROVIDERS.has(this.providerName);
-      this.enableJsonOutput = this.isNativeBatchProvider ? false : this.advancedSettings.enableJsonOutput === true;
-
-      // --- Fix #9: Warn (and disable) when JSON output is enabled with 'ai' workflow.
-      // JSON structured output is incompatible with 'ai' (timestamp/SRT) mode because the
-      // AI must return valid SRT, not a JSON array. Silently ignoring it is confusing.
-      if (this.enableJsonOutput && this.translationWorkflow === 'ai') {
-        log.warn(() => `[TranslationEngine] JSON structured output is not compatible with 'ai' (timestamp) workflow — disabling JSON output. Use 'original' or 'xml' workflow for JSON output.`);
-        this.enableJsonOutput = false;
-      }
-
-      // Cap batch size when JSON output is enabled — large JSON arrays (300-400 objects)
-      // are extremely error-prone for LLMs. Keep batches at ≤150 entries for reliable JSON.
-      const JSON_OUTPUT_MAX_BATCH_SIZE = 150;
-      if (this.enableJsonOutput && this.batchSize > JSON_OUTPUT_MAX_BATCH_SIZE) {
-        log.debug(() => `[TranslationEngine] Capping batch size from ${this.batchSize} to ${JSON_OUTPUT_MAX_BATCH_SIZE} for JSON output mode`);
-        this.batchSize = JSON_OUTPUT_MAX_BATCH_SIZE;
-      }
-
-      // Force workflow to 'original' for non-LLM providers — XML tags and AI timestamps are LLM-only features
-      if (this.isNativeBatchProvider && this.translationWorkflow !== 'original') {
-        log.debug(() => `[TranslationEngine] Forcing workflow to 'original' for non-LLM provider ${this.providerName} (was '${this.translationWorkflow}')`);
-        this.translationWorkflow = 'original';
-        this.sendTimestampsToAI = false;
-      }
-
-      // Key rotation configuration for per-batch and per-request rotation
-      // keyRotationConfig: { enabled: boolean, mode: 'per-request' | 'per-batch', keys: string[], advancedSettings: {} }
-      // SECURITY: Store keys in a non-enumerable property to prevent accidental serialization
-      if (options.keyRotationConfig && Array.isArray(options.keyRotationConfig.keys)) {
-        const filteredKeys = options.keyRotationConfig.keys.filter(k => typeof k === 'string' && k.trim());
-        const sanitizedConfig = {
-          enabled: options.keyRotationConfig.enabled === true,
-          mode: options.keyRotationConfig.mode || 'per-batch',
-          // Merge advancedSettings with engine-level settings so enableJsonOutput etc. are never lost
-          advancedSettings: { ...this.advancedSettings, ...(options.keyRotationConfig.advancedSettings || {}) }
-        };
-        // Make keys non-enumerable so they won't appear in JSON.stringify or Object.keys
-        Object.defineProperty(sanitizedConfig, 'keys', {
-          value: filteredKeys,
-          enumerable: false,
-          writable: false,
-          configurable: false
-        });
-        this.keyRotationConfig = sanitizedConfig;
-      } else {
-        this.keyRotationConfig = null;
-      }
-
-      // Rotation is available when enabled, we have >1 key, and provider is Gemini
-      const rotationAvailable = this.keyRotationConfig?.enabled === true &&
-        Array.isArray(this.keyRotationConfig?.keys) &&
-        this.keyRotationConfig.keys.length > 1 &&
-        this.providerName === 'gemini';
-
-      // Per-batch: rotate before every batch. Per-request: single key per file but retry rotation still works.
-      this.perBatchRotationEnabled = rotationAvailable && this.keyRotationConfig?.mode === 'per-batch';
-      // Retry rotation: enabled for BOTH per-batch and per-request modes so error retries can try a different key
-      this.retryRotationEnabled = rotationAvailable;
-
-      // Global counter for round-robin key rotation (shared across batches and retries).
-      // Seed from the initial key's position so the first rotation advances to the next key
-      // instead of always restarting at index 0 (which would waste the initial selectGeminiApiKey call).
-      const initialApiKey = this.gemini?.apiKey;
-      const initialKeyIndex = (initialApiKey && this.keyRotationConfig?.keys)
-        ? this.keyRotationConfig.keys.indexOf(initialApiKey)
-        : -1;
-      this._keyRotationCounter = initialKeyIndex >= 0 ? initialKeyIndex + 1 : 0;
-
-      // Cache model limits across key rotations to avoid redundant API calls
-      this._sharedModelLimits = null;
-
-      // Key health tracking: use module-level shared map so errors persist across engine instances.
-      // Keys with >= KEY_HEALTH_ERROR_THRESHOLD errors within KEY_HEALTH_COOLDOWN_MS are skipped.
-      this._keyHealthErrors = _sharedKeyHealthErrors;
-
-      if (this.perBatchRotationEnabled) {
-        log.debug(() => `[TranslationEngine] Per-batch key rotation enabled with ${this.keyRotationConfig.keys.length} keys`);
-      } else if (this.retryRotationEnabled) {
-        log.debug(() => `[TranslationEngine] Per-request key rotation enabled with ${this.keyRotationConfig.keys.length} keys (retry rotation active)`);
-      }
-
-      // isNativeBatchProvider already set above during JSON/workflow normalization
-
-      const rotationLabel = this.perBatchRotationEnabled ? 'per-batch' : (this.retryRotationEnabled ? 'per-request' : '');
-      log.debug(() => `[TranslationEngine] Initialized with model: ${model || 'unknown'}, batch size: ${this.batchSize}, batch context: ${this.enableBatchContext ? 'enabled' : 'disabled'}, workflow: ${this.translationWorkflow}, mode: ${this.singleBatchMode ? 'single-batch' : 'batched'}, mismatchRetries: ${this.mismatchRetries}, jsonOutput: ${this.enableJsonOutput}${rotationLabel ? `, key-rotation: ${rotationLabel}, keys: ${this.keyRotationConfig.keys.length}` : ''}${this.isNativeBatchProvider ? ', native-batch: true' : ''}`);
+    this.gemini = geminiService?.primary || geminiService;
+    this.fallbackProvider = geminiService?.fallback || null;
+    this.providerName = options.providerName || 'gemini';
+    this.fallbackProviderName = options.fallbackProviderName || (this.fallbackProvider ? 'fallback' : '');
+    if (!this.fallbackProviderName && this.fallbackProvider?.providerName) {
+      this.fallbackProviderName = this.fallbackProvider.providerName;
     }
+    this.model = model;
+    this.batchSize = getBatchSizeForModel(model);
+    this.singleBatchMode = options.singleBatchMode === true;
+    this.enableStreaming = options.enableStreaming !== false
+      && typeof (this.gemini?.streamTranslateSubtitle) === 'function';
+    this.maxTokensPerBatch = this.singleBatchMode ? SINGLE_BATCH_MAX_TOKENS_PER_CHUNK : MAX_TOKENS_PER_BATCH;
+    this.advancedSettings = advancedSettings || {};
+
+    // Context settings (disabled by default)
+    this.enableBatchContext = this.advancedSettings.enableBatchContext === true;
+    this.contextSize = parseInt(this.advancedSettings.contextSize) || 3;
+
+    // Mismatch retry: number of retries when AI returns wrong entry count (default: 1)
+    const rawMismatchRetries = parseInt(this.advancedSettings.mismatchRetries);
+    this.mismatchRetries = Number.isFinite(rawMismatchRetries) ? Math.max(0, Math.min(3, rawMismatchRetries)) : 1;
+
+    // Translation workflow mode: 'original' (numbered list), 'ai' (send timestamps), 'xml' (XML-tagged entries)
+    const rawWorkflow = String(this.advancedSettings.translationWorkflow || '').toLowerCase();
+    if (rawWorkflow === 'xml') {
+      this.translationWorkflow = 'xml';
+      this.sendTimestampsToAI = false;
+    } else if (rawWorkflow === 'ai' || this.advancedSettings.sendTimestampsToAI === true) {
+      this.translationWorkflow = 'ai';
+      this.sendTimestampsToAI = true;
+    } else {
+      this.translationWorkflow = 'original';
+      this.sendTimestampsToAI = false;
+    }
+
+    // JSON structured output mode (disabled by default, opt-in via config)
+    // Force-disable for non-LLM providers — they don't support structured output
+    const NON_LLM_PROVIDERS = new Set(['deepl', 'googletranslate']);
+    this.isNativeBatchProvider = NON_LLM_PROVIDERS.has(this.providerName);
+    this.enableJsonOutput = this.isNativeBatchProvider ? false : this.advancedSettings.enableJsonOutput === true;
+
+    // --- Fix #9: Warn (and disable) when JSON output is enabled with 'ai' workflow.
+    // JSON structured output is incompatible with 'ai' (timestamp/SRT) mode because the
+    // AI must return valid SRT, not a JSON array. Silently ignoring it is confusing.
+    if (this.enableJsonOutput && this.translationWorkflow === 'ai') {
+      log.warn(() => `[TranslationEngine] JSON structured output is not compatible with 'ai' (timestamp) workflow — disabling JSON output. Use 'original' or 'xml' workflow for JSON output.`);
+      this.enableJsonOutput = false;
+    }
+
+    // Cap batch size when JSON output is enabled — large JSON arrays (300-400 objects)
+    // are extremely error-prone for LLMs. Keep batches at ≤150 entries for reliable JSON.
+    const JSON_OUTPUT_MAX_BATCH_SIZE = 150;
+    if (this.enableJsonOutput && this.batchSize > JSON_OUTPUT_MAX_BATCH_SIZE) {
+      log.debug(() => `[TranslationEngine] Capping batch size from ${this.batchSize} to ${JSON_OUTPUT_MAX_BATCH_SIZE} for JSON output mode`);
+      this.batchSize = JSON_OUTPUT_MAX_BATCH_SIZE;
+    }
+
+    // Force workflow to 'original' for non-LLM providers — XML tags and AI timestamps are LLM-only features
+    if (this.isNativeBatchProvider && this.translationWorkflow !== 'original') {
+      log.debug(() => `[TranslationEngine] Forcing workflow to 'original' for non-LLM provider ${this.providerName} (was '${this.translationWorkflow}')`);
+      this.translationWorkflow = 'original';
+      this.sendTimestampsToAI = false;
+    }
+
+    // Key rotation configuration for per-batch and per-request rotation
+    // keyRotationConfig: { enabled: boolean, mode: 'per-request' | 'per-batch', keys: string[], advancedSettings: {} }
+    // SECURITY: Store keys in a non-enumerable property to prevent accidental serialization
+    if (options.keyRotationConfig && Array.isArray(options.keyRotationConfig.keys)) {
+      const filteredKeys = options.keyRotationConfig.keys.filter(k => typeof k === 'string' && k.trim());
+      const sanitizedConfig = {
+        enabled: options.keyRotationConfig.enabled === true,
+        mode: options.keyRotationConfig.mode || 'per-batch',
+        // Merge advancedSettings with engine-level settings so enableJsonOutput etc. are never lost
+        advancedSettings: { ...this.advancedSettings, ...(options.keyRotationConfig.advancedSettings || {}) }
+      };
+      // Make keys non-enumerable so they won't appear in JSON.stringify or Object.keys
+      Object.defineProperty(sanitizedConfig, 'keys', {
+        value: filteredKeys,
+        enumerable: false,
+        writable: false,
+        configurable: false
+      });
+      this.keyRotationConfig = sanitizedConfig;
+    } else {
+      this.keyRotationConfig = null;
+    }
+
+    // Rotation is available when enabled, we have >1 key, and provider is Gemini
+    const rotationAvailable = this.keyRotationConfig?.enabled === true &&
+      Array.isArray(this.keyRotationConfig?.keys) &&
+      this.keyRotationConfig.keys.length > 1 &&
+      this.providerName === 'gemini';
+
+    // Per-batch: rotate before every batch. Per-request: single key per file but retry rotation still works.
+    this.perBatchRotationEnabled = rotationAvailable && this.keyRotationConfig?.mode === 'per-batch';
+    // Retry rotation: enabled for BOTH per-batch and per-request modes so error retries can try a different key
+    this.retryRotationEnabled = rotationAvailable;
+
+    // Global counter for round-robin key rotation (shared across batches and retries).
+    // Seed from the initial key's position so the first rotation advances to the next key
+    // instead of always restarting at index 0 (which would waste the initial selectGeminiApiKey call).
+    const initialApiKey = this.gemini?.apiKey;
+    const initialKeyIndex = (initialApiKey && this.keyRotationConfig?.keys)
+      ? this.keyRotationConfig.keys.indexOf(initialApiKey)
+      : -1;
+    this._keyRotationCounter = initialKeyIndex >= 0 ? initialKeyIndex + 1 : 0;
+
+    // Cache model limits across key rotations to avoid redundant API calls
+    this._sharedModelLimits = null;
+
+    // Key health tracking: use module-level shared map so errors persist across engine instances.
+    // Keys with >= KEY_HEALTH_ERROR_THRESHOLD errors within KEY_HEALTH_COOLDOWN_MS are skipped.
+    this._keyHealthErrors = _sharedKeyHealthErrors;
+
+    if (this.perBatchRotationEnabled) {
+      log.debug(() => `[TranslationEngine] Per-batch key rotation enabled with ${this.keyRotationConfig.keys.length} keys`);
+    } else if (this.retryRotationEnabled) {
+      log.debug(() => `[TranslationEngine] Per-request key rotation enabled with ${this.keyRotationConfig.keys.length} keys (retry rotation active)`);
+    }
+
+    // isNativeBatchProvider already set above during JSON/workflow normalization
+
+    const rotationLabel = this.perBatchRotationEnabled ? 'per-batch' : (this.retryRotationEnabled ? 'per-request' : '');
+    log.debug(() => `[TranslationEngine] Initialized with model: ${model || 'unknown'}, batch size: ${this.batchSize}, batch context: ${this.enableBatchContext ? 'enabled' : 'disabled'}, workflow: ${this.translationWorkflow}, mode: ${this.singleBatchMode ? 'single-batch' : 'batched'}, mismatchRetries: ${this.mismatchRetries}, jsonOutput: ${this.enableJsonOutput}${rotationLabel ? `, key-rotation: ${rotationLabel}, keys: ${this.keyRotationConfig.keys.length}` : ''}${this.isNativeBatchProvider ? ', native-batch: true' : ''}`);
+  }
 
   /**
    * Rotate to a new API key before translating a batch (when per-batch rotation is enabled)
    * Creates a fresh GeminiService instance with a sequentially selected key (round-robin)
+   * MULTI-INSTANCE FIX: Now async to use Redis-backed key health checks.
+   * @returns {Promise<void>}
    */
-  maybeRotateKeyForBatch(batchIndex) {
+  async maybeRotateKeyForBatch(batchIndex) {
     if (!this.perBatchRotationEnabled) return;
 
     // Skip rotation for the first batch — the initial GeminiService was already created
@@ -277,7 +283,7 @@ class TranslationEngine {
     if (batchIndex === 0) return;
 
     // Use the global rotation counter so retries naturally advance to the next key
-    this._rotateToNextKey(`batch ${batchIndex + 1}`);
+    await this._rotateToNextKey(`batch ${batchIndex + 1}`);
   }
 
   /**
@@ -287,27 +293,72 @@ class TranslationEngine {
   static KEY_HEALTH_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
   /**
-   * Record an error for the current API key (for health tracking).
+   * Record an error for the current API key (distributed key health tracking).
+   * MULTI-INSTANCE FIX: Uses Redis via sharedCache for cross-pod state sharing.
+   * Falls back to local Map if Redis is unavailable.
    * @param {string} apiKey - The key that errored
+   * @returns {Promise<void>}
    */
-  _recordKeyError(apiKey) {
+  async _recordKeyError(apiKey) {
     if (!this.retryRotationEnabled || !apiKey) return;
+
+    // Update local cache immediately for fast in-process lookups
     const now = Date.now();
-    const entry = this._keyHealthErrors.get(apiKey) || { count: 0, lastError: 0 };
-    // Reset counter if cooldown has elapsed since last error
+    let entry = this._keyHealthErrors.get(apiKey);
+    if (!entry) {
+      entry = { count: 0, lastError: 0 };
+      this._keyHealthErrors.set(apiKey, entry);
+    }
     if (now - entry.lastError > TranslationEngine.KEY_HEALTH_COOLDOWN_MS) {
       entry.count = 0;
     }
     entry.count++;
     entry.lastError = now;
-    this._keyHealthErrors.set(apiKey, entry);
+
+    // Also update Redis for cross-pod visibility (fire-and-forget, don't block on it)
+    recordKeyErrorRedis(apiKey).catch(err => {
+      log.debug(() => `[TranslationEngine] Redis key health update failed (using local): ${err.message}`);
+    });
+
     if (entry.count >= TranslationEngine.KEY_HEALTH_ERROR_THRESHOLD) {
       log.warn(() => `[TranslationEngine] Key ${this._redactKey(apiKey)} reached ${entry.count} errors, will be skipped for ~1h cooldown`);
     }
   }
 
   /**
-   * Check if a key is currently in cooldown (unhealthy).
+   * Reset key health after a successful translation (Issue #5 fix).
+   * This immediately restores the key to healthy status for quicker recovery
+   * rather than waiting for the full 1-hour TTL to expire.
+   * Also clears the local cache entry to fix Issue #2 (staleness).
+   * @param {string} apiKey - The key that succeeded
+   * @returns {Promise<void>}
+   */
+  async _resetKeyHealthOnSuccess(apiKey) {
+    if (!this.retryRotationEnabled || !apiKey) return;
+
+    // ISSUE #2 FIX: Clear local cache entry to prevent staleness
+    // The local cache should not persist cooldown status after Redis TTL expires
+    // or after a successful translation proves the key is working
+    const entry = this._keyHealthErrors.get(apiKey);
+    if (entry) {
+      this._keyHealthErrors.delete(apiKey);
+      log.debug(() => `[TranslationEngine] Cleared local key health cache for ${this._redactKey(apiKey)} after successful translation`);
+    }
+
+    // ISSUE #5 FIX: Reset Redis health if key had errors
+    // Only reset if the key was previously unhealthy (had errors)
+    if (entry && entry.count > 0) {
+      resetKeyHealth(apiKey).catch(err => {
+        log.debug(() => `[TranslationEngine] Redis key health reset failed: ${err.message}`);
+      });
+      log.debug(() => `[TranslationEngine] Reset key health for ${this._redactKey(apiKey)} after successful translation`);
+    }
+  }
+
+
+  /**
+   * Check if a key is currently in cooldown (unhealthy) - SYNC version using local cache.
+   * For async operations, use _isKeyCoolingDownAsync which checks Redis.
    * @param {string} apiKey
    * @returns {boolean}
    */
@@ -325,6 +376,38 @@ class TranslationEngine {
   }
 
   /**
+   * Check if a key is currently in cooldown (distributed check via Redis).
+   * MULTI-INSTANCE FIX: Checks Redis for cross-pod key health, falls back to local cache.
+   * @param {string} apiKey
+   * @returns {Promise<boolean>}
+   */
+  async _isKeyCoolingDownAsync(apiKey) {
+    if (!apiKey) return false;
+
+    // Check local cache first (fast path)
+    if (this._isKeyCoolingDown(apiKey)) {
+      return true;
+    }
+
+    // Check Redis for cross-pod visibility
+    try {
+      const redisCoolingDown = await isKeyCoolingDownRedis(apiKey);
+      if (redisCoolingDown) {
+        // Update local cache to avoid repeated Redis calls
+        this._keyHealthErrors.set(apiKey, {
+          count: TranslationEngine.KEY_HEALTH_ERROR_THRESHOLD,
+          lastError: Date.now()
+        });
+        return true;
+      }
+    } catch (err) {
+      log.debug(() => `[TranslationEngine] Redis key health check failed (using local): ${err.message}`);
+    }
+
+    return false;
+  }
+
+  /**
    * Redact an API key for safe logging (first 4 + last 4 chars).
    * @param {string} key
    * @returns {string}
@@ -339,9 +422,11 @@ class TranslationEngine {
    * Every call (whether for a new batch or a retry) moves to the next key in round-robin order.
    * Skips keys that are in cooldown (too many recent errors), falling back to the next healthy key.
    * Preserves cached model limits across rotations to avoid redundant API calls.
+   * MULTI-INSTANCE FIX: Uses async Redis checks for cross-pod key health visibility.
    * @param {string} reason - Human-readable reason for the rotation (used in debug logs)
+   * @returns {Promise<void>}
    */
-  _rotateToNextKey(reason) {
+  async _rotateToNextKey(reason) {
     if (!this.retryRotationEnabled) return;
 
     const keys = this.keyRotationConfig.keys;
@@ -355,13 +440,28 @@ class TranslationEngine {
     }
 
     // Find the next healthy key, trying up to totalKeys candidates
+    // MULTI-INSTANCE FIX: Use Redis counter for distributed round-robin selection
     let selectedKey = null;
     let keyIndex = -1;
     for (let attempt = 0; attempt < totalKeys; attempt++) {
-      const candidateIndex = this._keyRotationCounter % totalKeys;
-      this._keyRotationCounter++;
+      // Try Redis-backed rotation counter first, fall back to local if unavailable
+      let candidateIndex;
+      const redisIndex = await getNextRotationIndex('gemini', totalKeys);
+      if (redisIndex >= 0) {
+        candidateIndex = redisIndex;
+        // Update local counter to stay roughly in sync (for fallback scenarios)
+        this._keyRotationCounter = candidateIndex + 1;
+      } else {
+        // Redis unavailable - use local counter
+        candidateIndex = this._keyRotationCounter % totalKeys;
+        this._keyRotationCounter++;
+      }
+
       const candidate = keys[candidateIndex];
-      if (!this._isKeyCoolingDown(candidate)) {
+
+      // Use async Redis check for distributed visibility
+      const coolingDown = await this._isKeyCoolingDownAsync(candidate);
+      if (!coolingDown) {
         selectedKey = candidate;
         keyIndex = candidateIndex;
         break;
@@ -483,7 +583,7 @@ class TranslationEngine {
 
       try {
         // Rotate API key for this batch if per-batch rotation is enabled
-        this.maybeRotateKeyForBatch(batchIndex);
+        await this.maybeRotateKeyForBatch(batchIndex);
 
         // Prepare context for this batch (if enabled)
         const context = this.enableBatchContext
@@ -678,7 +778,7 @@ class TranslationEngine {
       const useStreaming = chunkCount === 1 && this.enableStreaming;
 
       // Rotate API key for this batch if per-batch rotation is enabled
-      this.maybeRotateKeyForBatch(batchIndex);
+      await this.maybeRotateKeyForBatch(batchIndex);
 
       // Preserve coherence when the "single-batch" path auto-splits by reusing the same context builder
       const context = this.enableBatchContext
@@ -855,6 +955,13 @@ class TranslationEngine {
 
     const allowAutoChunking = opts.allowAutoChunking !== false;
     const streamingRequested = opts.streaming && typeof this.gemini.streamTranslateSubtitle === 'function';
+
+    // Prepare batch text (with context if provided)
+    const batchText = this.prepareBatchContent(batch, context);
+    const prompt = this.createPromptForWorkflow(batchText, targetLanguage, customPrompt, batch.length, context, batchIndex, totalBatches);
+
+    // Fix #8 (v1.4.38+): tryFallback closure moved AFTER batchText/prompt declarations.
+    // This makes variable dependencies explicit and avoids reliance on JavaScript hoisting.
     const tryFallback = async (primaryError) => {
       if (!this.fallbackProvider) {
         return { handled: false, error: primaryError };
@@ -878,10 +985,6 @@ class TranslationEngine {
         return { handled: false, error: combined };
       }
     };
-    // Prepare batch text (with context if provided)
-    const batchText = this.prepareBatchContent(batch, context);
-
-    const prompt = this.createPromptForWorkflow(batchText, targetLanguage, customPrompt, batch.length, context, batchIndex, totalBatches);
 
     // Check cache first (includes prompt variant so AI-mode differences are respected)
     const cacheResults = this.checkBatchCache(batch, targetLanguage, prompt);
@@ -913,8 +1016,8 @@ class TranslationEngine {
       const secondHalf = batch.slice(midpoint);
 
       // Translate sequentially to avoid memory spikes
-      // Note: Don't pass context to recursive calls - context already included in original batch text
-      const firstTranslated = await this.translateBatch(firstHalf, targetLanguage, customPrompt, batchIndex, totalBatches, null, opts);
+      // Pass original context to first half only
+      const firstTranslated = await this.translateBatch(firstHalf, targetLanguage, customPrompt, batchIndex, totalBatches, context, opts);
 
       // Emit streaming progress after first half completes so partial delivery picks it up
       if (typeof opts.onStreamProgress === 'function' && firstTranslated.length > 0) {
@@ -942,7 +1045,19 @@ class TranslationEngine {
         } catch (_) { }
       }
 
-      const secondTranslated = await this.translateBatch(secondHalf, targetLanguage, customPrompt, batchIndex, totalBatches, null, opts);
+      // Fix #7: Build context for second half from first half's translations
+      // This ensures coherence is maintained across auto-chunked batches
+      const contextCount = Math.min(this.contextSize, firstHalf.length);
+      const secondHalfContext = this.enableBatchContext && contextCount > 0 ? {
+        surroundingOriginal: firstHalf.slice(-contextCount),
+        previousTranslations: firstTranslated.slice(-contextCount).map((entry, i) => ({
+          id: firstHalf[firstHalf.length - contextCount + i]?.id || i + 1,
+          text: entry.text || '',
+          timecode: entry.timecode || firstHalf[firstHalf.length - contextCount + i]?.timecode
+        }))
+      } : null;
+
+      const secondTranslated = await this.translateBatch(secondHalf, targetLanguage, customPrompt, batchIndex, totalBatches, secondHalfContext, opts);
 
       return [...firstTranslated, ...secondTranslated];
     }
@@ -980,7 +1095,7 @@ class TranslationEngine {
       // 429/503: rotate to next key and retry once (before other error-specific retries)
       if (this._isRetryableHttpError(error) && !httpRetryAttempted && this.retryRotationEnabled) {
         httpRetryAttempted = true;
-        this._rotateToNextKey(`429/503 retry for batch ${batchIndex + 1}`);
+        await this._rotateToNextKey(`429/503 retry for batch ${batchIndex + 1}`);
         log.warn(() => `[TranslationEngine] 429/503 error detected, retrying batch ${batchIndex + 1} with next key`);
 
         try {
@@ -1002,7 +1117,7 @@ class TranslationEngine {
       // If MAX_TOKENS error and haven't retried yet, retry once
       else if (error.message && (error.message.includes('MAX_TOKENS') || error.message.includes('exceeded maximum token limit')) && !maxTokensRetryAttempted) {
         maxTokensRetryAttempted = true;
-        this._rotateToNextKey(`MAX_TOKENS retry for batch ${batchIndex + 1}`);
+        await this._rotateToNextKey(`MAX_TOKENS retry for batch ${batchIndex + 1}`);
         log.warn(() => `[TranslationEngine] MAX_TOKENS error detected, retrying batch ${batchIndex + 1} with next key`);
 
         try {
@@ -1025,7 +1140,7 @@ class TranslationEngine {
       // If PROHIBITED_CONTENT error and haven't retried yet, retry with modified prompt
       else if (error.message && error.message.includes('PROHIBITED_CONTENT') && !prohibitedRetryAttempted) {
         prohibitedRetryAttempted = true;
-        this._rotateToNextKey(`PROHIBITED_CONTENT retry for batch ${batchIndex + 1}`);
+        await this._rotateToNextKey(`PROHIBITED_CONTENT retry for batch ${batchIndex + 1}`);
         log.warn(() => `[TranslationEngine] PROHIBITED_CONTENT detected, retrying batch with next key and modified prompt`);
 
         // Create modified prompt with disclaimer
@@ -1055,7 +1170,7 @@ class TranslationEngine {
           error.message.includes('No content returned from stream')
         );
         if (streamingRequested && noStreamContent) {
-          this._rotateToNextKey(`empty-stream retry for batch ${batchIndex + 1}`);
+          await this._rotateToNextKey(`empty-stream retry for batch ${batchIndex + 1}`);
           log.warn(() => `[TranslationEngine] Stream returned no content for batch ${batchIndex + 1}, retrying without streaming with next key`);
           try {
             translatedText = await this.gemini.translateSubtitle(
@@ -1095,7 +1210,8 @@ class TranslationEngine {
         // Pass 2: Re-translate only the missing entries individually
         log.info(() => `[TranslationEngine] Two-pass recovery: ${missingIndices.length} missing entries, attempting targeted re-translation`);
         try {
-          this._rotateToNextKey(`two-pass targeted retry for batch ${batchIndex + 1}`);
+          // Fix #4: Don't rotate key for parse-failure recovery — the API succeeded, only parsing failed.
+          // Key rotation should only occur for actual API errors (429, 503, etc.), not content issues.
           const missingBatch = missingIndices.map(i => batch[i]);
           const missingText = this.prepareBatchContent(missingBatch, null);
           const missingPrompt = this.createPromptForWorkflow(missingText, targetLanguage, customPrompt, missingBatch.length, null, batchIndex, totalBatches);
@@ -1154,7 +1270,8 @@ class TranslationEngine {
         for (let retryAttempt = 0; retryAttempt < this.mismatchRetries; retryAttempt++) {
           log.info(() => `[TranslationEngine] Full batch retry ${retryAttempt + 1}/${this.mismatchRetries} (${missingIndices.length} missing entries too many for targeted recovery)`);
           try {
-            this._rotateToNextKey(`full batch mismatch retry ${retryAttempt + 1} for batch ${batchIndex + 1}`);
+            // Fix #4: Don't rotate key for parse-failure recovery — the API call succeeded.
+            // Key rotation wastes healthy keys on content/parsing issues, not API problems.
             await new Promise(resolve => setTimeout(resolve, 500));
             const retryText = await this._translateCall(batchText, targetLanguage, prompt, false, null);
             const retryEntries = this.parseResponseForWorkflow(retryText, batch.length, batch);
@@ -1189,6 +1306,13 @@ class TranslationEngine {
       for (let i = 0; i < batch.length && i < translatedEntries.length; i++) {
         this.cacheEntry(batch[i].text, targetLanguage, translatedEntries[i].text, prompt);
       }
+    }
+
+    // ISSUE #5 FIX: Reset key health on successful translation
+    // This allows keys that had errors to recover immediately after a successful translation
+    // instead of waiting for the full 1-hour cooldown
+    if (this.retryRotationEnabled && this.gemini?.apiKey) {
+      this._resetKeyHealthOnSuccess(this.gemini.apiKey);
     }
 
     return translatedEntries;
@@ -1240,9 +1364,19 @@ class TranslationEngine {
     }
 
     // Handle count mismatches (no retries for native providers — they're deterministic)
+    // Use alignTranslatedEntries for consistent entry structure with LLM providers,
+    // but skip retry logic since native providers are deterministic.
     if (translatedEntries.length !== batch.length) {
       log.warn(() => `[TranslationEngine] Native batch entry mismatch: expected ${batch.length}, got ${translatedEntries.length}`);
-      this.fixEntryCountMismatch(translatedEntries, batch, false);
+      const { aligned } = this.alignTranslatedEntries(translatedEntries, batch);
+      translatedEntries = Object.values(aligned).sort((a, b) => a.index - b.index);
+    }
+
+    // Fix #6: Ensure timecodes from original batch are always applied for native providers
+    for (let i = 0; i < translatedEntries.length && i < batch.length; i++) {
+      if (!translatedEntries[i].timecode && batch[i]) {
+        translatedEntries[i].timecode = batch[i].timecode;
+      }
     }
 
     return translatedEntries;
@@ -1454,21 +1588,22 @@ OUTPUT (EXACTLY ${expectedCount} entries as JSON array):`;
       cleaned = cleaned.slice(0, lastClosingTag + 4); // 4 = '</s>'.length
     }
 
+    // Fix #15 (v1.4.38+): Remove any content between </s> and <s tags before parsing.
+    // AI models sometimes insert commentary (e.g. "Note: informal" or "Hope this helps!")
+    // between entries. The old lookahead-based regex failed to match entries followed by
+    // such content. By stripping inter-tag content first, we allow a simpler greedy regex.
+    cleaned = cleaned.replace(/<\/s>\s*(?:(?!<s[\s>])[\s\S])*?(?=<s[\s>])/gi, '</s>\n');
+
     const entries = [];
-    // Fix #13: Use a lazy quantifier with a lookahead to match up to the correct </s>.
-    // The old lazy [\s\S]*? would terminate at the FIRST </s>, truncating entries whose
-    // translated text contains literal "</s>" (e.g. HTML-like content). The lookahead
-    // requires the closing </s> to be followed by either the next <s tag or end-of-string,
-    // so inner "</s>" occurrences are skipped. Combined with the trailing-content strip
-    // above, this correctly handles all edge cases.
-    const xmlPattern = /<s\s+id\s*=\s*"?(\d+)"?\s*>([\s\S]*?)<\/s>(?=\s*(?:<s[\s>]|$))/gi;
+    // Simpler regex now that inter-tag content is stripped
+    const xmlPattern = /<s\s+id\s*=\s*"?(\d+)"?\s*>([\s\S]*?)<\/s>/gi;
     let match;
     while ((match = xmlPattern.exec(cleaned)) !== null) {
       const id = parseInt(match[1], 10);
       const text = match[2].trim();
       // Fix #14: Accept entries with empty text (legitimate for "♪", sound effects, etc.)
       // Only require a valid positive ID. Empty translations are preserved to avoid
-      // count mismatches in fixEntryCountMismatch().
+      // count mismatches in alignTranslatedEntries().
       if (id > 0) {
         entries.push({
           index: id - 1,
@@ -1869,7 +2004,9 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
       }
     }
 
-    // Fall back to workflow-specific parsing if JSON didn't yield results
+    // Fix #5: Fall back to workflow-specific parsing if JSON didn't yield results.
+    // Even when JSON output is enabled, partial streams may have no complete JSON objects,
+    // so we allow the fallback to provide some streaming feedback rather than none.
     if (parsedEntries.length === 0) {
       if (this.translationWorkflow === 'ai') {
         const parsed = parseSRT(partialText) || [];
@@ -2079,55 +2216,6 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
 
 
   /**
-   * Fix entry count mismatches by filling missing entries with original text
-   */
-  fixEntryCountMismatch(translatedEntries, originalBatch, preserveTimecodes = false) {
-      if (translatedEntries.length === originalBatch.length) {
-        return { hadMismatch: false, untranslatedIndices: [] };
-      }
-
-      const untranslatedIndices = [];
-
-      if (translatedEntries.length < originalBatch.length) {
-        // Missing entries - fill with original text marked as untranslated
-        const translatedMap = new Map();
-        for (const entry of translatedEntries) {
-          translatedMap.set(entry.index, entry);
-        }
-
-        translatedEntries.length = 0;
-        for (let i = 0; i < originalBatch.length; i++) {
-          const existing = translatedMap.get(i);
-          if (existing) {
-            translatedEntries.push({
-              index: i,
-              text: existing.text,
-              timecode: preserveTimecodes ? (existing.timecode || originalBatch[i].timecode) : existing.timecode
-            });
-          } else {
-            untranslatedIndices.push(i);
-            translatedEntries.push({
-              index: i,
-              text: `[⚠] ${originalBatch[i].text}`,
-              timecode: preserveTimecodes ? originalBatch[i].timecode : undefined
-            });
-          }
-        }
-      } else {
-        // Too many entries - keep only first N
-        translatedEntries.length = originalBatch.length;
-        for (let i = 0; i < translatedEntries.length; i++) {
-          translatedEntries[i].index = i;
-          if (preserveTimecodes && !translatedEntries[i].timecode && originalBatch[i]) {
-            translatedEntries[i].timecode = originalBatch[i].timecode;
-          }
-        }
-      }
-
-      return { hadMismatch: true, untranslatedIndices };
-    }
-
-  /**
    * Clean translated text (remove timecodes, normalize line endings)
    */
   cleanTranslatedText(text) {
@@ -2215,7 +2303,8 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
     for (const entry of batch) {
       const cached = this.getCachedEntry(entry.text, targetLanguage, customPrompt);
       if (cached) {
-        cachedEntries.push({ index: entry.id - 1, text: cached });
+        // Fix #2: Include timecode from original entry so cache results match expected structure
+        cachedEntries.push({ index: entry.id - 1, text: cached, timecode: entry.timecode });
         cacheHits++;
       } else {
         cachedEntries.push(null);

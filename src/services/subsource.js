@@ -66,7 +66,8 @@ class SubSourceService {
   static initLogged = false;
 
   constructor(apiKey = null) {
-    this.apiKey = apiKey;
+    // Ensure apiKey is always a string (protect against objects/undefined)
+    this.apiKey = (typeof apiKey === 'string') ? apiKey : '';
     this.baseURL = SUBSOURCE_API_URL;
     this._linkCache = new Map(); // subsource_id -> direct download URL
 

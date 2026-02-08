@@ -127,7 +127,8 @@ class SubsRoService {
      * @param {string|null} apiKey - subs.ro API key (required for authenticated access)
      */
     constructor(apiKey = null) {
-        this.apiKey = apiKey;
+        // Ensure apiKey is always a string (protect against objects/undefined)
+        this.apiKey = (typeof apiKey === 'string') ? apiKey : '';
 
         const headers = {
             'User-Agent': USER_AGENT,

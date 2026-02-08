@@ -4,9 +4,55 @@ All notable changes to this project will be documented in this file.
 
 ## SubMaker v1.4.43
 
+**Improvements:**
+
+- **Kitsu service migrated to LRUCache:** Replaced unbounded `Map` cache with `LRUCache` (max 2000 entries, 24h TTL, `updateAgeOnGet: true`). This prevents unbounded memory growth on high-traffic instances while maintaining cache effectiveness. Cache hit/miss logic simplified — LRUCache handles TTL automatically.
+
+- **MAL service migrated to LRUCache:** Same LRUCache migration (max 1000 entries, 24h TTL) for the MAL→IMDB mapping service. Prevents memory leaks from long-running servers accumulating stale anime ID mappings.
+
+- **Improved Jikan API rate limit handling:** The MAL service now uses conservative retry delays (3s/6s instead of 2s/6s) to better respect Jikan's 3 req/sec limit. On 429 errors, the service now parses the `Retry-After` header when present and waits the specified duration (+500ms buffer), falling back to a 4s delay when the header is missing. Previously used a fixed 3s minimum which could still trigger rate limits.
+
+- **Multi-instance: Anime ID caches migrated to Redis:** All 4 anime ID mapping services (MAL, AniList, AniDB, Kitsu) now use Redis-backed shared cache (`PROVIDER_METADATA`) instead of in-memory caches. This ensures anime→IMDB lookups are shared across pods — if pod 1 resolves `kitsu:8640` to `tt1234567`, pod 2 will get the cached result without making another external API call. Uses 24h TTL for successful lookups, 10min for misses.
+
+- **Multi-instance: TMDB→IMDB cache migrated to Redis:** The `resolveImdbIdFromTmdb()` cache now uses Redis instead of a local `LRUCache`. Previously, each pod maintained its own cache, causing duplicate Cinemeta/Wikidata lookups for the same TMDB ID. Now shared across pods with 24h/10min TTLs.
+
+- **Multi-instance: User concurrency tracking migrated to Redis:** Per-user translation concurrency limits are now enforced across all pods via Redis atomic counters. Previously, a user could bypass the 3-concurrent-translation limit by having requests routed to different pods. Includes a 30-minute TTL safety net — if a pod crashes mid-translation, the orphaned count will auto-expire instead of blocking the user forever.
+
+- **New `sharedCache.js` utility:** Added centralized Redis cache utility (`src/utils/sharedCache.js`) with `getShared()`/`setShared()` for cache operations and `incrementCounter()`/`decrementCounter()` for atomic Redis counters. Used by all multi-instance fixes.
+
+- **Multi-instance: Key health and rotation migrated to Redis:** API key error counts are now tracked in Redis via `recordKeyError()` and `isKeyCoolingDown()` in `sharedCache.js`. When any pod marks a key as unhealthy (5+ errors), all pods skip it for the 1-hour cooldown period. The round-robin key selection counter is also shared via `getNextRotationIndex()`, enabling truly distributed load balancing. Uses atomic `HINCRBY` for error counting and `INCR` for rotation.
+
+- **TranslationEngine async key rotation:** `_rotateToNextKey()` and `maybeRotateKeyForBatch()` are now async methods that query Redis for cross-pod key health before selecting the next key. Local Map cache is kept as a fast layer; Redis is source of truth. All call sites updated with `await`.
+
 **Bug Fixes:**
 
+- **Added SubDL download retry for 503 errors:** When SubDL's download server returns a 503 (Service Unavailable), the addon now retries up to 2 times with exponential backoff (2s, 4s delays) before giving up. This handles temporary SubDL server overload without failing immediately.
+
 - **Increased SubDL download timeout from 12s to 20s:** SubDL's download server (`dl.subdl.com`) has been consistently slow (10-20s response times for small files), causing timeout errors. Increased the default download timeout to accommodate their server latency while keeping the search API timeout unchanged.
+
+- **Fixed cache hits missing timecodes:** When the translation cache returned a hit, the resulting entry was missing its `timecode` field, causing timecode drift in cached translations. Cache results now include the timecode from the original entry.
+
+- **Fixed context loss during auto-chunked batches:** When a batch exceeded the token limit and was auto-split into two halves, the first half received the original context but the second half received `null` context, breaking translation coherence mid-file. The first half now correctly receives the original context, and the second half receives a context built from the first half's translations — maintaining coherent translation flow across the split.
+
+- **Fixed native batch providers losing timecodes:** Non-LLM translation providers (DeepL, Google Translate) were not applying timecodes from the original batch to their translated entries. Timecodes are now explicitly copied after alignment for native providers.
+
+- **Fixed XML parser dropping entries followed by AI commentary:** When AI models inserted commentary between `</s>` closing tags and the next `<s` opening tag (e.g., "Note: this is informal" or "Hope this helps!"), the lookahead-based regex failed to match the preceding entry. The parser now strips all inter-tag content before parsing, allowing a simpler greedy regex that handles all edge cases.
+
+- **Fixed `tryFallback` closure relying on hoisting:** The `tryFallback` async closure in `translateBatch()` was declared before `batchText` and `prompt` were defined, relying on JavaScript hoisting. While technically valid, this made variable dependencies unclear and fragile. Moved the closure declaration after `batchText`/`prompt` for explicit dependency ordering.
+
+- **Removed dead `fixEntryCountMismatch()` function:** The old mismatch handler (~50 lines) was superseded by `alignTranslatedEntries()` in v1.4.38 but never removed. Native batch providers now use the alignment function directly. Comment references to `fixEntryCountMismatch()` updated to reference `alignTranslatedEntries()`.
+
+- **Fixed user translation concurrency counter leak (multi-instance):** The per-user concurrent translation counter was **never being decremented** — the increment happened at translation start, but the decrement in the `finally` block used a broken implementation. Fixed by migrating to Redis atomic INCR/DECR operations with proper decrement in `finally`, plus a 30-minute TTL safety net. Also fixed a TOCTOU race in `decrementCounter()` (GET then DECR) by replacing with an atomic Lua script. Required adding the missing `getStorageAdapter` export from `storage/index.js` (previously caused `decrementCounter()` to fail silently).
+
+- **Fixed missing `await` on async key rotation:** `translateSubtitle()`, `translateSubtitleSingleBatch()`, and the MAX_TOKENS/PROHIBITED_CONTENT error handlers all called async key rotation methods without `await`, potentially using stale/wrong API keys. All call sites now properly await.
+
+- **Fixed key health tracking issues (multi-instance):** The local `_sharedKeyHealthErrors` Map was never cleared when a key recovered or when Redis TTL expired. Additionally, keys that hit 5 errors stayed marked unhealthy for the full 1-hour TTL even after successful translations. Fixed by adding `_resetKeyHealthOnSuccess()` which clears both local and Redis health records after successful translations.
+
+- **Added error classification utility for catch blocks:** Created `src/utils/errorClassifier.js` to properly distinguish programming bugs (TypeError, ReferenceError, etc.) from operational errors (network timeouts, rate limits). Programming bugs like `getAdapter is not a function` are now logged as `error` level (sent to Sentry) instead of being silently swallowed as warnings. Applied to all cache modules (`sharedCache.js`, `syncCache.js`, `embeddedCache.js`), with imports added to `sessionManager.js`, `translationEngine.js`, `subtitles.js`, and `RedisStorageAdapter.js` for incremental adoption.
+
+- **Fixed `TypeError: this.apiKey.trim is not a function` in subtitle services:** When an API key was passed as a non-string value (e.g., an object due to malformed config), calling `.trim()` would crash the service constructor. Added defensive type coercion in `SubDLService`, `SubSourceService`, and `SubsRoService` constructors to ensure `apiKey` is always a string before use.
+
+- **Fixed handler errors not being sent to Sentry:** The main subtitle handler catch block was only logging the error message, not the Error object itself. Sentry integration only captures errors when the Error object is passed to the logger. Changed to pass both message and Error object, ensuring TypeErrors and other programming bugs are properly reported to Sentry.
 
 ## SubMaker v1.4.42
 

@@ -225,7 +225,7 @@ async function translateChunk(chunk, translationService, sourceLanguage, targetL
     return mainEntries;
 
   } catch (error) {
-    log.error(() => `[ParallelTranslation] Chunk ${chunkNumber}/${totalChunks} failed: ${error.message}`);
+    log.error(() => [`[ParallelTranslation] Chunk ${chunkNumber}/${totalChunks} failed: ${error.message}`, error]);
     throw error;
   }
 }
@@ -263,7 +263,7 @@ async function translateWithConcurrency(tasks, maxConcurrency, onProgress = null
           onProgress(completedCount, tasks.length);
         }
       } catch (retryError) {
-        log.error(() => `[ParallelTranslation] Task ${taskIndex + 1} failed after retry: ${retryError.message}`);
+        log.error(() => [`[ParallelTranslation] Task ${taskIndex + 1} failed after retry: ${retryError.message}`, retryError]);
         throw retryError;
       }
     }
@@ -375,7 +375,7 @@ async function translateInParallel(srtContent, translationService, targetLanguag
       }
       return reconstructSRT(entries);
     }
-  } catch (_) {}
+  } catch (_) { }
 
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
   log.debug(() => `[ParallelTranslation] Translation complete: ${allTranslatedEntries.length} entries in ${duration}s`);

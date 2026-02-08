@@ -33,7 +33,8 @@ class SubDLService {
   });
 
   constructor(apiKey = null) {
-    this.apiKey = apiKey;
+    // Ensure apiKey is always a string (protect against objects/undefined)
+    this.apiKey = (typeof apiKey === 'string') ? apiKey : '';
 
     // Use static client for all instances (connection pooling optimization)
     this.client = SubDLService.client;
@@ -345,13 +346,43 @@ class SubDLService {
       log.debug(() => ['[SubDL] Download URL:', downloadUrl]);
 
       // Download the subtitle file (it's a ZIP file)
-      const subtitleResponse = await this.client.get(downloadUrl, {
-        responseType: 'arraybuffer',
-        headers: {
-          'User-Agent': USER_AGENT
-        },
-        timeout: timeout // Use configurable timeout
-      });
+      // Retry logic for 503 errors with exponential backoff (2s, 4s)
+      const MAX_RETRIES = 2;
+      const BACKOFF_DELAYS = [2000, 4000]; // 2s, 4s
+      let subtitleResponse;
+      let lastError;
+
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          subtitleResponse = await this.client.get(downloadUrl, {
+            responseType: 'arraybuffer',
+            headers: {
+              'User-Agent': USER_AGENT
+            },
+            timeout: timeout // Use configurable timeout
+          });
+          break; // Success, exit retry loop
+        } catch (err) {
+          lastError = err;
+          const status = err.response?.status;
+
+          // Only retry on 503 (Service Unavailable)
+          if (status === 503 && attempt < MAX_RETRIES) {
+            const delay = BACKOFF_DELAYS[attempt];
+            log.warn(() => `[SubDL] Download failed with 503, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${MAX_RETRIES})...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+
+          // Non-retryable error or max retries exceeded
+          throw err;
+        }
+      }
+
+      // If we exhausted retries without success
+      if (!subtitleResponse) {
+        throw lastError;
+      }
 
       log.debug(() => ['[SubDL] Response status:', subtitleResponse.status]);
       log.debug(() => ['[SubDL] Response Content-Type:', subtitleResponse.headers['content-type']]);

@@ -1,15 +1,18 @@
 const axios = require('axios');
 const log = require('../utils/logger');
+const { getShared, setShared, CACHE_PREFIXES, CACHE_TTLS } = require('../utils/sharedCache');
+const { StorageAdapter } = require('../storage');
 
 /**
  * AniList ID mapping service using AniList GraphQL API (free, no auth required)
  * Maps AniList anime IDs to IMDB IDs via external links or MAL ID cross-reference
+ * 
+ * MULTI-INSTANCE: Uses Redis-backed shared cache for cross-pod consistency
  */
 class AniListService {
   constructor() {
     this.graphqlUrl = 'https://graphql.anilist.co';
-    this.cache = new Map();
-    this.cacheExpiry = 24 * 60 * 60 * 1000; // 24 hours
+    // Note: Cache is now Redis-backed via sharedCache utility
   }
 
   /**
@@ -46,12 +49,16 @@ class AniListService {
       return null;
     }
 
-    // Check cache first
-    const cacheKey = `anilist_imdb_${numericId}`;
-    const cached = this.cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < (cached.expiry || this.cacheExpiry)) {
-      log.debug(() => `[AniList] Cache hit for ID ${numericId}`);
-      return cached.data;
+    // Check Redis shared cache first
+    const cacheKey = `${CACHE_PREFIXES.ANILIST_IMDB}${numericId}`;
+    try {
+      const cached = await getShared(cacheKey, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA);
+      if (cached !== null) {
+        log.debug(() => `[AniList] Redis cache hit for ID ${numericId}`);
+        return cached === 'null' ? null : cached;
+      }
+    } catch (e) {
+      log.debug(() => `[AniList] Cache lookup failed, proceeding with API: ${e.message}`);
     }
 
     // Retry configuration
@@ -93,7 +100,7 @@ class AniListService {
         const media = response.data?.data?.Media;
         if (!media) {
           log.debug(() => `[AniList] No media found for AniList ID ${numericId}`);
-          this.cache.set(cacheKey, { data: null, timestamp: Date.now(), expiry: 10 * 60 * 1000 });
+          await setShared(cacheKey, 'null', StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_NEGATIVE);
           return null;
         }
 
@@ -105,7 +112,7 @@ class AniListService {
               if (match && match[1]) {
                 const imdbId = match[1];
                 log.info(() => `[AniList] Found IMDB ID ${imdbId} for AniList ID ${numericId} via external links`);
-                this.cache.set(cacheKey, { data: imdbId, timestamp: Date.now() });
+                await setShared(cacheKey, imdbId, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_POSITIVE);
                 return imdbId;
               }
             }
@@ -118,7 +125,7 @@ class AniListService {
           const imdbId = await malService.getImdbId(String(media.idMal));
           if (imdbId) {
             log.info(() => `[AniList] Found IMDB ID ${imdbId} for AniList ID ${numericId} via MAL ${media.idMal}`);
-            this.cache.set(cacheKey, { data: imdbId, timestamp: Date.now() });
+            await setShared(cacheKey, imdbId, StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_POSITIVE);
             return imdbId;
           }
         } else if (media.idMal && !malService) {
@@ -127,7 +134,7 @@ class AniListService {
 
         // No IMDB mapping found
         log.debug(() => `[AniList] No IMDB ID found for AniList ID ${numericId}`);
-        this.cache.set(cacheKey, { data: null, timestamp: Date.now(), expiry: 10 * 60 * 1000 });
+        await setShared(cacheKey, 'null', StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_NEGATIVE);
         return null;
       } catch (error) {
         lastError = error;
@@ -154,16 +161,17 @@ class AniListService {
     }
 
     log.warn(() => `[AniList] Failed to fetch media info for AniList ID ${numericId} after ${retryDelays.length} retries: ${lastError?.message}`);
-    this.cache.set(cacheKey, { data: null, timestamp: Date.now(), expiry: 10 * 60 * 1000 });
+    try {
+      await setShared(cacheKey, 'null', StorageAdapter.CACHE_TYPES.PROVIDER_METADATA, CACHE_TTLS.ANIME_NEGATIVE);
+    } catch (_) { }
     return null;
   }
 
   /**
-   * Clear cache
+   * Clear cache - Note: This now only logs since cache is Redis-backed
    */
   clearCache() {
-    this.cache.clear();
-    log.debug(() => '[AniList] Cache cleared');
+    log.debug(() => '[AniList] Cache clear requested (Redis-backed cache - clearing not implemented for multi-instance safety)');
   }
 }
 

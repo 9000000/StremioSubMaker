@@ -9,6 +9,7 @@ const { StorageUnavailableError } = require('../storage/errors');
 const log = require('./logger');
 const { shutdownLogger } = require('./logger');
 const sentry = require('./sentry');
+const { handleCaughtError } = require('./errorClassifier');
 const { encryptUserConfig, decryptUserConfig, getDecryptionWarnings } = require('./encryption');
 const { redactToken } = require('./security');
 const { getRedisPassword } = require('./redisHelper');
