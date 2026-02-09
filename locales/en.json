@@ -839,7 +839,7 @@
         "passwordLabel": "Password",
         "usernamePlaceholder": "Enter OpenSubtitles Username",
         "passwordPlaceholder": "Enter OpenSubtitles Password",
-        "rateNote": "20 subtitles a day. Create a free account if you don't have one.",
+        "rateNote": "20 subtitles a day. Create a <a href=\"https://www.opensubtitles.com/en/users/sign_up\" target=\"_blank\" rel=\"noopener\">free account</a> if you don't have one.",
         "validateCta": "Run Test",
         "validateTitle": "Validate OpenSubtitles credentials",
         "showHidePassword": "Show/hide password",

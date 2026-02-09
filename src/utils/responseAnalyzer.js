@@ -84,13 +84,18 @@ function analyzeResponseContent(buffer) {
 
     // Check if it looks like subtitle content (SRT, VTT, ASS, SSA, MicroDVD, MPL2) BEFORE checking for error keywords,
     // because valid subtitle dialogue can contain words like "error", "failed", "denied", etc.
-    const isSrt = /^\d+\s*[\r\n]+\d{2}:\d{2}/.test(textContent);
-    const isVtt = textContent.startsWith('webvtt');
-    const isAss = textContent.includes('[script info]') || textContent.includes('[events]');
-    const isMicroDvd = /\{\d+\}\{\d+\}/.test(textContent);
-    const isMpl2 = /^\[\d+\]\[\d+\]/.test(textContent);
+    // Strip BOM (U+FEFF / EF BB BF) that some editors prepend — it breaks the ^ anchor on SRT detection.
+    const textForFormat = textContent.replace(/^\uFEFF/, '').replace(/^\xEF\xBB\xBF/, '');
+    const isSrt = /^\d+\s*[\r\n]+\d{2}:\d{2}/.test(textForFormat);
+    const isVtt = textForFormat.startsWith('webvtt');
+    const isAss = textForFormat.includes('[script info]') || textForFormat.includes('[events]');
+    const isMicroDvd = /\{\d+\}\{\d+\}/.test(textForFormat);
+    const isMpl2 = /^\[\d+\]\[\d+\]/.test(textForFormat);
+    // Fallback: if none of the above matched but the content has SRT/VTT timecodes anywhere,
+    // it's almost certainly subtitle content with an unusual header or encoding prefix.
+    const hasTimecodes = /\d{2}:\d{2}:\d{2}[,.]\d{2,3}\s*-->/.test(textForFormat);
 
-    if (isSrt || isVtt || isAss || isMicroDvd || isMpl2) {
+    if (isSrt || isVtt || isAss || isMicroDvd || isMpl2 || hasTimecodes) {
         return { type: 'subtitle', hint: 'Direct subtitle content (not ZIP)', isRetryable: false };
     }
 
@@ -98,21 +103,18 @@ function analyzeResponseContent(buffer) {
     // Use word-boundary matching to avoid false positives on subtitle dialogue that
     // happens to contain words like "terror", "mirror", etc.
     // Also require either a short response (typical API error) or multiple error signals
-    // to avoid misclassifying longer subtitle-like content that slipped past the SRT regex.
+    // to avoid misclassifying longer subtitle-like content that slipped past the format checks above.
     const errorWordPattern = /\b(error|failed|denied|forbidden|unauthorized|not found|bad request|service unavailable|internal server)\b/;
     const errorWordMatches = textContent.match(new RegExp(errorWordPattern.source, 'g'));
     const errorWordCount = errorWordMatches ? errorWordMatches.length : 0;
 
     if (errorWordCount > 0) {
         // Short responses (<500 bytes) with any error keyword are almost certainly error messages.
-        // Longer responses need multiple error keywords to be classified as errors — a single
-        // "error" in a 2KB response is more likely subtitle dialogue than an API error.
+        // Longer responses need stronger evidence.
         const isShortResponse = buffer.length < 500;
-        const hasStrongSignal = errorWordCount >= 2
-            || /^\s*(error|fail|denied|forbidden)/i.test(textContent)
-            || /\b\d{3}\b/.test(textContent); // HTTP status code like 403, 500
+        const startsWithError = /^\s*(error|fail|denied|forbidden)/i.test(textContent);
 
-        if (isShortResponse || hasStrongSignal) {
+        if (isShortResponse || startsWithError) {
             const matchedWords = [...new Set(errorWordMatches)].join(', ');
             return { type: 'text_error', hint: `Text error message received (matched: ${matchedWords})`, isRetryable: true };
         }
