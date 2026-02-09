@@ -82,9 +82,15 @@ function analyzeResponseContent(buffer) {
         return { type: 'json', hint: 'JSON content received', isRetryable: false };
     }
 
-    // Check if it looks like subtitle content (SRT/VTT) BEFORE checking for error keywords,
+    // Check if it looks like subtitle content (SRT, VTT, ASS, SSA, MicroDVD, MPL2) BEFORE checking for error keywords,
     // because valid subtitle dialogue can contain words like "error", "failed", "denied", etc.
-    if (/^\d+\s*[\r\n]+\d{2}:\d{2}/.test(textContent) || textContent.startsWith('webvtt')) {
+    const isSrt = /^\d+\s*[\r\n]+\d{2}:\d{2}/.test(textContent);
+    const isVtt = textContent.startsWith('webvtt');
+    const isAss = textContent.includes('[script info]') || textContent.includes('[events]');
+    const isMicroDvd = /\{\d+\}\{\d+\}/.test(textContent);
+    const isMpl2 = /^\[\d+\]\[\d+\]/.test(textContent);
+
+    if (isSrt || isVtt || isAss || isMicroDvd || isMpl2) {
         return { type: 'subtitle', hint: 'Direct subtitle content (not ZIP)', isRetryable: false };
     }
 

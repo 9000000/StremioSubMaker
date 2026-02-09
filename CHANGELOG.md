@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - **Season pack subtitle toggle:** Added an "Include Season Pack Subtitles" option in Other Settings that controls whether season pack subtitles (containing multiple episodes) appear in results. Enabled by default for backwards compatibility. When disabled, subtitles flagged as `is_season_pack` are filtered out, showing only episode-specific subtitles. Toggle is available in both translation and "Just Fetch" modes.
 
-- **ASS/SSA conversion toggle:** Added a "Convert ASS/SSA to VTT" option in Other Settings. Enabled by default for backwards compatibility. When disabled, ASS/SSA subtitles are passed directly to Stremio without conversion, preserving original styling (colors, fonts, positioning). Stremio natively supports ASS/SSA subtitles. The toggle is automatically disabled (grayed out) when "Force SRT output" is enabled, since Force SRT requires converting all formats to SRT.
+- **ASS/SSA conversion toggle (alpha - Dev mode):** Added a "Convert ASS/SSA to VTT" option in Other Settings. Enabled by default for backwards compatibility. When disabled, ASS/SSA subtitles are passed directly to Stremio without conversion, preserving original styling (colors, fonts, positioning). Stremio natively supports ASS/SSA subtitles. The toggle is automatically disabled (grayed out) when "Force SRT output" is enabled, since Force SRT requires converting all formats to SRT.
 
 **Bug Fixes:**
 

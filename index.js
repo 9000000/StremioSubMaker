@@ -2125,12 +2125,12 @@ function setSubtitleCacheHeaders(res, mode = 'final') {
     res.setHeader('Vary', 'Accept-Encoding');
 }
 
-// Normalize subtitle route params to strip optional extensions (e.g., ".srt" or ".vtt") from :targetLang
+// Normalize subtitle route params to strip optional extensions (e.g., ".srt", ".vtt", ".sub") from :targetLang
 // This keeps validation/dedup logic stable while allowing extension-bearing URLs for player MIME detection.
 function normalizeSubtitleFormatParams(req, _res, next) {
     try {
         if (req.params && typeof req.params.targetLang === 'string') {
-            req.params.targetLang = req.params.targetLang.replace(/\.(srt|vtt)$/i, '');
+            req.params.targetLang = req.params.targetLang.replace(/\.(srt|vtt|sub|ass|ssa)$/i, '');
         }
     } catch (_) { }
     next();
@@ -4891,11 +4891,20 @@ async function resolveConfigAsync(configStr, req) {
 }
 
 // Custom route: Download subtitle (BEFORE SDK router to take precedence)
-app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validateRequest(subtitleParamsSchema, 'params'), async (req, res) => {
+// Support multiple URL extensions for ASS/SSA compatibility testing:
+// - .srt (default)
+// - .sub (Option A - generic subtitle extension)
+// - no extension (Option B - rely on Content-Type header)
+const subtitleDownloadHandler = async (req, res) => {
     try {
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
-        const { config: configStr, fileId, language } = req.params;
+        const { config: configStr, fileId } = req.params;
+        // Language may include extension (e.g., "eng.srt", "eng.sub", "eng")
+        let language = req.params.language || '';
+        // Strip any extension from language parameter
+        language = language.replace(/\.(srt|sub|vtt|ass|ssa)$/i, '');
+
         const config = await resolveConfigGuarded(configStr, req, res, '[Download] config', t);
         if (!config) return;
         if (isInvalidSessionConfig(config)) {
@@ -4909,7 +4918,8 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
         t = getTranslatorFromRequest(req, res, config);
         const configKey = ensureConfigHash(config, configStr);
 
-        const langCode = language.replace('.srt', '');
+        // Language is already cleaned (extension stripped at handler entry)
+        const langCode = language;
 
         // Create deduplication key (includes config+language to separate concurrent user requests)
         const dedupKey = `download:${configKey}:${fileId}:${langCode}`;
@@ -5035,7 +5045,13 @@ app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validate
         log.error(() => '[Download] Error:', error);
         res.status(404).send(t('server.errors.subtitleNotFound', {}, 'Subtitle not found'));
     }
-});
+};
+
+// Register subtitle download routes for all supported extensions
+// Route priority: Express matches routes in order of registration
+app.get('/addon/:config/subtitle/:fileId/:language.srt', searchLimiter, validateRequest(subtitleParamsSchema, 'params'), subtitleDownloadHandler);
+app.get('/addon/:config/subtitle/:fileId/:language.sub', searchLimiter, validateRequest(subtitleParamsSchema, 'params'), subtitleDownloadHandler);
+app.get('/addon/:config/subtitle/:fileId/:language', searchLimiter, validateRequest(subtitleParamsSchema, 'params'), subtitleDownloadHandler);
 
 // Custom route: Serve error subtitles for config errors (BEFORE SDK router to take precedence)
 app.get('/addon/:config/error-subtitle/:errorType.srt', async (req, res) => {

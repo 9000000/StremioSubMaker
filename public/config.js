@@ -2615,8 +2615,43 @@ Translate to {target_language}.`;
             devModeToggle.addEventListener('change', (e) => {
                 currentConfig.devMode = !!e.target.checked;
                 toggleOtherApiKeysSection();
+                toggleConvertAssToVttGroup();
+                toggleUrlExtensionTestGroup();
             });
         }
+
+        // Function to show/hide Convert ASS/SSA to VTT option (dev mode only)
+        function toggleConvertAssToVttGroup() {
+            const convertAssGroup = document.getElementById('convertAssToVttGroup');
+            if (!convertAssGroup) return;
+            const devModeEl = document.getElementById('devMode');
+            const devEnabled = devModeEl && devModeEl.checked;
+            convertAssGroup.style.display = devEnabled ? 'block' : 'none';
+        }
+
+        // Function to show/hide URL extension test group (requires devMode AND convertAssToVtt unchecked)
+        function toggleUrlExtensionTestGroup() {
+            const urlExtTestGroup = document.getElementById('urlExtensionTestGroup');
+            if (!urlExtTestGroup) return;
+            const devModeEl = document.getElementById('devMode');
+            const convertAssEl = document.getElementById('convertAssToVtt');
+            const devEnabled = devModeEl && devModeEl.checked;
+            const assConversionDisabled = convertAssEl && !convertAssEl.checked;
+            // Show only when devMode is ON and ASS conversion is OFF (raw ASS mode)
+            urlExtTestGroup.style.display = (devEnabled && assConversionDisabled) ? 'block' : 'none';
+        }
+
+        // Wire convertAssToVtt to also toggle the test group
+        const convertAssEl = document.getElementById('convertAssToVtt');
+        if (convertAssEl) {
+            convertAssEl.addEventListener('change', () => {
+                toggleUrlExtensionTestGroup();
+            });
+        }
+
+        // Initial visibility check on load
+        toggleConvertAssToVttGroup();
+        toggleUrlExtensionTestGroup();
 
         const multiToggle = document.getElementById('enableMultiProviders');
         if (multiToggle) {
@@ -5753,6 +5788,16 @@ Translate to {target_language}.`;
             translationPrompt: translationPrompt,
             betaModeEnabled: isBetaModeEnabled(),
             devMode: (function () { const el = document.getElementById('devMode'); return el ? el.checked : false; })(),
+            urlExtensionTest: (function () {
+                // Only include if devMode is enabled and convertAssToVtt is disabled
+                const devEl = document.getElementById('devMode');
+                const convertAssEl = document.getElementById('convertAssToVtt');
+                if (devEl && devEl.checked && convertAssEl && !convertAssEl.checked) {
+                    const selected = document.querySelector('input[name="urlExtensionTest"]:checked');
+                    return selected ? selected.value : 'srt';
+                }
+                return 'srt'; // Default behavior
+            })(),
             sourceLanguages: currentConfig.sourceLanguages,
             targetLanguages: currentConfig.targetLanguages,
             learnMode: currentConfig.learnMode === true,

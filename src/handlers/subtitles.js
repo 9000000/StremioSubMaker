@@ -2746,6 +2746,16 @@ function createSubtitleHandler(config) {
       filteredFoundSubtitles = Array.from(limitedByLanguage.values()).flat();
       log.debug(() => `[Subtitles] Limited to ${MAX_SUBS_PER_LANGUAGE} subtitles per language (${filteredFoundSubtitles.length} total)`);
 
+      // Determine URL extension based on urlExtensionTest config (dev mode testing)
+      // Determine URL extension based on urlExtensionTest config (dev mode testing)
+      // 'srt' = default (.srt), 'sub' = Option A (.sub), 'none' = Option B (no extension)
+      let urlExtension = '.srt';
+      if (config.urlExtensionTest === 'sub') {
+        urlExtension = '.sub';
+      } else if (config.urlExtensionTest === 'none') {
+        urlExtension = '';
+      }
+
       // Convert to Stremio subtitle format
       // Validate required fields before creating response objects
       const stremioSubtitles = filteredFoundSubtitles
@@ -2770,7 +2780,7 @@ function createSubtitleHandler(config) {
           const subtitle = {
             id: `${sub.fileId}`,
             lang: displayLang,
-            url: `{{ADDON_URL}}/subtitle/${sub.fileId}/${sub.languageCode}.srt`
+            url: `{{ADDON_URL}}/subtitle/${sub.fileId}/${sub.languageCode}${urlExtension}`
           };
 
           return subtitle;
@@ -2897,7 +2907,7 @@ function createSubtitleHandler(config) {
             const translationEntry = {
               id: `translate_${sourceSub.fileId}_to_${targetLang}`,
               lang: displayName, // Display as "Make Language" in Stremio UI
-              url: `{{ADDON_URL}}/translate/${sourceSub.fileId}/${targetLang}.srt${translateQuery}`
+              url: `{{ADDON_URL}}/translate/${sourceSub.fileId}/${targetLang}${urlExtension}${translateQuery}`
             };
             translationEntries.push(translationEntry);
           }

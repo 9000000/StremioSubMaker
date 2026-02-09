@@ -452,6 +452,12 @@ function normalizeConfig(config) {
   // ASS/SSA conversion enabled by default (backwards compatible) - only disabled when explicitly set to false
   // When forceSRTOutput is true, ASS conversion is always enabled (SRT output requires conversion)
   mergedConfig.convertAssToVtt = mergedConfig.forceSRTOutput === true || mergedConfig.convertAssToVtt !== false;
+  // URL extension test mode: validate and default to 'srt'
+  // Only valid values are 'srt', 'sub', or 'none'
+  const validExtensions = ['srt', 'sub', 'none'];
+  mergedConfig.urlExtensionTest = validExtensions.includes(mergedConfig.urlExtensionTest)
+    ? mergedConfig.urlExtensionTest
+    : 'srt';
   // Season packs enabled by default (backwards compatible) - only disabled when explicitly set to false
   mergedConfig.enableSeasonPacks = mergedConfig.enableSeasonPacks !== false;
   // Deduplication is enabled by default (only disabled if explicitly set to false)
@@ -1044,6 +1050,9 @@ function getDefaultConfig(modelName = null) {
     // If true, convert ASS/SSA subtitles to VTT format (default: enabled for backwards compatibility)
     // When false, original ASS/SSA styling is preserved (Stremio supports ASS natively)
     convertAssToVtt: true,
+    // URL extension test mode (dev mode only): 'srt' (default), 'sub' (Option A), 'none' (Option B)
+    // Used to test different URL extensions for ASS/SSA subtitle compatibility with Stremio
+    urlExtensionTest: 'srt',
     mobileMode: false, // Hold translation responses until full translation is ready (opt-in only, no automatic device detection)
     singleBatchMode: false, // Translate whole file at once (streaming partials)
     // Minimum size for a subtitle file to be considered valid (bytes)
