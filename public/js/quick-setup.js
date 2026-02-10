@@ -166,41 +166,64 @@
 
     // ─── Wizard Open / Close ─────────────────────────────────────────
 
-    function openWizard() {
+    async function openWizard() {
         const overlay = $('quickSetupOverlay');
         if (!overlay) return;
 
         // Try to restore from sessionStorage first
-        const restored = restoreStateFromSession();
-
-        if (!restored) {
-            // Reset state
-            state.currentStep = 1;
-            state.mode = null;
-            state.openSubsAuth = false;
-            state.openSubsUsername = '';
-            state.openSubsPassword = '';
-            state.subdlEnabled = false;
-            state.subdlApiKey = '';
-            state.subsourceEnabled = false;
-            state.subsourceApiKey = '';
-            state.geminiApiKey = '';
-            state.geminiKeyValid = false;
-            state.selectedLanguages = [];
-            state.subToolbox = true;
-            state.seasonPacks = true;
-            state.hideSDH = false;
-            state.learnMode = false;
-            state.learnTargetLanguages = [];
-
-            // Reset UI
-            resetAllStepUIs();
+        if (restoreStateFromSession()) {
+            hasSaved = false;
+            overlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+            showStep(state.currentStep);
+            return;
         }
+
+        // Try to restore from existing active session (if any)
+        const token = localStorage.getItem(TOKEN_KEY);
+        if (token && /^[a-f0-9]{32}$/.test(token)) {
+            // Show loading state overlay
+            overlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+
+            // Show a temporary loading indicator if needed, 
+            // but the overlay itself is a good start.
+            // We'll reset to step 1 initially but hide content until loaded?
+            // Actually, let's just show Step 1 and let it populate.
+            // But if we populate async, user might see empty then filled.
+            // Better to fetch then show. 
+            // Since we already added 'active' class, the wizard is visible.
+            // Let's rely on the speed of local API or just accept a brief flash.
+
+            try {
+                const resp = await fetch(`/api/get-session/${token}`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data && data.config) {
+                        mapConfigToState(data.config);
+                        saveStateToSession();
+                        restoreUIFromState();
+
+                        // We always start at Step 1 for review when loading existing config
+                        state.currentStep = 1;
+                        showStep(1);
+                        hasSaved = false;
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('[QuickSetup] Failed to load existing config:', e);
+            }
+        }
+
+        // Fallback: New Session / Reset
+        resetState();
+        resetAllStepUIs();
 
         hasSaved = false;
         overlay.classList.add('active');
         document.body.style.overflow = 'hidden';
-        showStep(restored ? state.currentStep : 1);
+        showStep(1);
     }
 
     function closeWizard() {
@@ -1601,6 +1624,85 @@
         } catch (_) {
             return false;
         }
+    }
+
+    function mapConfigToState(config) {
+        if (!config) return;
+
+        // Mode
+        state.mode = config.noTranslationMode ? 'fetch' : 'translate';
+
+        // Subtitle Providers
+        const subs = config.subtitleProviders || {};
+
+        // OpenSubtitles
+        const os = subs.opensubtitles || {};
+        state.openSubsAuth = os.implementationType === 'auth';
+        state.openSubsUsername = os.username || '';
+        state.openSubsPassword = os.password || '';
+
+        // SubDL
+        const subdl = subs.subdl || {};
+        state.subdlEnabled = !!subdl.enabled;
+        state.subdlApiKey = subdl.apiKey || '';
+
+        // SubSource
+        const ss = subs.subsource || {};
+        state.subsourceEnabled = !!ss.enabled;
+        state.subsourceApiKey = ss.apiKey || '';
+
+        // SCS
+        const scs = subs.scs || {};
+        state.scsEnabled = !!scs.enabled;
+
+        // Wyzie
+        const wyzie = subs.wyzie || {};
+        state.wyzieEnabled = !!wyzie.enabled;
+        if (wyzie.sources) {
+            state.wyzieSources = { ...wyzie.sources };
+        }
+
+        // AI
+        state.geminiApiKey = config.geminiApiKey || '';
+        // If key exists, assume valid or let them re-validate
+        state.geminiKeyValid = !!state.geminiApiKey;
+
+        // Languages
+        const langs = state.mode === 'translate' ? config.targetLanguages : config.noTranslationLanguages;
+        state.selectedLanguages = Array.isArray(langs) ? [...langs] : [];
+
+        // Extras
+        state.subToolbox = config.subToolboxEnabled !== false; // Default true if undefined/null?
+        state.seasonPacks = config.enableSeasonPacks !== false;
+        state.hideSDH = !!config.excludeHearingImpairedSubtitles;
+
+        // Learn Mode
+        state.learnMode = !!config.learnMode;
+        state.learnTargetLanguages = Array.isArray(config.learnTargetLanguages) ? [...config.learnTargetLanguages] : [];
+
+        // Current step will be set by caller
+    }
+
+    function resetState() {
+        state.currentStep = 1;
+        state.mode = null; // Forces user to pick
+        state.openSubsAuth = false;
+        state.openSubsUsername = '';
+        state.openSubsPassword = '';
+        state.subdlEnabled = false;
+        state.subdlApiKey = '';
+        state.subsourceEnabled = false;
+        state.subsourceApiKey = '';
+        state.scsEnabled = false;
+        state.wyzieEnabled = false;
+        state.geminiApiKey = '';
+        state.geminiKeyValid = false;
+        state.selectedLanguages = [];
+        state.subToolbox = true;
+        state.seasonPacks = true;
+        state.hideSDH = false;
+        state.learnMode = false;
+        state.learnTargetLanguages = [];
     }
 
     function restoreUIFromState() {
