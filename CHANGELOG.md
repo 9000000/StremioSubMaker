@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.50
+
+**Bug Fixes:**
+
+- **Fixed `Array buffer allocation failed` crash on large streams:** The xSync extension's `fetchFullStreamBuffer` attempted to pre-allocate a single `Uint8Array` for the entire stream, exceeding V8's ~2GB `ArrayBuffer` limit on streams over 3GB. Rewrote the function to use a chunked streaming approach that collects data incrementally and enforces a 1.8GB safety cap — streams exceeding the cap are gracefully truncated and marked as partial instead of crashing. Also added the same 1.8GB memory cap to `fetchByteRangeSample` (via new `readResponseCapped` helper) and `fetchFullHlsStream` (cumulative segment size guard).
+
+- **Fixed OpenSubtitles CDN 403 misreported as "Authentication failed":** When the OpenSubtitles CDN (Varnish cache server) returned a 403 for a specific subtitle file (file unavailable on CDN, not an auth issue), the error was misclassified as "Authentication failed. Please check your API credentials." by `apiErrorHandler.js`. The download now catches CDN-specific 403/410 errors separately and reports them as "Subtitle file unavailable on OpenSubtitles CDN" with a suggestion to try a different subtitle, instead of misleading users into thinking their credentials are wrong.
+
+**User Interface:**
+
+- **Quick Setup color scheme update:** Updated the Quick Setup wizard to use the same cyan-blue color palette as the main configuration page (`#08A4D5` and variants). Previously used indigo/purple tones that didn't match the overall addon aesthetic. The new color scheme is applied consistently across all three themes (Light, Dark, and Pure Dark/Blackhole).
+
+**Cleanup:**
+
+- **Removed ~860 lines of dead server-side stream-fetching code:** Removed 7 unused constants and 14+ unused functions from `index.js` related to server-side stream downloading, Cloudflare Workers transcription, and AssemblyAI transcription (`fetchWithRedirects`, `downloadStreamAudio`, `transcribeWithCloudflare`, `downloadFullStreamToFile`, `uploadToAssembly`, `transcribeWithAssemblyAi`, and all their helpers). None of these were called from any active route — the auto-subtitle API already requires client-provided transcripts.
+
 ## SubMaker v1.4.49
 
 **Changes:**

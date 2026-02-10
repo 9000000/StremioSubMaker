@@ -1523,6 +1523,8 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             padding: 1rem;
             background: var(--surface-light);
             border-radius: 12px;
+            cursor: pointer;
+            user-select: none;
         }
 
         .offset-headline {
@@ -1558,7 +1560,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             accent-color: var(--primary);
         }
 
-        .checkbox-group label {
+        .checkbox-group span {
             margin: 0;
             cursor: pointer;
             font-weight: 500;
@@ -2093,10 +2095,10 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                             ${allLangOptionsHTML}
                         </select>
                     </div>
-                    <div class="checkbox-group">
+                    <label class="checkbox-group" for="translateAfterSync">
                         <input type="checkbox" id="translateAfterSync">
-                        <label for="translateAfterSync">${escapeHtml(copy.step2.translateToggle)}</label>
-                    </div>
+                        <span>${escapeHtml(copy.step2.translateToggle)}</span>
+                    </label>
                     <div class="form-group" id="targetLangGroup" style="display: none; margin-top: 1rem;">
                         <label for="targetLanguage">${escapeHtml(copy.step2.targetLabel)}</label>
                         <select id="targetLanguage">

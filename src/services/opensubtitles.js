@@ -1000,11 +1000,34 @@ class OpenSubtitlesService {
       log.debug(() => ['[OpenSubtitles] Got download link:', downloadLink]);
 
       // Download the subtitle file as raw bytes to handle BOM/ZIP cases efficiently
-      const subtitleResponse = await this.downloadClient.get(downloadLink, {
-        responseType: 'arraybuffer',
-        headers: { 'User-Agent': USER_AGENT },
-        timeout: timeout // Use configurable timeout
-      });
+      let subtitleResponse;
+      try {
+        subtitleResponse = await this.downloadClient.get(downloadLink, {
+          responseType: 'arraybuffer',
+          headers: { 'User-Agent': USER_AGENT },
+          timeout: timeout // Use configurable timeout
+        });
+      } catch (cdnError) {
+        // CDN download errors (403/410 from Varnish) should NOT be reported as "Authentication failed"
+        // These are file-level availability issues on OpenSubtitles' CDN, not credential problems
+        const cdnStatus = cdnError.response?.status;
+        if (cdnStatus === 403 || cdnStatus === 410) {
+          const bodyStr = cdnError.response?.data
+            ? (Buffer.isBuffer(cdnError.response.data)
+              ? cdnError.response.data.toString('utf8').substring(0, 200)
+              : String(cdnError.response.data).substring(0, 200))
+            : '';
+          const isVarnish = bodyStr.includes('Varnish') || bodyStr.includes('Guru Meditation');
+          const hint = cdnStatus === 410 ? 'expired download link' : (isVarnish ? 'file unavailable on CDN' : 'CDN access denied');
+          log.warn(() => `[OpenSubtitles] CDN download failed (${cdnStatus}): ${hint}`);
+          const err = new Error(`Subtitle file unavailable on OpenSubtitles CDN (${cdnStatus} ${hint}). Try a different subtitle.`);
+          err.statusCode = cdnStatus;
+          err.type = 'cdn_unavailable';
+          err._alreadyLogged = true;
+          throw err;
+        }
+        throw cdnError; // re-throw other errors for default handling
+      }
 
       const buf = Buffer.isBuffer(subtitleResponse.data)
         ? subtitleResponse.data

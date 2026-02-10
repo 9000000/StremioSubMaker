@@ -2106,6 +2106,13 @@ function createSubtitleHandler(config) {
       }
 
       const { type, id, extra } = args;
+
+      // Block known bogus Stremio internal UI requests (e.g. "Stream and Refresh" button)
+      if (id === 'Stream and Refresh') {
+        log.debug(() => '[Subtitles] Ignoring Stremio internal UI request: "Stream and Refresh"');
+        return { subtitles: [] };
+      }
+
       const videoInfo = parseStremioId(id, type);
 
       if (!videoInfo) {
