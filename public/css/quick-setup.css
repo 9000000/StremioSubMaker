@@ -853,9 +853,10 @@
 .qs-input-key {
     flex: 1;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 0.82rem;
+    font-size: 0.9rem;
     letter-spacing: 0.02em;
-    padding: 0.42rem 0.75rem;
+    padding: 0 0.75rem;
+    height: 34px;
 }
 
 .qs-btn-validate {
