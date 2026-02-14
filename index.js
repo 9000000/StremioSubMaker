@@ -2009,21 +2009,6 @@ app.use((req, res, next) => {
             const blockOrigin = origin || 'none';
             const blockReferer = req.get('referer') || 'none';
             log.error(() => `[Security] Blocked addon API request (community-v5 origin) - origin: ${blockOrigin}, referer: ${blockReferer}, user-agent: ${userAgent}, path: ${req.path}`);
-            sentry.captureMessage(
-                `[Security] Blocked addon API request (community-v5 origin) - origin: ${blockOrigin}, referer: ${blockReferer}, user-agent: ${userAgent}, path: ${req.path}`,
-                'error',
-                {
-                    module: 'SecurityMiddleware',
-                    blockReason: 'community_v5_origin_blocked',
-                    origin: blockOrigin,
-                    referer: blockReferer,
-                    userAgent,
-                    path: req.path,
-                    method: req.method,
-                    ip: req.ip,
-                    tags: { security: 'blocked_origin' }
-                }
-            );
             return res.status(403).json({
                 error: t('server.errors.originNotAllowed', {}, 'Origin not allowed')
             });

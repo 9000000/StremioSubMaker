@@ -216,6 +216,11 @@ function captureMessage(message, level = 'info', extras = {}) {
         return null;
     }
 
+    // Targeted noise suppression: community-v5 origin blocks are intentional and high-volume.
+    if (extras?.blockReason === 'community_v5_origin_blocked') {
+        return null;
+    }
+
     try {
         const eventId = Sentry.captureMessage(message, {
             level,
