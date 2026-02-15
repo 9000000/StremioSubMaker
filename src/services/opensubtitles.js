@@ -18,7 +18,7 @@ const OPENSUBTITLES_VIP_API_URL = 'https://vip-api.opensubtitles.com/api/v1';
 const USER_AGENT = `SubMaker v${version}`;
 const MAX_ZIP_BYTES = 25 * 1024 * 1024; // hard cap for ZIP downloads (~25MB) to avoid huge packs
 
-const AUTH_FAILURE_TTL_MS = 5 * 60 * 1000; // Keep invalid credentials blocked for 5 minutes
+const AUTH_FAILURE_TTL_MS = 30 * 1000; // Keep invalid credentials blocked for 30 seconds
 const credentialFailureCache = new Map();
 
 // MULTI-INSTANCE FIX: Token cache is now backed by Redis for cross-pod sharing
@@ -31,6 +31,13 @@ const TOKEN_TTL_SECONDS = 23 * 60 * 60; // 23 hours (token valid for 24h, 1h buf
 // Login mutex: prevents multiple concurrent /login calls for the same credentials
 // Key: credentialsCacheKey, Value: Promise that resolves when login completes
 const loginMutex = new Map();
+
+// STRICT RATE LIMITER FOR /login: 1 request per second global limit
+// OpenSubtitles documentation: "on /login there is set limit 1 request per 1 second"
+// We must serialize ALL login attempts globally in this process to prevent 429s.
+let _globalLoginQueue = Promise.resolve();
+let _globalLastLoginTime = 0;
+const LOGIN_MIN_INTERVAL_MS = 1200; // 1.2s buffer to be safe
 
 // ─── Token-bucket rate limiter ────────────────────────────────────────────────
 // OpenSubtitles enforces 5 req/sec/IP.  On shared-IP deployments every pod
@@ -466,11 +473,77 @@ class OpenSubtitlesService {
 
       // Use provided timeout or fall back to client default
       const requestConfig = timeout ? { timeout } : {};
-      await acquireToken(); // Rate-limit: wait for token before hitting OpenSubtitles API
-      const response = await this.client.post('/login', {
-        username: username,
-        password: password
-      }, requestConfig);
+
+      // STRICT GLOBAL THROTTLE for /login (1 req/sec)
+      // Serialize this request into the global queue
+      let response;
+      const performLoginTask = async () => {
+        // Ensure minimum interval since last login call
+        const now = Date.now();
+        const timeSinceLast = now - _globalLastLoginTime;
+        if (timeSinceLast < LOGIN_MIN_INTERVAL_MS) {
+          const waitMs = LOGIN_MIN_INTERVAL_MS - timeSinceLast;
+          await new Promise(r => setTimeout(r, waitMs));
+        }
+
+        // 2. DISTRIBUTED THROTTLE: Ensure minimum interval across ALL pods
+        // We race to acquire a "cooldown lock". If locked, it means another pod just logged in.
+        // We spin-wait until we can acquire the "right to login".
+        const LOCK_KEY = 'os_login_cooldown';
+        const LOCK_TTL = 1100; // 1.1s cooldown
+        const MAX_WAIT_TIME = 15000;
+        const startTime = Date.now();
+
+        // Lazy-load sharedCache to avoid circular dependencies (logger etc) inside services
+        const { tryAcquireLock } = require('../utils/sharedCache');
+
+        while (true) {
+          // tryAcquireLock SETs the key with NX (only if not exists).
+          // If it returns true, WE successfully "reserved" this second.
+          // If false, someone else reserved it -> we wait.
+          const acquired = await tryAcquireLock(LOCK_KEY, LOCK_TTL);
+
+          if (acquired) {
+            break; // We got the lock! Proceed to login.
+          }
+
+          if (Date.now() - startTime > MAX_WAIT_TIME) {
+            // Fail open or throw? Throwing is safer to preserve rate limit.
+            throw new Error('Timed out waiting for OpenSubtitles login slot (distributed rate limit)');
+          }
+
+          // Wait a bit before retrying (randomized jitter to reduce contention)
+          await new Promise(r => setTimeout(r, 200 + Math.random() * 300));
+        }
+
+        // Acquire general API rate-limit token (respects the 5 req/s global limit too)
+        await acquireToken();
+
+        try {
+          // Perform the actual POST
+          const res = await this.client.post('/login', {
+            username: username,
+            password: password
+          }, requestConfig);
+
+          // Update timestamp on completion
+          _globalLastLoginTime = Date.now();
+          return res;
+        } catch (postErr) {
+          // Update timestamp even on failure (request was made)
+          _globalLastLoginTime = Date.now();
+          throw postErr;
+        }
+      };
+
+      // Append to global queue and wait for result
+      const myTaskPromise = _globalLoginQueue.then(() => performLoginTask());
+
+      // Update queue head to catch errors so the chain continues for the next person
+      _globalLoginQueue = myTaskPromise.catch(() => { });
+
+      // Await our specific result/error
+      response = await myTaskPromise;
 
       if (!response.data?.token) {
         throw new Error('No token received from authentication');
@@ -547,7 +620,17 @@ class OpenSubtitlesService {
         throw e;
       }
 
-      // For genuine auth failures and other client errors, log via auth handler and return null
+      // For genuine auth failures, throw so the caller knows it's an auth error (401)
+      if (parsed.statusCode === 401 || isAuthenticationFailure(error)) {
+        const authErr = new Error('OpenSubtitles authentication failed: invalid username/password');
+        authErr.statusCode = 401;
+        authErr.authError = true;
+        // Also log via handler for consistency
+        handleAuthError(error, 'OpenSubtitles');
+        throw authErr;
+      }
+
+      // For other unexpected errors, log via auth handler and return null
       return handleAuthError(error, 'OpenSubtitles');
     }
   }
@@ -566,7 +649,10 @@ class OpenSubtitlesService {
 
     if (hasCachedAuthFailure(this.credentialsCacheKey)) {
       log.warn(() => '[OpenSubtitles] Authentication blocked: cached invalid credentials detected');
-      return null;
+      const authErr = new Error('OpenSubtitles authentication failed: invalid username/password');
+      authErr.statusCode = 401;
+      authErr.authError = true;
+      throw authErr;
     }
 
     // Check if there's already a valid token in cache (local + Redis)
@@ -610,7 +696,10 @@ class OpenSubtitlesService {
         // For rate limits and other retryable errors, also return null to allow graceful degradation
         // instead of propagating errors that would become unhandled rejections
         if (hasCachedAuthFailure(this.credentialsCacheKey)) {
-          return null;
+          const authErr = new Error('OpenSubtitles authentication failed: invalid username/password');
+          authErr.statusCode = 401;
+          authErr.authError = true;
+          throw authErr;
         }
         // For rate limits (429/503), return null to degrade gracefully
         // The login will be retried on the next request after the rate limit window
@@ -797,12 +886,41 @@ class OpenSubtitlesService {
         response = await this.client.get('/subtitles', requestConfig);
       } catch (searchErr) {
         const status = searchErr?.response?.status;
-        if (status === 429) {
+        const errMsg = String(searchErr?.response?.data?.message || searchErr?.message || '').toLowerCase();
+
+        // RETRY LOGIC: Handle invalid token (401 Unauthorized or 500 "invalid")
+        // OpenSubtitles docs: "In response check if JWT is valid (look for HTTP response code 500 with message invalid) otherwise re-authenticate user."
+        if (status === 401 || (status === 500 && errMsg.includes('invalid'))) {
+          log.warn(() => `[OpenSubtitles] Token rejected (${status}), clearing cache and retrying search...`);
+
+          // 1. Clear invalid token from cache (local + Redis)
+          await clearCachedToken(this.credentialsCacheKey);
+          this.token = null;
+          this.tokenExpiry = null;
+          this.baseUrl = null;
+
+          // 2. Re-acquire rate limit token
+          await acquireToken();
+
+          // 3. Login again (implicitly handles token refresh)
+          // Note: login() will check cache first, but we just cleared it, so it will force a new login
+          await this.login(providerTimeout);
+
+          // 4. Retry search with new token
+          try {
+            response = await this.client.get('/subtitles', requestConfig);
+          } catch (retryErr) {
+            // If it fails again, throw the original error (or the new one) to be handled by standard error handler
+            throw retryErr;
+          }
+        }
+        else if (status === 429) {
           // Parse retry-after header or fall back to 1.5s
           const retryAfter = parseInt(searchErr.response?.headers?.['ratelimit-reset'] || searchErr.response?.headers?.['retry-after'], 10);
           const waitMs = (retryAfter && retryAfter > 0 && retryAfter <= 10) ? retryAfter * 1000 : 1500;
           log.warn(() => `[OpenSubtitles] Search 429 rate limited, retrying in ${waitMs}ms`);
           await new Promise(r => setTimeout(r, waitMs));
+
           await acquireToken();
           response = await this.client.get('/subtitles', requestConfig);
         } else {
@@ -1019,9 +1137,40 @@ class OpenSubtitlesService {
       // First, request download link
       // Use the primary client so Api-Key is sent (required by OpenSubtitles for /download)
       await acquireToken(); // Rate-limit: wait for token before hitting OpenSubtitles API
-      const downloadResponse = await this.client.post('/download', {
-        file_id: parseInt(baseFileId)
-      });
+
+      let downloadResponse;
+      try {
+        downloadResponse = await this.client.post('/download', {
+          file_id: parseInt(baseFileId)
+        });
+      } catch (downloadErr) {
+        const status = downloadErr?.response?.status;
+        const errMsg = String(downloadErr?.response?.data?.message || downloadErr?.message || '').toLowerCase();
+
+        // RETRY LOGIC: Handle invalid token (401 Unauthorized or 500 "invalid")
+        if (status === 401 || (status === 500 && errMsg.includes('invalid'))) {
+          log.warn(() => `[OpenSubtitles] Download token rejected (${status}), clearing cache and retrying...`);
+
+          // 1. Clear invalid token from cache (local + Redis)
+          await clearCachedToken(this.credentialsCacheKey);
+          this.token = null;
+          this.tokenExpiry = null;
+          this.baseUrl = null;
+
+          // 2. Re-acquire rate limit token
+          await acquireToken();
+
+          // 3. Login again (implicitly handles token refresh)
+          await this.login(timeout);
+
+          // 4. Retry download with new token
+          downloadResponse = await this.client.post('/download', {
+            file_id: parseInt(baseFileId)
+          });
+        } else {
+          throw downloadErr;
+        }
+      }
 
       if (!downloadResponse.data || !downloadResponse.data.link) {
         throw new Error('No download link received');

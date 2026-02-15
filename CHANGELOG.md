@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.56
+
+- **Strict global rate limiting for OpenSubtitles login:** Implemented a serialized request queue that enforces a strict 1 request/1.2s limit for the `/login` endpoint across the entire process. This prevents the "429 Too Many Requests" errors caused by burst login attempts (e.g., from retries or concurrent users), ensuring compliance with OpenSubtitles' 1 req/sec limit.
+
+- **Distributed rate limiting for multi-instance deployments:** Added a Redis-backed distributed lock mechanism (`tryAcquireLock`) that coordinates OpenSubtitles login attempts across multiple addon instances (pods). In clustered environments (like ElfHosted), all instances now respect the global 1 req/sec limit, preventing aggregate traffic from triggering rate limits.
+
+- **OpenSubtitles token validity re-check:** Added robust error handling for `500` "invalid token" and `401` unauthorized responses from OpenSubtitles. The addon now automatically invalidates the local/redis token cache and retries the request once with a fresh login, handling server-side token revocations gracefully without user intervention.
+
+## SubMaker v1.4.55
+
+**Hotfix for Sentry logs.**
+
 ## SubMaker v1.4.54
 
 **New Features:**

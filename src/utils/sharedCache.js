@@ -412,6 +412,54 @@ async function getRotationCounter(counterId) {
 }
 
 // ============================================================================
+// DISTRIBUTED LOCK (for rate limiting across pods)
+// ============================================================================
+
+/**
+ * Try to acquire a distributed lock (set key if not exists)
+ * Used for strict rate limiting (e.g., OpenSubtitles login 1 req/sec global)
+ * 
+ * @param {string} lockKey - Key to lock
+ * @param {number} ttlMs - Lock duration in milliseconds (default 5000)
+ * @returns {Promise<boolean>} True if lock acquired (key was SET), False if already locked
+ */
+async function tryAcquireLock(lockKey, ttlMs = 5000) {
+    try {
+        const adapter = await getStorageAdapter();
+        const StorageAdapter = getStorageAdapterClass();
+
+        // If Redis client is missing (using memory adapter or cache disabled),
+        // we can't lock across pods. Return TRUE to degrade gracefully to per-instance locking.
+        if (!adapter.client) {
+            return true;
+        }
+
+        const fullKey = adapter._getKey(`lock:${lockKey}`, StorageAdapter.CACHE_TYPES.SESSION);
+
+        // Redis SET resource_name value NX PX milliseconds
+        // NX = Only set if not exists
+        // PX = Expiry in milliseconds
+        // Returns 'OK' if key was set, null if key already existed
+        const result = await adapter.client.set(fullKey, '1', 'PX', ttlMs, 'NX');
+
+        const acquired = result === 'OK';
+
+        if (acquired) {
+            log.debug(() => `[SharedCache] Acquired lock ${lockKey} (TTL: ${ttlMs}ms)`);
+        } else {
+            // log.debug(() => `[SharedCache] Failed to acquire lock ${lockKey} (locked by another instance)`);
+        }
+
+        return acquired;
+    } catch (error) {
+        // If Redis errors, allow execution to proceed (fail open) rather than blocking all logins indefinitely
+        // This means rate limits might be exceeded during Redis outages, but better than total downtime.
+        return handleCaughtError(error, `[SharedCache] acquireLock failed for ${lockKey}`, log, { fallbackValue: true });
+    }
+}
+
+
+// ============================================================================
 // CACHE KEY PREFIXES
 // ============================================================================
 
@@ -478,6 +526,9 @@ module.exports = {
     CACHE_TTLS,
     KEY_HEALTH_ERROR_THRESHOLD,
     KEY_HEALTH_COOLDOWN_SECONDS,
+
+    // Distributed lock operations
+    tryAcquireLock,
 
     // For testing
     getStorageAdapter
