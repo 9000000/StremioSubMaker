@@ -317,6 +317,8 @@ function handleTranslationError(error, serviceName, options = {}) {
   // These are checked by performTranslation() and used to create user-friendly error messages
   if (!customError.translationErrorType && parsed.statusCode === 403) {
     customError.translationErrorType = '403';
+  } else if (!customError.translationErrorType && parsed.statusCode === 404) {
+    customError.translationErrorType = 'MODEL_NOT_FOUND';
   } else if (!customError.translationErrorType && parsed.statusCode === 429) {
     customError.translationErrorType = '429';
   } else if (!customError.translationErrorType && parsed.statusCode === 503) {

@@ -309,6 +309,63 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
     const cacheLabel = entry.cached === true
       ? `<span class="history-chip cached">${t('history.cachedLabel', {}, 'Cached')}</span>`
       : '';
+
+    // --- Translation diagnostics (Tier 1-3) ---
+    // Tier 1: Critical diagnostics
+    const secondaryChip = entry.usedSecondaryProvider === true
+      ? `<span class="history-chip warning" title="Primary provider failed, secondary was used">⚠ Secondary: ${escapeHtml(entry.secondaryProviderName || 'fallback')}</span>`
+      : '';
+    const rateLimitChip = (typeof entry.rateLimitErrors === 'number' && entry.rateLimitErrors > 0)
+      ? `<span class="history-chip danger" title="Rate limit (429) errors encountered">429 × ${entry.rateLimitErrors}</span>`
+      : '';
+    const keyRotationChip = (typeof entry.keyRotationRetries === 'number' && entry.keyRotationRetries > 0)
+      ? `<span class="history-tag info" title="API key rotations during translation">🔑 ${entry.keyRotationRetries} rotation${entry.keyRotationRetries > 1 ? 's' : ''}</span>`
+      : '';
+    const errorTypePills = Array.isArray(entry.errorTypes) && entry.errorTypes.length > 0
+      ? entry.errorTypes.map(et => `<span class="history-tag error-type">${escapeHtml(et)}</span>`).join('')
+      : '';
+
+    // Tier 2: Quality/performance
+    const mismatchChip = entry.mismatchDetected === true
+      ? `<span class="history-chip warning" title="AI returned wrong entry count, recovery attempted">⚠ Mismatch: ${entry.missingEntries || 0} missing, ${entry.recoveredEntries || 0} recovered</span>`
+      : '';
+    const entryCountTag = (typeof entry.entryCount === 'number' && entry.entryCount > 0)
+      ? `<span class="history-tag">${entry.entryCount} entries</span>`
+      : '';
+    const durationTag = (() => {
+      if (!entry.createdAt || !entry.completedAt) return '';
+      const ms = entry.completedAt - entry.createdAt;
+      if (ms <= 0) return '';
+      const secs = Math.floor(ms / 1000);
+      if (secs < 60) return `<span class="history-tag" title="Translation duration">⏱ ${secs}s</span>`;
+      const mins = Math.floor(secs / 60);
+      const remSecs = secs % 60;
+      return `<span class="history-tag" title="Translation duration">⏱ ${mins}m ${remSecs}s</span>`;
+    })();
+    const subtitleSourceTag = entry.subtitleSource
+      ? `<span class="history-tag" title="Subtitle source provider">📥 ${escapeHtml(entry.subtitleSource)}</span>`
+      : '';
+
+    // Tier 3: Configuration context
+    const tier3Tags = [];
+    if (entry.workflow && entry.workflow !== 'original') {
+      const wfLabels = { xml: 'XML', json: 'JSON', ai: 'AI Timestamps' };
+      tier3Tags.push(`<span class="history-tag">${wfLabels[entry.workflow] || escapeHtml(entry.workflow)}</span>`);
+    }
+    if (entry.jsonXmlFallback === true) {
+      tier3Tags.push('<span class="history-chip warning" title="JSON structured output failed, fell back to XML">JSON→XML</span>');
+    }
+    if (typeof entry.batchCount === 'number' && entry.batchCount > 0) {
+      tier3Tags.push(`<span class="history-tag">${entry.batchCount} batch${entry.batchCount > 1 ? 'es' : ''}</span>`);
+    }
+    if (entry.keyRotationMode && entry.keyRotationMode !== 'disabled') {
+      tier3Tags.push(`<span class="history-tag">🔑 ${escapeHtml(entry.keyRotationMode)}</span>`);
+    }
+    if (entry.batchContextEnabled === true) tier3Tags.push('<span class="history-tag">Context</span>');
+    if (entry.singleBatchMode === true) tier3Tags.push('<span class="history-tag">Single-batch</span>');
+    if (entry.parallelBatchesUsed === true) tier3Tags.push('<span class="history-tag">Parallel</span>');
+    if (entry.streaming === true) tier3Tags.push('<span class="history-tag">Streaming</span>');
+    const tier3Html = tier3Tags.length > 0 ? tier3Tags.join('') : '';
     const downloadQueryParts = [];
     if (entry.videoId) downloadQueryParts.push(`videoId=${encodeURIComponent(entry.videoId)}`);
     if (entry.filename) downloadQueryParts.push(`filename=${encodeURIComponent(entry.filename)}`);
@@ -364,9 +421,18 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
           <span class="history-tag">${providerLabel}</span>
           <span class="history-tag">${modelLabel}</span>
           ${cacheLabel}
+          ${secondaryChip}
+          ${rateLimitChip}
+          ${keyRotationChip}
+          ${errorTypePills}
+          ${mismatchChip}
+          ${entryCountTag}
+          ${durationTag}
+          ${subtitleSourceTag}
           ${retranslateBtn}
           ${downloadLink}
         </div>
+        ${tier3Html ? `<div class="history-config">${tier3Html}</div>` : ''}
         ${entry.error ? `<div class="history-error">${escapeHtml(entry.error)}</div>` : ''}
       </div>
     `;
@@ -658,6 +724,7 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
     .history-details {
       display: flex;
       flex-wrap: wrap;
+      align-items: center;
       gap: 0.5rem;
       margin-top: 0.5rem;
       color: var(--text-secondary);
@@ -706,6 +773,26 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
       background: var(--success);
     }
 
+    .history-chip.warning {
+      background: var(--warning);
+      color: #0b2336;
+    }
+
+    .history-chip.danger {
+      background: var(--error);
+    }
+
+    .history-tag.info {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .history-tag.error-type {
+      border-color: var(--error);
+      color: var(--error);
+      font-weight: 600;
+    }
+
     .history-retranslate {
       padding: 0.2rem 0.6rem;
       border-radius: 999px;
@@ -746,6 +833,25 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
       padding: 0.5rem;
       border-radius: 6px;
     }
+
+    .history-config {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem;
+      margin-top: 0.35rem;
+      font-size: 0.75rem;
+      opacity: 0.7;
+    }
+    .history-config .history-tag {
+      font-size: 0.75rem;
+      padding: 0.1rem 0.4rem;
+    }
+    .history-config .history-chip {
+      font-size: 0.75rem;
+      padding: 0.1rem 0.4rem;
+      font-weight: 500;
+    }
     
     .empty-state {
       text-align: center;
@@ -777,6 +883,8 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
       .history-header { flex-direction: column; align-items: flex-start; }
       .history-title { white-space: normal; }
       .history-meta { flex-wrap: wrap; }
+      .history-details { gap: 0.35rem; font-size: 0.8rem; }
+      .history-tag, .history-chip { font-size: 0.78rem; }
     }
 
     @media (max-width: 768px) {

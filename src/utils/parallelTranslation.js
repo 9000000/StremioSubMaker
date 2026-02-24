@@ -30,6 +30,8 @@ async function executeParallelTranslation(engine, entries, targetLanguage, custo
 
     // Storage for results keyed by batch index (0-based)
     const batchResults = new Array(batches.length);
+    // Stats: set batch count on engine for history tracking
+    if (engine.translationStats) engine.translationStats.batchCount = batches.length;
     const translatedEntries = [];
     let completedSRT = '';
     let completedEntryCount = 0;
@@ -133,6 +135,24 @@ async function executeParallelTranslation(engine, entries, targetLanguage, custo
             engine
         );
 
+        // Give each worker its own translationStats to avoid concurrent mutation
+        // of the shared reference. Start with zeroed counters so merge-back is additive.
+        if (engine.translationStats) {
+            workerEngine.translationStats = {
+                entryCount: 0,
+                batchCount: 0,
+                mismatchDetected: false,
+                missingEntries: 0,
+                recoveredEntries: 0,
+                usedSecondaryProvider: false,
+                secondaryProviderName: null,
+                rateLimitErrors: 0,
+                keyRotationRetries: 0,
+                errorTypes: [],
+                jsonXmlFallback: false,
+            };
+        }
+
         await workerEngine.maybeRotateKeyForBatch(batchIdx);
 
         const batch = batches[batchIdx];
@@ -142,15 +162,44 @@ async function executeParallelTranslation(engine, entries, targetLanguage, custo
             ? workerEngine.prepareContextForBatch(batch, entries, translatedEntries, batchIdx)
             : null;
 
-        return workerEngine.translateBatch(
-            batch,
-            targetLanguage,
-            customPrompt,
-            batchIdx,
-            batches.length,
-            context,
-            { streaming: false }
-        );
+        let result;
+        try {
+            result = await workerEngine.translateBatch(
+                batch,
+                targetLanguage,
+                customPrompt,
+                batchIdx,
+                batches.length,
+                context,
+                { streaming: false }
+            );
+        } finally {
+            // Merge worker stats back into the original engine's stats.
+            // Uses finally so stats from failed batches (rate limits, error types)
+            // are preserved — these are the most valuable diagnostics.
+            if (workerEngine.translationStats && engine.translationStats) {
+                const ws = workerEngine.translationStats;
+                const es = engine.translationStats;
+                // Accumulate numeric counters
+                es.rateLimitErrors += (ws.rateLimitErrors || 0);
+                es.keyRotationRetries += (ws.keyRotationRetries || 0);
+                es.missingEntries += (ws.missingEntries || 0);
+                es.recoveredEntries += (ws.recoveredEntries || 0);
+                // Merge boolean flags
+                if (ws.usedSecondaryProvider) es.usedSecondaryProvider = true;
+                if (ws.mismatchDetected) es.mismatchDetected = true;
+                if (ws.jsonXmlFallback) es.jsonXmlFallback = true;
+                if (ws.secondaryProviderName && !es.secondaryProviderName) es.secondaryProviderName = ws.secondaryProviderName;
+                // Merge error types (deduplicated)
+                if (Array.isArray(ws.errorTypes)) {
+                    for (const et of ws.errorTypes) {
+                        if (!es.errorTypes.includes(et)) es.errorTypes.push(et);
+                    }
+                }
+            }
+        }
+
+        return result;
     };
 
     log.info(() => `[ParallelTranslation] Launching ${batches.length} batches with concurrency ${CONCURRENCY_LIMIT}.`);

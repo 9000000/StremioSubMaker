@@ -269,6 +269,31 @@ class TranslationEngine {
 
     const rotationLabel = this.perBatchRotationEnabled ? 'per-batch' : (this.retryRotationEnabled ? 'per-request' : '');
     log.debug(() => `[TranslationEngine] Initialized with model: ${model || 'unknown'}, batch size: ${this.batchSize}, batch context: ${this.enableBatchContext ? 'enabled' : 'disabled'}, workflow: ${this.translationWorkflow}, mode: ${this.singleBatchMode ? 'single-batch' : 'batched'}, mismatchRetries: ${this.mismatchRetries}${rotationLabel ? `, key-rotation: ${rotationLabel}, keys: ${this.keyRotationConfig.keys.length}` : ''}${this.isNativeBatchProvider ? ', native-batch: true' : ''}`);
+
+    // Translation diagnostics — accumulated during translation, read by caller after completion.
+    // These stats are surfaced on the Translation History cards in Sub Toolbox.
+    this.translationStats = {
+      // Tier 1: Critical diagnostics
+      usedSecondaryProvider: false,
+      secondaryProviderName: '',
+      rateLimitErrors: 0,
+      keyRotationRetries: 0,
+      errorTypes: [],
+      // Tier 2: Quality/performance
+      mismatchDetected: false,
+      missingEntries: 0,
+      recoveredEntries: 0,
+      entryCount: 0,
+      batchCount: 0,
+      // Tier 3: Configuration context
+      jsonXmlFallback: false,
+      workflow: this.translationWorkflow,
+      keyRotationMode: this.keyRotationConfig?.enabled ? (this.keyRotationConfig.mode || 'per-batch') : 'disabled',
+      batchContextEnabled: this.enableBatchContext,
+      singleBatchMode: this.singleBatchMode,
+      parallelBatchesUsed: false,
+      streaming: this.enableStreaming,
+    };
   }
 
   /**
@@ -639,12 +664,15 @@ class TranslationEngine {
     if (!entries || entries.length === 0) {
       throw new Error('Invalid SRT content: no valid entries found');
     }
+    // Stats: entry count
+    this.translationStats.entryCount = entries.length;
 
     // Single-batch mode: translate the whole file (with limited auto-splitting)
     if (this.singleBatchMode) {
       if (this.advancedSettings?.parallelBatchesEnabled === true) {
         log.warn(() => '[TranslationEngine] Parallel Batches is enabled but Single Batch Mode takes priority — parallel mode will NOT run. Disable Single Batch Mode to use Parallel Batches.');
       }
+      this.translationStats.batchCount = 1;
       return this.translateSubtitleSingleBatch(entries, targetLanguage, customPrompt, onProgress);
     }
 
@@ -652,6 +680,7 @@ class TranslationEngine {
 
     // Parallel Batches Mode (Dev Mode specific, excluding ElfHosted)
     if (this.advancedSettings?.parallelBatchesEnabled === true && process.env.ELFHOSTED !== 'true') {
+      this.translationStats.parallelBatchesUsed = true;
       translatedEntries = await executeParallelTranslation(this, entries, targetLanguage, customPrompt, onProgress);
     } else {
 
@@ -662,9 +691,12 @@ class TranslationEngine {
 
       // Step 2: Create batches
       const batches = this.createBatches(entries, this.batchSize);
+      this.translationStats.batchCount = batches.length;
 
       // Step 3: Translate each batch with smart progress tracking
-      const translatedEntries = [];
+      // NOTE: Use the outer `translatedEntries` variable (not a new const) so results are visible
+      // after the else block closes. Previously `const translatedEntries = []` here shadowed
+      // the outer `let translatedEntries = []` (line 679), causing 0-entry results and empty cached subtitles.
       // Streaming optimization: keep a pre-built SRT string for completed batches
       // so we only rebuild the current streaming batch on each progress callback.
       let completedSRT = '';
@@ -794,6 +826,7 @@ class TranslationEngine {
           if (error.type) wrappedError.type = error.type;
           if (error.isRetryable !== undefined) wrappedError.isRetryable = error.isRetryable;
           if (error.originalError) wrappedError.originalError = error.originalError;
+          if (error.serviceName) wrappedError.serviceName = error.serviceName;
           // Preserve the already-logged flag
           if (error._alreadyLogged) wrappedError._alreadyLogged = true;
           throw wrappedError;
@@ -862,6 +895,8 @@ class TranslationEngine {
     }
 
     const chunks = chunkCount > 1 ? this.splitIntoChunks(entries, chunkCount) : [entries];
+    // Stats: update actual chunk count (may differ from the initial batchCount=1 set by caller)
+    this.translationStats.batchCount = chunks.length;
     const translatedEntries = [];
     // Track completed SRT from previous chunks so streaming partials include all progress
     let completedChunksSRT = '';
@@ -1077,6 +1112,9 @@ class TranslationEngine {
         } else {
           log.info(() => `[TranslationEngine] Fallback provider ${this.fallbackProviderName || 'secondary'} succeeded for batch ${batchIndex + 1}`);
         }
+        // Stats: secondary provider was used
+        this.translationStats.usedSecondaryProvider = true;
+        this.translationStats.secondaryProviderName = this.fallbackProviderName || 'secondary';
         return { handled: true, text: translated };
       } catch (fallbackError) {
         const combined = new Error(`Primary (${this.providerName}) failed: ${primaryError.message || primaryError}\nSecondary (${this.fallbackProviderName || 'fallback'}) failed: ${fallbackError.message || fallbackError}`);
@@ -1199,6 +1237,7 @@ class TranslationEngine {
       // retry this batch in XML mode for robust ID-based recovery.
       if (this.translationWorkflow === 'json' && this._isStructuredOutputCapabilityError(error)) {
         jsonXmlFallbackAttempted = true;
+        this.translationStats.jsonXmlFallback = true;
         const xmlFallback = await this._attemptJsonWorkflowFallbackToXml(
           batch,
           targetLanguage,
@@ -1216,11 +1255,15 @@ class TranslationEngine {
 
       // 429/503: rotate through remaining keys and retry before other error-specific retries
       if (!translatedEntries && this._isRetryableHttpError(error) && this.retryRotationEnabled && maxHttpRotationRetries > 0) {
+        // Stats: record initial rate-limit / retryable error
+        this.translationStats.rateLimitErrors++;
+        if (!this.translationStats.errorTypes.includes('429')) this.translationStats.errorTypes.push('429');
         let retrySucceeded = false;
         let shouldStopHttpRotation = false;
 
         while (!retrySucceeded && !shouldStopHttpRotation && httpRetryAttempts < maxHttpRotationRetries) {
           httpRetryAttempts++;
+          this.translationStats.keyRotationRetries++;
           await this._rotateToNextKey(`429/503 retry ${httpRetryAttempts}/${maxHttpRotationRetries} for batch ${batchIndex + 1}`);
           log.warn(() => `[TranslationEngine] 429/503 error detected, retrying batch ${batchIndex + 1} with rotated key (${httpRetryAttempts}/${maxHttpRotationRetries})`);
 
@@ -1229,6 +1272,8 @@ class TranslationEngine {
             retrySucceeded = true;
             log.info(() => `[TranslationEngine] 429/503 key-rotation retry succeeded for batch ${batchIndex + 1} on attempt ${httpRetryAttempts}/${maxHttpRotationRetries}`);
           } catch (retryError) {
+            // Stats: count each failed retry as an additional rate-limit error
+            this.translationStats.rateLimitErrors++;
             if (this.retryRotationEnabled && this.gemini?.apiKey) {
               this._recordKeyError(this.gemini.apiKey);
             }
@@ -1252,6 +1297,9 @@ class TranslationEngine {
       // If MAX_TOKENS error and haven't retried yet, retry once
       else if (!translatedEntries && error.message && (error.message.includes('MAX_TOKENS') || error.message.includes('exceeded maximum token limit')) && !maxTokensRetryAttempted) {
         maxTokensRetryAttempted = true;
+        // Stats: MAX_TOKENS error
+        if (!this.translationStats.errorTypes.includes('MAX_TOKENS')) this.translationStats.errorTypes.push('MAX_TOKENS');
+        this.translationStats.keyRotationRetries++;
         await this._rotateToNextKey(`MAX_TOKENS retry for batch ${batchIndex + 1}`);
         log.warn(() => `[TranslationEngine] MAX_TOKENS error detected, retrying batch ${batchIndex + 1} with next key`);
 
@@ -1275,6 +1323,9 @@ class TranslationEngine {
       // If PROHIBITED_CONTENT error and haven't retried yet, retry with modified prompt
       else if (!translatedEntries && error.message && error.message.includes('PROHIBITED_CONTENT') && !prohibitedRetryAttempted) {
         prohibitedRetryAttempted = true;
+        // Stats: PROHIBITED_CONTENT error
+        if (!this.translationStats.errorTypes.includes('PROHIBITED_CONTENT')) this.translationStats.errorTypes.push('PROHIBITED_CONTENT');
+        this.translationStats.keyRotationRetries++;
         await this._rotateToNextKey(`PROHIBITED_CONTENT retry for batch ${batchIndex + 1}`);
         log.warn(() => `[TranslationEngine] PROHIBITED_CONTENT detected, retrying batch with next key and modified prompt`);
 
@@ -1298,6 +1349,11 @@ class TranslationEngine {
           }
         }
       } else if (!translatedEntries) {
+        // Stats: record any classified error type not already tracked (MODEL_NOT_FOUND, 403, 503, etc.)
+        const errType = error.translationErrorType;
+        if (errType && !this.translationStats.errorTypes.includes(errType)) {
+          this.translationStats.errorTypes.push(errType);
+        }
         // Not a retryable error or already retried, throw as-is
         // If streaming returned nothing, fall back to non-streaming once
         const noStreamContent = error.message && (
@@ -1357,9 +1413,12 @@ class TranslationEngine {
     // Handle entry count mismatches with two-pass recovery
     if (translatedEntries.length !== batch.length) {
       log.warn(() => `[TranslationEngine] Entry count mismatch: expected ${batch.length}, got ${translatedEntries.length}`);
+      // Stats: mismatch detected
+      this.translationStats.mismatchDetected = true;
 
       // Pass 1: Align what we can by index, identify missing entries
       const { aligned, missingIndices } = this.alignTranslatedEntries(translatedEntries, batch);
+      this.translationStats.missingEntries += missingIndices.length;
 
       if (missingIndices.length > 0 && missingIndices.length <= Math.ceil(batch.length * 0.3)) {
         // Pass 2: Re-translate only the missing entries individually
@@ -1409,8 +1468,10 @@ class TranslationEngine {
           const stillMissing = missingIndices.filter(i => !aligned[i] || aligned[i].text.startsWith('[⚠]'));
           if (stillMissing.length > 0) {
             log.warn(() => `[TranslationEngine] Two-pass recovery: ${stillMissing.length} entries still missing after targeted retry`);
+            this.translationStats.recoveredEntries += (missingIndices.length - stillMissing.length);
           } else {
             log.info(() => `[TranslationEngine] Two-pass recovery succeeded: all ${missingIndices.length} missing entries recovered`);
+            this.translationStats.recoveredEntries += missingIndices.length;
           }
         } catch (retryErr) {
           if (this.retryRotationEnabled && this.gemini?.apiKey) {
@@ -1433,6 +1494,8 @@ class TranslationEngine {
             if (retryEntries.length === batch.length) {
               translatedEntries = retryEntries;
               retrySuccess = true;
+              // Stats: full batch recovered all missing entries
+              this.translationStats.recoveredEntries += missingIndices.length;
               break;
             }
           } catch (retryErr) {
@@ -1464,6 +1527,7 @@ class TranslationEngine {
       ).length;
       if (markedCount > 0) {
         jsonXmlFallbackAttempted = true;
+        this.translationStats.jsonXmlFallback = true;
         const xmlFallback = await this._attemptJsonWorkflowFallbackToXml(
           batch,
           targetLanguage,
@@ -1661,7 +1725,7 @@ CRITICAL RULES:
 7. Preserve any existing formatting tags${context ? '\n8. Use the provided context to ensure consistency' : ''}
 
 Do NOT add acknowledgements, explanations, notes, or commentary.
-Do not skip, merge, or split entries.
+Do not skip, merge, or split entries. NEVER output markdown.
 Do not include any timestamps/timecodes.
 
 YOUR RESPONSE MUST:
@@ -2115,7 +2179,7 @@ CRITICAL RULES:
 7. Preserve any existing formatting tags${context ? '\n8. Use the provided context to ensure consistency' : ''}
 
 Do NOT add acknowledgements, explanations, notes, or commentary.
-Do not skip, merge, or split entries.
+Do not skip, merge, or split entries. NEVER output markdown.
 Do not include any timestamps/timecodes.
 ${context ? 'Do not translate context entries - only translate numbered entries.' : ''}
 

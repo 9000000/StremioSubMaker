@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.61
+
+**Improvements:**
+
+- **Error subtitles are now provider-agnostic:** All user-facing translation error subtitles now dynamically display the actual provider name (Gemini, DeepL, Google Translate, OpenAI, etc.) instead of hardcoded "Gemini" references. A `displayProvider` helper formats provider names for user display (e.g., `deepl` → `DeepL`, `googletranslate` → `Google Translate`). The `providerName` parameter is passed through the error cache and read back when serving cached errors.
+
+- **Error subtitles consolidated to single 0→4h entry:** All translation error subtitles now use a single SRT entry spanning `00:00:00,000 → 04:00:00,000` instead of the previous 3-entry format. This ensures the error message is visible regardless of where the user seeks in the video timeline.
+
+- **`MODEL_NOT_FOUND` error type for 404 errors:** Added a dedicated `MODEL_NOT_FOUND` error classification for HTTP 404 errors from translation APIs. When a configured AI model is renamed or deprecated, users now see "Translation Failed: Model Not Found (404)" with actionable guidance to check the model setting, instead of a generic "Resource not found" message.
+
+- **`SAFETY` and `PROHIBITED_CONTENT` error handling consolidated:** Both error types now produce the same user-facing "Content Filtered" subtitle. Previously they had separate branches with identical output.
+
+- **Translation History cards now show rich diagnostics:** History cards now display up to 16 new diagnostic fields organized into visually distinct tiers:
+  - **Tier 1 (Critical):** ⚠ orange "Secondary: {name}" chip when fallback provider was used, red "429 × N" chip for rate-limit errors, 🔑 blue key rotation tag, red-bordered error type pills (429, MAX_TOKENS, PROHIBITED_CONTENT).
+  - **Tier 2 (Quality/performance):** ⚠ orange mismatch chip with missing/recovered counts, "{N} entries" tag, ⏱ duration tag (computed from createdAt → completedAt), 📥 subtitle source tag (SubDL, SubSource, OpenSubtitles V3, Community Subtitles, Wyzie Subs, Subs.ro, Embedded, OpenSubtitles).
+  - **Tier 3 (Config context):** Workflow tag (XML/JSON/AI), JSON→XML fallback warning chip, batch count, key rotation mode, Context/Single-batch/Parallel/Streaming tags. Rendered in a dedicated subdued row (smaller font, 70% opacity) to reduce visual clutter.
+  - All fields are backward-compatible — older history entries without these fields display normally.
+
+- **Translation diagnostics collected on the engine:** `TranslationEngine` now initializes a `translationStats` object in the constructor and accumulates data at all key instrumentation points: `translateBatch()` (secondary provider fallback, 429/503 retries, key rotation, error type classification, mismatch detection with two-pass and full-batch recovery tracking, JSON→XML fallback), `translateSubtitle()` (entry count, batch count, parallel batches flag), and `translateSubtitleSingleBatch()` (actual chunk count after auto-splitting).
+
+- **Diagnostics bridged from engine to history:** `performTranslation()` in `subtitles.js` captures `translationEngine.translationStats` after translation completes and returns it. The `.then()` handler spreads all stats into `updateHistory('completed', { ...stats })`. On failure, the catch block attaches stats to the error object via `error.translationStats`, and the `.catch()` handler extracts and saves them — ensuring failed translations retain diagnostic data (e.g., "429 × 5" shows why it failed).
+
+- **Subtitle source derived from sourceFileId:** History entries now record which subtitle provider was used based on the `sourceFileId` prefix mapping: `subdl_` → SubDL, `subsource_` → SubSource, `v3_` → OpenSubtitles V3, `scs_` → Community Subtitles, `wyzie_` → Wyzie Subs, `subsro_` → Subs.ro, `xembed_` → Embedded, default → OpenSubtitles.
+
+- **Parallel batch count tracked:** `parallelTranslation.js` now writes `engine.translationStats.batchCount` after computing batches, so parallel translation history cards show the correct batch count instead of 0.
+
+- **History card UI responsive for mobile:** Added `align-items: center` to `.history-details` flex container. At ≤920px, chip/tag font sizes reduce to 0.78rem and gap tightens to 0.35rem. Tier 3 config row uses compact 0.75rem tags.
+
+**Bug Fixes:**
+
+- **Fixed critical variable shadowing bug causing all standard batched translations to return empty subtitles (introduced in v1.4.60):** The v1.4.60 refactor that added Parallel Batches wrapped the standard batched path in an `else` block and accidentally re-declared `translatedEntries` with `const` inside that block, shadowing the outer `let translatedEntries = []`. The 454-entry translation loop accumulated results into the inner block-scoped constant — which went out of scope at the closing brace — while the outer variable remained permanently empty. `toSRT(translatedEntries)` at the end of `translateSubtitle()` always received an empty array, producing a 1-character empty SRT that was cached and served to Stremio, causing "failed to load external subtitles." Streaming partial saves during translation worked correctly (they used the inner variable), so progress was visible in the UI but the final assembled result was always broken. Single-batch mode and parallel batches mode were unaffected (different code paths). Fixed by removing the inner `const` declaration so the batch loop writes into the outer `let` as originally intended.
+
+- **Fixed `serviceName` lost during `TranslationEngine` error wrapping:** When `translationEngine.js` wrapped batch errors, it copied `translationErrorType`, `statusCode`, `type`, `isRetryable`, and `originalError` from the original error but not `serviceName`. This caused `errorProvider` to always be `null` in the error cache, so error subtitles fell back to the generic "API" label instead of showing the actual provider name (e.g., "Gemini", "DeepL").
+
+- **Fixed full-batch mismatch retry not tracking recovered entries:** When the full-batch retry path (>30% missing entries) successfully recovered all entries, `translationStats.recoveredEntries` was not incremented. Only the targeted two-pass recovery path tracked recoveries. Now both paths correctly report recovery counts.
+
+- **Fixed `rateLimitErrors` counter only counting first 429/503 detection:** The `rateLimitErrors` stat was incremented once when a 429/503 was first detected, but not on each subsequent failed retry within the key-rotation loop. The history card's "429 × N" chip now accurately reflects total rate-limit failures including retries.
+
+- **Fixed unclassified error types missing from history pills:** Error types like `MODEL_NOT_FOUND` (404), `403`, and `503` were classified by `apiErrorHandler.js` but never pushed to `translationStats.errorTypes` because `translateBatch()` only tracked `429`, `MAX_TOKENS`, and `PROHIBITED_CONTENT`. Added a catch-all in the final error handler that records any `translationErrorType` to the stats array.
+
+- **Fixed `displayProvider` incorrect capitalization for multi-word providers:** The generic first-letter-only capitalizer produced `Openai`, `Deepseek`, `Openrouter`, `Xai` instead of `OpenAI`, `DeepSeek`, `OpenRouter`, `xAI`. Replaced with an explicit lookup table covering all known providers, with the generic capitalizer as fallback for unknown ones.
+
+- **Fixed parallel worker engines sharing `translationStats` by reference:** Parallel batch workers created via `Object.assign()` shared the original engine's `translationStats` object reference. Concurrent batches mutating shared counters (e.g., `rateLimitErrors++`) was a race condition. Workers now get fresh zeroed stats objects and merge results back to the parent engine's stats after each batch completes. The merge uses `try/finally` so diagnostics from failed batches (rate limits, error types) are always preserved — critical since the most useful diagnostics come from batches that fail.
+
+**Cleanup:**
+
+- **Removed ~50 lines of redundant error classification in `performTranslation`:** The catch block previously had 4 layers of error type detection: (1) `translationErrorType`, (2) `statusCode` checks, (3) `error.response.status` checks, (4) message-string fallbacks. All layers produced identical results since `handleTranslationError()` in `apiErrorHandler.js` already sets `translationErrorType` before errors reach `performTranslation`. Replaced with a single line: `const errorType = error.translationErrorType || 'other'`.
+
 ## SubMaker v1.4.60
 
 **New Features:**

@@ -723,19 +723,31 @@ ${t('subtitle.concurrencyLimitBody', {}, 'Please wait for one to finish, then tr
 function createTranslationErrorSubtitle(errorType, errorMessage, uiLanguage = 'en', providerName = null) {
   const t = getTranslator(uiLanguage);
   const provider = String(providerName || '').trim().toLowerCase();
-  // Determine error title based on type
-  let errorTitle = t('subtitle.translationFailed', {}, 'Translation Failed');
-  let errorExplanation = errorMessage || t('subtitle.translationUnexpected', {}, 'An unexpected error occurred during translation.');
-  let retryAdvice = t('subtitle.translationRetry', {}, 'An unexpected error occurred.\nClick this subtitle again to retry translation.');
+  // Display-friendly provider name for user-facing messages
+  const displayProvider = (() => {
+    if (!provider) return 'API';
+    const providerNames = {
+      deepl: 'DeepL',
+      googletranslate: 'Google Translate',
+      openai: 'OpenAI',
+      deepseek: 'DeepSeek',
+      openrouter: 'OpenRouter',
+      xai: 'xAI',
+      cloudflare: 'Cloudflare AI',
+    };
+    return providerNames[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
+  })();
 
   if (errorType === '403') {
-    errorTitle = t('subtitle.translationAuth', {}, 'Translation Failed: Authentication Error (403)');
-    errorExplanation = t('subtitle.translationAuthBody', {}, 'Your Gemini API key is invalid or rejected.\nPlease check that your API key is correct.');
-    retryAdvice = t('subtitle.translationAuthRetry', {}, 'Update your Gemini API key in the addon configuration,\nthen reinstall the addon and try again.');
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationAuth', { provider: displayProvider }, `Translation Failed: Authentication Error (403)`)}
+${t('subtitle.translationAuthBody', { provider: displayProvider }, `Your ${displayProvider} API key is invalid or rejected.\nPlease check your API key in the addon config.`)}`, null, uiLanguage);
   } else if (errorType === '503') {
-    errorTitle = t('subtitle.translationOverload', {}, 'Translation Failed: Service Overloaded (503)');
-    errorExplanation = t('subtitle.translationOverloadBody', {}, 'The Gemini API is temporarily overloaded with requests.\nThis is usually temporary and resolves within minutes.');
-    retryAdvice = t('subtitle.translationOverloadRetry', {}, '(503) Service Unavailable - Wait a moment for Gemini to recover,\nthen click this subtitle again to retry translation.');
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationOverload', { provider: displayProvider }, `Translation Failed: ${displayProvider} Overloaded (503)`)}
+${t('subtitle.translationOverloadBody', { provider: displayProvider }, `${displayProvider} is temporarily overloaded. This usually resolves within minutes.\nClick this subtitle again to retry.`)}`, null, uiLanguage);
   } else if (errorType === '429') {
     if (provider === 'gemini') {
       return ensureInformationalSubtitleSize(`1
@@ -749,25 +761,30 @@ ${t('subtitle.translationRateLimitGeminiBody', {}, 'Check API Key limits or retr
 ${t('subtitle.translationRateLimitDeeplTitle', {}, 'Translation Failed: Usage Limit Reached (DeepL)')}
 ${t('subtitle.translationRateLimitDeeplBody', {}, 'DeepL API rate/quota limit reached. Please wait a few minutes and try again.')}`, null, uiLanguage);
     }
-    errorTitle = t('subtitle.translationRateLimit', {}, 'Translation Failed: Usage Limit Reached (429)');
-    errorExplanation = t('subtitle.translationRateLimitBody', {}, 'Your Gemini API usage limit has been exceeded.\nThis may be a rate limit or quota limit.');
-    retryAdvice = t('subtitle.translationRateLimitRetry', {}, '(429) API Rate/Quota Limit - Gemini API is limiting your API key requests.\nWait a few minutes, then click again to retry.');
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationRateLimit', { provider: displayProvider }, `Translation Failed: ${displayProvider} Rate Limit (429)`)}
+${t('subtitle.translationRateLimitBody', { provider: displayProvider }, `${displayProvider} rate or quota limit reached.\nWait a few minutes, then click this subtitle again to retry.`)}`, null, uiLanguage);
   } else if (errorType === 'MAX_TOKENS') {
-    errorTitle = t('subtitle.translationTooLarge', {}, 'Translation Failed: Content Too Large');
-    errorExplanation = t('subtitle.translationTooLargeBody', {}, 'The subtitle file is too large for a single translation.\nThe system attempted chunking but still exceeded limits.');
-    retryAdvice = t('subtitle.translationTooLargeRetry', {}, '(MAX_TOKENS) Try translating a different subtitle file.\nAnother model may help. Please let us know if this persists.');
-  } else if (errorType === 'SAFETY') {
-    errorTitle = t('subtitle.translationFiltered', {}, 'Translation Failed: Content Filtered');
-    errorExplanation = t('subtitle.translationFilteredBody', {}, 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.');
-    retryAdvice = t('subtitle.translationFilteredRetry', {}, '(PROHIBITED_CONTENT) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.');
-  } else if (errorType === 'PROHIBITED_CONTENT') {
-    errorTitle = t('subtitle.translationFiltered', {}, 'Translation Failed: Content Filtered');
-    errorExplanation = t('subtitle.translationFilteredBody', {}, 'The subtitle content was blocked by safety filters.\nThis is rare and usually a false positive.');
-    retryAdvice = t('subtitle.translationFilteredRetry', {}, '(PROHIBITED_CONTENT) Subtitle content was filtered by Gemini.\nPlease retry, or try a different subtitle from the list.');
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationTooLarge', {}, 'Translation Failed: Content Too Large')}
+${t('subtitle.translationTooLargeBody', {}, 'The subtitle file is too large for translation.\nTry a different subtitle or model.')}`, null, uiLanguage);
+  } else if (errorType === 'SAFETY' || errorType === 'PROHIBITED_CONTENT') {
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationFiltered', { provider: displayProvider }, 'Translation Failed: Content Filtered')}
+${t('subtitle.translationFilteredBody', { provider: displayProvider }, `Subtitle content was filtered by ${displayProvider}.\nThis is usually a false positive. Please retry or try a different subtitle.`)}`, null, uiLanguage);
   } else if (errorType === 'INVALID_SOURCE') {
-    errorTitle = t('subtitle.translationInvalidSource', {}, 'Translation Failed: Invalid Source File');
-    errorExplanation = t('subtitle.translationInvalidSourceBody', {}, 'The source subtitle file appears corrupted or invalid.\nIt may be too small or have formatting issues.');
-    retryAdvice = t('subtitle.translationInvalidSourceRetry', {}, '(CORRUPT_SOURCE) Please retry or try a different subtitle from the list.');
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationInvalidSource', {}, 'Translation Failed: Invalid Source File')}
+${t('subtitle.translationInvalidSourceRetry', {}, 'The source subtitle file appears corrupted or invalid. Please retry or try a different subtitle from the list.')}`, null, uiLanguage);
+  } else if (errorType === 'MODEL_NOT_FOUND') {
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationModelNotFound', {}, 'Translation Failed: Model Not Found (404)')}
+${t('subtitle.translationModelNotFoundBody', {}, 'The configured AI model was not found. It may have been renamed or deprecated.\nPlease check your model setting in the addon config.')}`, null, uiLanguage);
   } else if (errorType === 'MULTI_PROVIDER') {
     // Combined provider failure should be surfaced as a single-entry error for clarity
     const explanation = errorMessage || t('subtitle.translationMultiProvider', {}, 'Both the main and secondary providers failed to translate this batch.');
@@ -775,23 +792,19 @@ ${t('subtitle.translationRateLimitDeeplBody', {}, 'DeepL API rate/quota limit re
 00:00:00,000 --> 04:00:00,000
 ${explanation}`, null, uiLanguage);
   } else if (errorType === 'other') {
-    // Generic error - still provide helpful message with actual error
-    errorTitle = t('subtitle.translationFailed', {}, 'Translation Failed: Unexpected Error');
-    errorExplanation = errorMessage ? `Error: ${errorMessage}` : t('subtitle.translationUnexpected', {}, 'An unexpected error occurred during translation.');
-    retryAdvice = t('subtitle.translationRetry', {}, 'Unexpected error.\nClick this subtitle again to retry.\nIf the problem persists, try a different subtitle, reinstall the addon or contact us.');
+    const detail = errorMessage ? `Error: ${errorMessage}` : t('subtitle.translationUnexpected', {}, 'An unexpected error occurred during translation.');
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationFailed', {}, 'Translation Failed')}
+${detail}\n${t('subtitle.translationRetry', {}, 'Click this subtitle again to retry. If the problem persists, try a different subtitle or reinstall the addon.')}`, null, uiLanguage);
   }
 
+  // Fallback for any unhandled errorType (should not normally be reached)
+  const detail = errorMessage || 'An unexpected error occurred during translation.';
   return ensureInformationalSubtitleSize(`1
-00:00:00,000 --> 00:00:03,000
-${errorTitle}
-
-2
-00:00:03,001 --> 00:00:06,000
-${errorExplanation}
-
-3
-00:00:06,001 --> 04:00:00,000
-${retryAdvice}`, null, uiLanguage);
+00:00:00,000 --> 04:00:00,000
+Translation Failed
+${detail}\nClick this subtitle again to retry.`, null, uiLanguage);
 }
 
 /**
@@ -4031,7 +4044,15 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
         targetLanguage: targetLanguage,
         createdAt: Date.now(),
         provider: config.mainProvider || 'unknown',
-        model: config.geminiModel || 'default'
+        model: config.geminiModel || 'default',
+        subtitleSource: sourceFileId.startsWith('subdl_') ? 'SubDL'
+          : sourceFileId.startsWith('subsource_') ? 'SubSource'
+            : sourceFileId.startsWith('v3_') ? 'OpenSubtitles V3'
+              : sourceFileId.startsWith('scs_') ? 'Community Subtitles'
+                : sourceFileId.startsWith('wyzie_') ? 'Wyzie Subs'
+                  : sourceFileId.startsWith('subsro_') ? 'Subs.ro'
+                    : sourceFileId.startsWith('xembed_') ? 'Embedded'
+                      : 'OpenSubtitles'
       };
       saveRequestToHistory(historyUserHash, historyEntry).catch(err => {
         log.warn(() => [`[History] Failed to save initial history for ${requestId}:`, err.message]);
@@ -4455,14 +4476,22 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
     // Start translation in background (don't await here)
     translationPromise
       .then((result) => {
-        // Update history with success
+        // Update history with success + translation diagnostics
         const sourceLang = (result && typeof result === 'object') ? (result.detectedLanguage || historyEntry?.sourceLanguage) : historyEntry?.sourceLanguage;
-        updateHistory('completed', sourceLang ? { sourceLanguage: sourceLang } : {});
+        const stats = (result && typeof result === 'object' && result.translationStats) ? result.translationStats : {};
+        updateHistory('completed', {
+          ...(sourceLang ? { sourceLanguage: sourceLang } : {}),
+          ...stats
+        });
         return result;
       })
       .catch(error => {
-        // Update history with failure
-        updateHistory('failed', { error: error.message || 'Unknown error' });
+        // Update history with failure + any accumulated translation diagnostics
+        const failStats = (error && error.translationStats) ? error.translationStats : {};
+        updateHistory('failed', {
+          error: error.message || 'Unknown error',
+          ...failStats
+        });
 
         // Only log if not already logged by upstream handler
         if (!error._alreadyLogged) {
@@ -4520,6 +4549,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
  * @param {string} preDownloadedContent - Optional pre-downloaded source content (from pre-flight validation)
  */
 async function performTranslation(sourceFileId, targetLanguage, config, { cacheKey, runtimeKey, baseKey, sharedInFlightKey = null }, userHash, allowPermanent, preDownloadedContent = null, embeddedSource = null) {
+  let translationEngine = null;
   try {
     log.debug(() => `[Translation] Background translation started for ${sourceFileId} to ${targetLanguage}`);
     cacheMetrics.apiCalls++;
@@ -4650,7 +4680,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
       advancedSettings: config.advancedSettings || {}
     } : null;
 
-    const translationEngine = new TranslationEngine(
+    translationEngine = new TranslationEngine(
       provider,
       effectiveModel,
       {
@@ -4881,6 +4911,9 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
       throw error;
     }
 
+    // Capture translation diagnostics for history enrichment
+    const translationStats = translationEngine.translationStats || {};
+
     log.debug(() => '[Translation] Background translation completed successfully');
 
     // Cache the translation (disk-only, permanent by default)
@@ -5004,58 +5037,26 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
 
     log.debug(() => '[Translation] Translation cached and ready to serve');
 
+    // Return translation diagnostics so the .then() handler can pass them to updateHistory
+    return { translationStats };
+
   } catch (error) {
+    // Attach accumulated translation diagnostics to the error so the outer .catch() can pass them to history
+    // Use translationEngine directly (not the local const) since translationEngine is always in scope
+    const failedStats = translationEngine?.translationStats;
+    if (failedStats && Object.keys(failedStats).length > 0) {
+      error.translationStats = failedStats;
+    }
     // Only log if not already logged by upstream handler
     if (!error._alreadyLogged) {
       log.error(() => ['[Translation] Background translation error:', error.message]);
     }
 
-    // Determine error type for user-friendly message
-    let errorType = 'other';
-    let errorMessage = error.message;
-
-    // FIRST: Check for translationErrorType set by apiErrorHandler.js (most reliable)
-    if (error.translationErrorType) {
-      errorType = error.translationErrorType;
-    }
-    // SECOND: Check for statusCode set by apiErrorHandler.js
-    else if (error.statusCode) {
-      if (error.statusCode === 403) {
-        errorType = '403';
-      } else if (error.statusCode === 503) {
-        errorType = '503';
-      } else if (error.statusCode === 429) {
-        errorType = '429';
-      }
-    }
-    // THIRD: Check HTTP status codes from axios error.response
-    else if (error.response?.status) {
-      const statusCode = error.response.status;
-      if (statusCode === 403) {
-        errorType = '403';
-      } else if (statusCode === 503) {
-        errorType = '503';
-      } else if (statusCode === 429) {
-        errorType = '429';
-      }
-    }
-
-    // FOURTH: Check error message content (as fallback)
-    if (errorType === 'other' && error.message) {
-      if (error.message.includes('403')) {
-        errorType = '403';
-      } else if (error.message.includes('503')) {
-        errorType = '503';
-      } else if (error.message.includes('429')) {
-        errorType = '429';
-      } else if (error.message.includes('MAX_TOKENS') || error.message.includes('exceeded maximum token limit')) {
-        errorType = 'MAX_TOKENS';
-      } else if (error.message.includes('SAFETY') || error.message.includes('PROHIBITED_CONTENT') || error.message.includes('safety filters') || error.message.includes('RECITATION')) {
-        errorType = 'PROHIBITED_CONTENT';
-      } else if (error.message.includes('invalid') || error.message.includes('corrupted') || error.message.includes('too small')) {
-        errorType = 'INVALID_SOURCE';
-      }
-    }
+    // Determine error type for user-friendly subtitle message
+    // All classification is done by handleTranslationError() in apiErrorHandler.js (single source of truth)
+    // which sets error.translationErrorType before the error reaches here.
+    const errorType = error.translationErrorType || 'other';
+    const errorMessage = error.message;
 
     log.debug(() => `[Translation] Caching error (type: ${errorType}) for user retry`);
 

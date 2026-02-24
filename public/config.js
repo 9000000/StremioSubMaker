@@ -1826,7 +1826,7 @@ Translate to {target_language}.`;
         const topPChanged = parseFloat(advTopPEl.value) !== defaults.topP;
         // Batch context changes are also considered advanced modifications
         const batchCtxChanged = batchCtxEl ? (batchCtxEl.checked !== (defaults.enableBatchContext === true)) : false;
-        const ctxSizeChanged = ctxSizeEl ? (parseInt(ctxSizeEl.value) !== (defaults.contextSize || 3)) : false;
+        const ctxSizeChanged = ctxSizeEl ? (parseInt(ctxSizeEl.value) !== (defaults.contextSize || 8)) : false;
         // Mismatch retries change
         const mismatchRetriesEl = document.getElementById('mismatchRetries');
         const mismatchRetriesChanged = mismatchRetriesEl ? (parseInt(mismatchRetriesEl.value) !== (defaults.mismatchRetries ?? 1)) : false;
@@ -5680,7 +5680,7 @@ Translate to {target_language}.`;
                 contextSizeGroupEl.style.display = enableBatchContextEl.checked ? 'block' : 'none';
             }
         }
-        if (contextSizeEl) contextSizeEl.value = currentConfig.advancedSettings?.contextSize || 3;
+        if (contextSizeEl) contextSizeEl.value = currentConfig.advancedSettings?.contextSize || 8;
         const sendTimestampsEl = document.getElementById('sendTimestampsToAI');
         if (sendTimestampsEl) {
             let workflow = currentConfig.advancedSettings?.translationWorkflow ||
@@ -5999,7 +5999,7 @@ Translate to {target_language}.`;
                 topP: (function () { const el = document.getElementById('advancedTopP'); return el ? parseFloat(el.value) : 0.95; })(),
                 topK: 40, // Keep default topK
                 enableBatchContext: (function () { const el = document.getElementById('enableBatchContext'); return el ? el.checked : false; })(),
-                contextSize: (function () { const el = document.getElementById('contextSize'); return el ? parseInt(el.value) : 3; })(),
+                contextSize: (function () { const el = document.getElementById('contextSize'); return el ? parseInt(el.value) : 8; })(),
                 translationWorkflow: (function () { const el = document.getElementById('sendTimestampsToAI'); return el ? el.value : 'xml'; })(),
                 mismatchRetries: (function () { const el = document.getElementById('mismatchRetries'); return el ? Math.max(0, Math.min(3, parseInt(el.value) || 1)) : 1; })()
             }
