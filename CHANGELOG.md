@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.60
+
+**New Features:**
+
+- **Parallel Batch Translation Engine (Dev mode):** Added a new experimental parallel translation mode that concurrently processes multiple subtitle batches to maximize throughput. Available exclusively in Dev Mode and disabled on ElfHosted instances (`ELFHOSTED=true`). When enabled, all batches are dispatched simultaneously under a configurable concurrency limit (1–5, default 3), and results are merged back into the output in sequential order as batches complete. Batch 0 uses streaming for real-time progress; remaining batches use worker-engine clones (shallow-copied instances) to prevent API key rotation mutations on the shared engine instance. UI controls appear in Translation Settings in a dashed dev-mode section.
+
+- **Parallel Batches Count selector:** When Parallel Batches is enabled, a dropdown appears to select the concurrency level: 1 Batch (Testing), 2 Batches, 3 Batches (Recommended), 4 Batches, or 5 Batches. Values are clamped to [1, 5] during config normalization; selecting a higher value increases token throughput at the cost of higher TPM (tokens per minute) consumption.
+
+**Improvements:**
+
+- **`parallelTranslation.js` fully rewritten:** The previous implementation (`translateInParallel`) was a standalone SRT-string-in/SRT-string-out function with its own SRT parser, token estimator, and context chunker — incompatible with the `TranslationEngine` lifecycle. Replaced with `executeParallelTranslation`, a tightly integrated function that works directly with parsed entry arrays and the engine's own `translateBatch()` method, supporting all existing workflows (XML, JSON, Numbered, Send Timestamps to AI), API key rotation, batch context, streaming, mismatch retries, and provider fallbacks. Fixed the first-batch streaming blocking issue from the previous implementation by using `runWithProgressiveSequentialResolution`, an ordered queue that drains completed batches in order without holding up concurrently running ones.
+
+- **Single Batch Mode takes priority over Parallel Batches:** If both Single Batch Mode and Parallel Batches are enabled simultaneously, Single Batch Mode wins unconditionally and a warning is logged. Parallel mode never runs in that configuration.
+
+- **Parallel Batches bypasses translation cache:** Like Single Batch Mode and Multi-Provider, enabling Parallel Batches now adds `'parallel-batches'` to the `bypassReasons` list in config normalization, preventing stale cached translations from being served when parallel mode is active.
+
+- **Parallel Batches config forwarded from `subtitles.js`:** `parallelBatchesEnabled` and `parallelBatchesCount` are now spread into the `advancedSettings` object when constructing a `TranslationEngine` instance, making them available throughout the engine without requiring top-level constructor changes.
+
+- **Default config values added for parallel batches:** `parallelBatchesEnabled: false` and `parallelBatchesCount: 3` are now defined in both `src/utils/config.js` and `public/config.js` default configs, ensuring clean state for all users by default.
+
+- **"Enable Batch Context" setting moved to Translation Settings:** The "Enable Batch Context" checkbox was relocated from the Advanced Settings section to the Translation Settings section (below "Enable Single Batch"), where it is more logically grouped with other per-batch translation options.
+
+- **XML workflow prompt refined:** `createXmlBatchPrompt()` prompt header changed from `"You are translating subtitle text to..."` to `"You are a professional subtitle translator. Translate to..."`. Added explicit rule to preserve existing formatting tags. Removed `customPromptText` interpolation and the old escaped `\\n7` context rule (which had double-escaped newlines).
+
+- **JSON workflow prompt refined:** `_buildJsonPrompt()` prompt header updated to the same professional tone. Simplified and consolidated the critical rules list — cleaned up redundant formatting and removed the split `ADDITIONAL INSTRUCTIONS/TRANSLATION STYLE` sections into one cohesive block. Removed `customPromptText` block and the stale `"Translate to {target_language}."` closing line. Fixed raw string escaping (`\\"` → `\\\"`) in JSON format instructions.
+
+- **Numbered-list workflow prompt refined:** `createBatchPrompt()` prompt header updated. Merged the overly verbose rule list into a clean, deduplicated set. Fixed double-escaped newline in context rule (`\\n7` → `\n8`). Removed `customPromptText` interpolation block and consolidated `DO NOT` rules.
+
 ## SubMaker v1.4.59
 
 **Improvements:**

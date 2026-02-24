@@ -674,6 +674,10 @@ Translate to {target_language}.`;
             geminiKeyRotationEnabled: false,
             geminiApiKeys: [],
             geminiKeyRotationMode: 'per-batch', // 'per-batch' or 'per-request'
+            // --- Advanced Parallel Translation Engine ---
+            parallelBatchesEnabled: false,
+            parallelBatchesCount: 3,
+            // --------------------------------------------
             assemblyAiApiKey: DEFAULT_API_KEYS.ASSEMBLYAI,
             cloudflareWorkersApiKey: DEFAULT_API_KEYS.CF_WORKERS_AUTOSUBS,
             otherApiKeysEnabled: true,
@@ -2613,6 +2617,7 @@ Translate to {target_language}.`;
                 toggleConvertAssToVttGroup();
                 toggleUrlExtensionTestGroup();
                 toggleAndroidSubtitleCompatModeGroup();
+                toggleParallelBatchesGroup();
             });
         }
 
@@ -2646,6 +2651,15 @@ Translate to {target_language}.`;
             group.style.display = devEnabled ? 'block' : 'none';
         }
 
+        // Function to show/hide Parallel Batches group (dev mode only)
+        function toggleParallelBatchesGroup() {
+            const group = document.getElementById('parallelBatchesGroup');
+            if (!group) return;
+            const devModeEl = document.getElementById('devMode');
+            const devEnabled = devModeEl && devModeEl.checked;
+            group.style.display = devEnabled ? 'block' : 'none';
+        }
+
         // Wire convertAssToVtt to also toggle the test group
         const convertAssEl = document.getElementById('convertAssToVtt');
         if (convertAssEl) {
@@ -2658,6 +2672,18 @@ Translate to {target_language}.`;
         toggleConvertAssToVttGroup();
         toggleUrlExtensionTestGroup();
         toggleAndroidSubtitleCompatModeGroup();
+        toggleParallelBatchesGroup();
+
+        const parallelBatchesEl = document.getElementById('parallelBatchesEnabled');
+        if (parallelBatchesEl) {
+            parallelBatchesEl.addEventListener('change', (e) => {
+                const checked = !!e.target.checked;
+                const countGroup = document.getElementById('parallelBatchesCountGroup');
+                if (countGroup) {
+                    countGroup.style.display = checked ? 'block' : 'none';
+                }
+            });
+        }
 
         const multiToggle = document.getElementById('enableMultiProviders');
         if (multiToggle) {
@@ -5580,6 +5606,10 @@ Translate to {target_language}.`;
         if (androidCompatGroup) {
             androidCompatGroup.style.display = devEnabledAfterLoad ? 'block' : 'none';
         }
+        const parallelBatchesGroupEl = document.getElementById('parallelBatchesGroup');
+        if (parallelBatchesGroupEl) {
+            parallelBatchesGroupEl.style.display = devEnabledAfterLoad ? 'block' : 'none';
+        }
         const selectedUrlExt = String(currentConfig.urlExtensionTest || 'srt');
         const urlExtRadio = document.querySelector(`input[name="urlExtensionTest"][value="${selectedUrlExt}"]`)
             || document.querySelector('input[name="urlExtensionTest"][value="srt"]');
@@ -5762,6 +5792,17 @@ Translate to {target_language}.`;
                 currentConfig.singleBatchMode = e.target.checked === true;
                 updateBypassCacheForAdvancedSettings();
             });
+        }
+
+        const parallelBatchesEl = document.getElementById('parallelBatchesEnabled');
+        if (parallelBatchesEl) {
+            parallelBatchesEl.checked = currentConfig.parallelBatchesEnabled === true;
+            const countGroup = document.getElementById('parallelBatchesCountGroup');
+            if (countGroup) countGroup.style.display = parallelBatchesEl.checked ? 'block' : 'none';
+        }
+        const parallelBatchesCountEl = document.getElementById('parallelBatchesCount');
+        if (parallelBatchesCountEl) {
+            parallelBatchesCountEl.value = currentConfig.parallelBatchesCount || 3;
         }
     }
 
@@ -5948,6 +5989,8 @@ Translate to {target_language}.`;
                 return currentConfig?.mobileMode === true;
             })(),
             singleBatchMode: singleBatchEnabled,
+            parallelBatchesEnabled: (function () { const el = document.getElementById('parallelBatchesEnabled'); return el ? el.checked === true : false; })(),
+            parallelBatchesCount: (function () { const el = document.getElementById('parallelBatchesCount'); return el ? parseInt(el.value, 10) : 3; })(),
             advancedSettings: {
                 enabled: areAdvancedSettingsModified(), // Auto-detect if any setting differs from defaults
                 geminiModel: (function () { const el = document.getElementById('advancedModel'); return el ? el.value : ''; })(),

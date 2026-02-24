@@ -1503,6 +1503,19 @@
                         </div>
 
                         <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="enableBatchContext">
+                                <span data-i18n="config.advancedGemini.batchContext.label">Enable Batch Context</span>
+                                <span class="label-description"
+                                    data-i18n="config.advancedGemini.batchContext.description">Include original
+                                    surrounding context and previous translations
+                                    when processing batches. Improves translation coherence but may break outputs and
+                                    increases
+                                    token usage.</span>
+                            </label>
+                        </div>
+
+                        <div class="form-group">
                             <label for="databaseMode" class="form-label">
                                 <span class="label-title" data-i18n="config.translationSettings.database.label">SubMaker
                                     Database</span>
@@ -1753,6 +1766,34 @@
                             </label>
                         </div>
 
+                        <!-- Dev Mode: Parallel Batches -->
+                        <div id="parallelBatchesGroup"
+                            style="display: none; border-top: 1px dashed var(--border); padding-top: 1rem; margin-top: 0.5rem;">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="parallelBatchesEnabled">
+                                    <span>[DEV] Enable Parallel Batches</span>
+                                    <span class="label-description">Experimental: translate multiple batches
+                                        concurrently for faster processing. Disabled on ElfHosted instances.</span>
+                                </label>
+                            </div>
+                            <div class="form-group" id="parallelBatchesCountGroup"
+                                style="display: none; margin-top: 0.5rem; padding-left: 1.5rem;">
+                                <label for="parallelBatchesCount" class="form-label">
+                                    <span class="label-title">Parallel Batches Count</span>
+                                    <span class="label-description">Number of concurrent batches to run (1-5). Higher
+                                        values consume more tokens/second.</span>
+                                </label>
+                                <select id="parallelBatchesCount" class="styled-select">
+                                    <option value="1">1 Batch (Testing)</option>
+                                    <option value="2">2 Batches</option>
+                                    <option value="3">3 Batches (Recommended)</option>
+                                    <option value="4">4 Batches</option>
+                                    <option value="5">5 Batches</option>
+                                </select>
+                            </div>
+                        </div>
+
                         <!-- URL Extension Test Toggles (Dev Mode only) -->
                         <div class="form-group" id="urlExtensionTestGroup" style="display: none;">
                             <label>
@@ -1848,18 +1889,6 @@
                         <button type="button" class="collapse-btn collapsed" data-collapse="advanced"></button>
                     </div>
                     <div class="card-content">
-                        <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="enableBatchContext">
-                                <span data-i18n="config.advancedGemini.batchContext.label">Enable Batch Context</span>
-                                <span class="label-description"
-                                    data-i18n="config.advancedGemini.batchContext.description">Include original
-                                    surrounding context and previous translations
-                                    when processing batches. Improves translation coherence but may break outputs and
-                                    increases
-                                    token usage.</span>
-                            </label>
-                        </div>
 
                         <div class="form-group" id="contextSizeGroup" style="display: none;">
                             <label for="contextSize">

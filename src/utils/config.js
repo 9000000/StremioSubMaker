@@ -529,6 +529,13 @@ function normalizeConfig(config) {
     })()
   };
 
+  // Parallel batches parsing
+  mergedConfig.parallelBatchesEnabled = mergedConfig.parallelBatchesEnabled === true;
+  mergedConfig.parallelBatchesCount = (() => {
+    const val = parseInt(mergedConfig.parallelBatchesCount);
+    return Number.isFinite(val) ? Math.max(1, Math.min(5, val)) : 3;
+  })();
+
   if (mergedConfig.noTranslationLanguages.length > maxNoTranslationLanguages) {
     mergedConfig.noTranslationLanguages = mergedConfig.noTranslationLanguages.slice(0, maxNoTranslationLanguages);
   }
@@ -758,6 +765,7 @@ function normalizeConfig(config) {
   const bypassReasons = [];
   if (mergedConfig.advancedSettings.enabled) bypassReasons.push('advanced-settings');
   if (mergedConfig.singleBatchMode) bypassReasons.push('single-batch');
+  if (mergedConfig.parallelBatchesEnabled === true) bypassReasons.push('parallel-batches');
   if (hasActiveMultiProvider) bypassReasons.push('multi-provider');
   if (bypassReasons.length > 0) {
     log.debug(() => `[Config] Forcing bypass cache (${bypassReasons.join(', ')})`);
@@ -1016,6 +1024,10 @@ function getDefaultConfig(modelName = null) {
     geminiKeyRotationEnabled: false,
     geminiApiKeys: [], // Array of API keys to rotate through
     geminiKeyRotationMode: 'per-batch', // 'per-batch' = rotate for each batch , 'per-request' = rotate once per file
+    // --- Advanced Parallel Translation Engine ---
+    parallelBatchesEnabled: false,
+    parallelBatchesCount: 3,
+    // --------------------------------------------
     assemblyAiApiKey: DEFAULT_API_KEYS.ASSEMBLYAI || '',
     cloudflareWorkersApiKey: DEFAULT_API_KEYS.CF_WORKERS_AUTOSUBS || '',
     otherApiKeysEnabled: true,

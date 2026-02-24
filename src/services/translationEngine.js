@@ -24,6 +24,7 @@ const log = require('../utils/logger');
 const { handleCaughtError } = require('../utils/errorClassifier');
 const { normalizeTargetLanguageForPrompt } = require('./utils/normalizeTargetLanguageForPrompt');
 const { recordKeyError: recordKeyErrorRedis, isKeyCoolingDown: isKeyCoolingDownRedis, getNextRotationIndex, resetKeyHealth } = require('../utils/sharedCache');
+const { executeParallelTranslation } = require('../utils/parallelTranslation');
 
 // Extract normalized tokens from a language label/code (split on common separators)
 function tokenizeLanguageValue(value) {
@@ -641,152 +642,162 @@ class TranslationEngine {
 
     // Single-batch mode: translate the whole file (with limited auto-splitting)
     if (this.singleBatchMode) {
+      if (this.advancedSettings?.parallelBatchesEnabled === true) {
+        log.warn(() => '[TranslationEngine] Parallel Batches is enabled but Single Batch Mode takes priority — parallel mode will NOT run. Disable Single Batch Mode to use Parallel Batches.');
+      }
       return this.translateSubtitleSingleBatch(entries, targetLanguage, customPrompt, onProgress);
     }
 
-    log.info(() => `[TranslationEngine] Starting translation: ${entries.length} entries, ${Math.ceil(entries.length / this.batchSize)} batches`);
+    let translatedEntries = [];
 
-    const streamingEnabled = this.enableStreaming;
-    let globalStreamSequence = 0;
+    // Parallel Batches Mode (Dev Mode specific, excluding ElfHosted)
+    if (this.advancedSettings?.parallelBatchesEnabled === true && process.env.ELFHOSTED !== 'true') {
+      translatedEntries = await executeParallelTranslation(this, entries, targetLanguage, customPrompt, onProgress);
+    } else {
 
-    // Step 2: Create batches
-    const batches = this.createBatches(entries, this.batchSize);
+      log.info(() => `[TranslationEngine] Starting translation: ${entries.length} entries, ${Math.ceil(entries.length / this.batchSize)} batches`);
 
-    // Step 3: Translate each batch with smart progress tracking
-    const translatedEntries = [];
-    // Streaming optimization: keep a pre-built SRT string for completed batches
-    // so we only rebuild the current streaming batch on each progress callback.
-    let completedSRT = '';
-    let completedEntryCount = 0;
+      const streamingEnabled = this.enableStreaming;
+      let globalStreamSequence = 0;
 
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-      const batch = batches[batchIndex];
-      const batchStartId = batch[0]?.id || 1;
-      const streamingBatchEntries = new Map();
+      // Step 2: Create batches
+      const batches = this.createBatches(entries, this.batchSize);
 
-      try {
-        // Rotate API key for this batch if per-batch rotation is enabled
-        await this.maybeRotateKeyForBatch(batchIndex);
+      // Step 3: Translate each batch with smart progress tracking
+      const translatedEntries = [];
+      // Streaming optimization: keep a pre-built SRT string for completed batches
+      // so we only rebuild the current streaming batch on each progress callback.
+      let completedSRT = '';
+      let completedEntryCount = 0;
 
-        // Prepare context for this batch (if enabled)
-        const context = this.enableBatchContext
-          ? this.prepareContextForBatch(batch, entries, translatedEntries, batchIndex)
-          : null;
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const batchStartId = batch[0]?.id || 1;
+        const streamingBatchEntries = new Map();
 
-        // Translate batch (with auto-chunking if needed)
-        const translatedBatch = await this.translateBatch(
-          batch,
-          targetLanguage,
-          customPrompt,
-          batchIndex,
-          batches.length,
-          context,
-          {
-            streaming: streamingEnabled,
-            onStreamProgress: async (payload) => {
-              if (typeof onProgress !== 'function' || !payload?.partialSRT) return;
+        try {
+          // Rotate API key for this batch if per-batch rotation is enabled
+          await this.maybeRotateKeyForBatch(batchIndex);
 
-              const parsed = parseSRT(payload.partialSRT) || [];
-              const offset = (payload.batchStartId || batchStartId) - 1;
-              for (const entry of parsed) {
-                const globalId = (entry.id || 0) + offset;
-                if (globalId <= 0) continue;
-                streamingBatchEntries.set(globalId, {
-                  id: globalId,
+          // Prepare context for this batch (if enabled)
+          const context = this.enableBatchContext
+            ? this.prepareContextForBatch(batch, entries, translatedEntries, batchIndex)
+            : null;
+
+          // Translate batch (with auto-chunking if needed)
+          const translatedBatch = await this.translateBatch(
+            batch,
+            targetLanguage,
+            customPrompt,
+            batchIndex,
+            batches.length,
+            context,
+            {
+              streaming: streamingEnabled,
+              onStreamProgress: async (payload) => {
+                if (typeof onProgress !== 'function' || !payload?.partialSRT) return;
+
+                const parsed = parseSRT(payload.partialSRT) || [];
+                const offset = (payload.batchStartId || batchStartId) - 1;
+                for (const entry of parsed) {
+                  const globalId = (entry.id || 0) + offset;
+                  if (globalId <= 0) continue;
+                  streamingBatchEntries.set(globalId, {
+                    id: globalId,
+                    timecode: entry.timecode,
+                    text: this.cleanTranslatedText(entry.text || '')
+                  });
+                }
+
+                // Only rebuild SRT for the current streaming batch entries,
+                // then prepend the already-built completed SRT string.
+                const streamEntries = Array.from(streamingBatchEntries.values()).sort((a, b) => a.id - b.id);
+                const streamNormalized = streamEntries.map((entry, idx) => ({
+                  id: completedEntryCount + idx + 1,
                   timecode: entry.timecode,
-                  text: this.cleanTranslatedText(entry.text || '')
-                });
-              }
+                  text: entry.text
+                }));
+                const streamSRT = toSRT(streamNormalized);
+                const partialSRT = completedSRT
+                  ? completedSRT + '\n\n' + streamSRT
+                  : streamSRT;
 
-              // Only rebuild SRT for the current streaming batch entries,
-              // then prepend the already-built completed SRT string.
-              const streamEntries = Array.from(streamingBatchEntries.values()).sort((a, b) => a.id - b.id);
-              const streamNormalized = streamEntries.map((entry, idx) => ({
-                id: completedEntryCount + idx + 1,
-                timecode: entry.timecode,
-                text: entry.text
-              }));
-              const streamSRT = toSRT(streamNormalized);
-              const partialSRT = completedSRT
-                ? completedSRT + '\n\n' + streamSRT
-                : streamSRT;
-
-              const seq = ++globalStreamSequence;
-              try {
-                await onProgress({
-                  totalEntries: entries.length,
-                  completedEntries: Math.min(entries.length, completedEntryCount + streamingBatchEntries.size),
-                  currentBatch: payload.currentBatch || (batchIndex + 1),
-                  totalBatches: batches.length,
-                  partialSRT,
-                  streaming: true,
-                  streamSequence: seq
-                });
-              } catch (err) {
-                log.warn(() => ['[TranslationEngine] Streaming progress callback error (batched):', err.message]);
+                const seq = ++globalStreamSequence;
+                try {
+                  await onProgress({
+                    totalEntries: entries.length,
+                    completedEntries: Math.min(entries.length, completedEntryCount + streamingBatchEntries.size),
+                    currentBatch: payload.currentBatch || (batchIndex + 1),
+                    totalBatches: batches.length,
+                    partialSRT,
+                    streaming: true,
+                    streamSequence: seq
+                  });
+                } catch (err) {
+                  log.warn(() => ['[TranslationEngine] Streaming progress callback error (batched):', err.message]);
+                }
               }
             }
-          }
-        );
+          );
 
-        // Merge translated text with original structure
-        for (let i = 0; i < batch.length; i++) {
-          const original = batch[i];
-          const translated = translatedBatch[i] || {};
+          // Merge translated text with original structure
+          for (let i = 0; i < batch.length; i++) {
+            const original = batch[i];
+            const translated = translatedBatch[i] || {};
 
-          // Clean translated text
-          const cleanedText = this.cleanTranslatedText(translated.text || original.text);
+            // Clean translated text
+            const cleanedText = this.cleanTranslatedText(translated.text || original.text);
 
-          // Create entry with timing from AI when requested, otherwise preserve original timing
-          const timecode = (this.sendTimestampsToAI && translated.timecode) ? translated.timecode : original.timecode;
-          translatedEntries.push({
-            id: original.id,
-            timecode,
-            text: cleanedText
-          });
-        }
-
-        // Update the completed SRT snapshot for streaming optimization
-        completedEntryCount = translatedEntries.length;
-        completedSRT = toSRT(translatedEntries);
-
-        // Progress callback after each batch
-        if (typeof onProgress === 'function') {
-          try {
-            await onProgress({
-              totalEntries: entries.length,
-              completedEntries: translatedEntries.length,
-              currentBatch: batchIndex + 1,
-              totalBatches: batches.length,
-              partialSRT: completedSRT
+            // Create entry with timing from AI when requested, otherwise preserve original timing
+            const timecode = (this.sendTimestampsToAI && translated.timecode) ? translated.timecode : original.timecode;
+            translatedEntries.push({
+              id: original.id,
+              timecode,
+              text: cleanedText
             });
-          } catch (err) {
-            log.warn(() => ['[TranslationEngine] Progress callback error:', err.message]);
           }
-        }
 
-        // Log progress only at milestones
-        const progress = Math.floor((translatedEntries.length / entries.length) * 100);
-        if (batchIndex === 0 || batchIndex === batches.length - 1 || progress % 25 === 0) {
-          log.info(() => `[TranslationEngine] Progress: ${progress}% (${translatedEntries.length}/${entries.length} entries, batch ${batchIndex + 1}/${batches.length})`);
-        }
+          // Update the completed SRT snapshot for streaming optimization
+          completedEntryCount = translatedEntries.length;
+          completedSRT = toSRT(translatedEntries);
 
-      } catch (error) {
-        // Only log if not already logged by upstream handler
-        if (!error._alreadyLogged) {
-          log.error(() => [`[TranslationEngine] Error in batch ${batchIndex + 1}:`, error.message]);
+          // Progress callback after each batch
+          if (typeof onProgress === 'function') {
+            try {
+              await onProgress({
+                totalEntries: entries.length,
+                completedEntries: translatedEntries.length,
+                currentBatch: batchIndex + 1,
+                totalBatches: batches.length,
+                partialSRT: completedSRT
+              });
+            } catch (err) {
+              log.warn(() => ['[TranslationEngine] Progress callback error:', err.message]);
+            }
+          }
+
+          // Log progress only at milestones
+          const progress = Math.floor((translatedEntries.length / entries.length) * 100);
+          if (batchIndex === 0 || batchIndex === batches.length - 1 || progress % 25 === 0) {
+            log.info(() => `[TranslationEngine] Progress: ${progress}% (${translatedEntries.length}/${entries.length} entries, batch ${batchIndex + 1}/${batches.length})`);
+          }
+        } catch (error) {
+          // Only log if not already logged by upstream handler
+          if (!error._alreadyLogged) {
+            log.error(() => [`[TranslationEngine] Error in batch ${batchIndex + 1}:`, error.message]);
+          }
+          // Wrap error but preserve original error properties (translationErrorType, statusCode, etc.)
+          const wrappedError = new Error(`Translation failed at batch ${batchIndex + 1}: ${error.message}`);
+          // Copy all properties from original error to preserved type information
+          if (error.translationErrorType) wrappedError.translationErrorType = error.translationErrorType;
+          if (error.statusCode) wrappedError.statusCode = error.statusCode;
+          if (error.type) wrappedError.type = error.type;
+          if (error.isRetryable !== undefined) wrappedError.isRetryable = error.isRetryable;
+          if (error.originalError) wrappedError.originalError = error.originalError;
+          // Preserve the already-logged flag
+          if (error._alreadyLogged) wrappedError._alreadyLogged = true;
+          throw wrappedError;
         }
-        // Wrap error but preserve original error properties (translationErrorType, statusCode, etc.)
-        const wrappedError = new Error(`Translation failed at batch ${batchIndex + 1}: ${error.message}`);
-        // Copy all properties from original error to preserved type information
-        if (error.translationErrorType) wrappedError.translationErrorType = error.translationErrorType;
-        if (error.statusCode) wrappedError.statusCode = error.statusCode;
-        if (error.type) wrappedError.type = error.type;
-        if (error.isRetryable !== undefined) wrappedError.isRetryable = error.isRetryable;
-        if (error.originalError) wrappedError.originalError = error.originalError;
-        // Preserve the already-logged flag
-        if (error._alreadyLogged) wrappedError._alreadyLogged = true;
-        throw wrappedError;
       }
     }
 
@@ -1626,7 +1637,6 @@ class TranslationEngine {
    */
   createXmlBatchPrompt(batchText, targetLanguage, customPrompt, expectedCount, context = null, batchIndex = 0, totalBatches = 1) {
     const targetLabel = normalizeTargetLanguageForPrompt(targetLanguage);
-    const customPromptText = customPrompt ? customPrompt.replace('{target_language}', targetLabel) : '';
 
     let contextInstructions = '';
     if (context?.surroundingOriginal?.length > 0) {
@@ -1639,7 +1649,7 @@ CONTEXT PROVIDED:
 `;
     }
 
-    const promptBody = `You are translating subtitle text to ${targetLabel}.
+    const promptBody = `You are a professional subtitle translator. Translate to ${targetLabel}.
 ${contextInstructions}
 CRITICAL RULES:
 1. Translate ONLY the text inside each <s id="N"> tag
@@ -1647,9 +1657,9 @@ CRITICAL RULES:
 3. Return EXACTLY ${expectedCount} tagged entries
 4. Keep line breaks within each entry
 5. Maintain natural dialogue flow for ${targetLabel}
-6. Use appropriate colloquialisms for ${targetLabel}${context ? '\\n7. Use the provided context to ensure consistency' : ''}
+6. Use appropriate colloquialisms for ${targetLabel}
+7. Preserve any existing formatting tags${context ? '\n8. Use the provided context to ensure consistency' : ''}
 
-${customPromptText ? `ADDITIONAL INSTRUCTIONS:\\n${customPromptText}\\n\\n` : ''}
 Do NOT add acknowledgements, explanations, notes, or commentary.
 Do not skip, merge, or split entries.
 Do not include any timestamps/timecodes.
@@ -1694,7 +1704,6 @@ OUTPUT (EXACTLY ${expectedCount} XML-tagged entries):`;
    */
   _buildJsonPrompt(batchText, targetLanguage, customPrompt, expectedCount, context = null, batchIndex = 0, totalBatches = 1) {
     const targetLabel = normalizeTargetLanguageForPrompt(targetLanguage);
-    const customPromptText = customPrompt ? customPrompt.replace('{target_language}', targetLabel) : '';
 
     let contextInstructions = '';
     if (context?.surroundingOriginal?.length > 0) {
@@ -1707,37 +1716,27 @@ CONTEXT PROVIDED:
 `;
     }
 
-    const promptBody = `You are translating subtitle text to ${targetLabel}.
+    const promptBody = `You are a professional subtitle translator operating in an automated localization environment. Translate to ${targetLabel}.
 ${contextInstructions}
 CRITICAL RULES:
 1. Translate ONLY the "text" field of each entry into ${targetLabel}
 2. Preserve the "id" field exactly as given with no modification
 3. Return EXACTLY ${expectedCount} entries
-4. Maintain natural dialogue flow with strict and explicit consistency in character gender, pronouns, speech level, and honorifics throughout the batch; If not obvious or explicitly stated in the source text, do your best to get the genders right. If gender is ambiguous, use neutral forms or maintain consistency with context or previous entries.
-5. Every entry must be fully translated; never return original source text unless it is a proper noun (e.g., names, people, places, brands). If the source text appears corrupted, nonsensical, or contains only symbols/numbers, return it unchanged
-6. If a text field is empty, contains only whitespace, or only formatting tags, return it unchanged
+4. Maintain natural dialogue flow with consistency in character gender, pronouns, and honorifics throughout the batch
+5. Every entry must be fully translated; never return original source text unless it is a proper noun (e.g., names, places, brands). If the source text appears corrupted or contains only symbols/numbers, return it unchanged
+6. If a text field is empty, contains only whitespace, or only formatting tags, return it unchanged${context ? '\n7. Use the provided context to ensure consistency' : ''}
 
-ADDITIONAL INSTRUCTIONS:
-You are a professional subtitles translator operating in an automated localization environment. Translate while:
-1. Maintaining perfect, machine-parseable JSON format matching the input schema exactly. Ensure JSON is valid: escape double quotes with a backslash (e.g., \\" ) and use \\n for line breaks within the text field, and ensure no trailing commas after the last entry
+TRANSLATION STYLE:
+1. Maintain perfect, machine-parseable JSON format matching the input schema exactly. Ensure JSON is valid: escape double quotes with backslash (\\") and use \\n for line breaks within the text field, no trailing commas
 2. Do NOT add, remove, reorder, or modify JSON keys, fields, or data types
-3. Using concise, conversational, cinematic subtitle style suitable for professional streaming platforms. Preserve Unicode characters and punctuation (e.g., ellipses, em dashes) appropriate for the target language
+3. Use concise, conversational, cinematic subtitle style suitable for professional streaming platforms. Preserve Unicode characters and punctuation (e.g., ellipses, em dashes) appropriate for the target language
 4. For lyrics, prioritize maintaining rhythm and intent; if preserving rhythm conflicts with literal meaning, opt for natural phrasing that captures the essence. For non-dialogue text (e.g., [sigh]), preserve meaning and tags
-5. Preserving any existing formatting tags${context ? '\n6. Use the provided context to ensure consistency' : ''}
-
-${customPromptText ? `CUSTOM INSTRUCTIONS:
-${customPromptText}
-
-` : ''}This is an automatic system, DO NOT make any explanations or comments - simply output the translated content.
-Return ONLY the translated content, nothing else. NEVER output markdown.
-Translate to ${targetLabel}.
+5. Preserve any existing formatting tags
 
 Do NOT add acknowledgements, explanations, notes, or commentary.
-Do not skip, merge, or split entries.
-Do not include any timestamps/timecodes.
+Do not skip, merge, or split entries. NEVER output markdown.
 
-YOUR RESPONSE MUST be a JSON array of objects with "id" (number, 1-indexed) and "text" (string) fields.
-Example: [{"id":1,"text":"translated text"},{"id":2,"text":"translated text"}]
+YOUR RESPONSE MUST be a JSON array: [{"id":1,"text":"..."},{"id":2,"text":"..."}]
 Return ONLY the JSON array with EXACTLY ${expectedCount} entries, no other text.
 
 INPUT (${expectedCount} entries):
@@ -2090,7 +2089,6 @@ OUTPUT (EXACTLY ${expectedCount} entries as JSON array):`;
    */
   createBatchPrompt(batchText, targetLanguage, customPrompt, expectedCount, context = null, batchIndex = 0, totalBatches = 1) {
     const targetLabel = normalizeTargetLanguageForPrompt(targetLanguage);
-    const customPromptText = customPrompt ? customPrompt.replace('{target_language}', targetLabel) : '';
 
     let contextInstructions = '';
     if (context?.surroundingOriginal?.length > 0) {
@@ -2105,7 +2103,7 @@ CONTEXT PROVIDED:
 `;
     }
 
-    const promptBody = `You are translating subtitle text to ${targetLabel}.
+    const promptBody = `You are a professional subtitle translator. Translate to ${targetLabel}.
 ${contextInstructions}
 CRITICAL RULES:
 1. Translate ONLY the numbered text entries (1. 2. 3. etc.)
@@ -2113,17 +2111,13 @@ CRITICAL RULES:
 3. Return EXACTLY ${expectedCount} numbered entries
 4. Keep line breaks within each entry
 5. Maintain natural dialogue flow for ${targetLabel}
-6. Use appropriate colloquialisms for ${targetLabel}${context ? '\\n7. Use the provided context to ensure consistency with previous translations' : ''}
+6. Use appropriate colloquialisms for ${targetLabel}
+7. Preserve any existing formatting tags${context ? '\n8. Use the provided context to ensure consistency' : ''}
 
-${customPromptText ? `ADDITIONAL INSTRUCTIONS (from user/config):\\n${customPromptText}\\n\\n` : ''}
-DO NOT add ANY acknowledgements, explanations, notes, or commentary.
-Do not add alternative translations
-Do not skip any entries
-Do not merge or split entries
-Do not change the numbering
-Do not add extra entries
-Do not include any timestamps/timecodes or time ranges
-${context ? 'Do not translate context entries - only translate numbered entries' : ''}
+Do NOT add acknowledgements, explanations, notes, or commentary.
+Do not skip, merge, or split entries.
+Do not include any timestamps/timecodes.
+${context ? 'Do not translate context entries - only translate numbered entries.' : ''}
 
 YOUR RESPONSE MUST:
 - Start immediately with "1." (the first entry)

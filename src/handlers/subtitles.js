@@ -4653,7 +4653,11 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
     const translationEngine = new TranslationEngine(
       provider,
       effectiveModel,
-      config.advancedSettings || {},
+      {
+        ...(config.advancedSettings || {}),
+        parallelBatchesEnabled: config.parallelBatchesEnabled === true,
+        parallelBatchesCount: config.parallelBatchesCount || 3
+      },
       {
         singleBatchMode: config.singleBatchMode === true,
         providerName,
