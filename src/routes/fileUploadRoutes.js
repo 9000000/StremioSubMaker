@@ -48,8 +48,8 @@ function registerFileUploadRoutes(app, { log, resolveConfigGuarded, computeConfi
 
             const { config: configStr, videoId, filename } = req.query;
 
-            if (!configStr || !videoId) {
-                return res.status(400).send(t('api.fileUpload.missingConfig', {}, 'Missing config or videoId'));
+            if (!configStr) {
+                return res.status(400).send(t('api.fileUpload.missingConfig', {}, 'Missing config'));
             }
 
             const config = await resolveConfigGuarded(configStr, req, res, '[File Upload Page] config');

@@ -56,7 +56,7 @@ const TranslationEngine = require('./src/services/translationEngine');
 const { createProviderInstance, createTranslationProvider, resolveCfWorkersCredentials } = require('./src/services/translationProviderFactory');
 const { quickNavScript } = require('./src/utils/quickNav');
 const streamActivity = require('./src/utils/streamActivity');
-const { translateInParallel } = require('./src/utils/parallelTranslation');
+// parallelTranslation is now handled internally by TranslationEngine
 const syncCache = require('./src/utils/syncCache');
 const autoSubCache = require('./src/utils/autoSubCache');
 const { warmUpConnections, startKeepAlivePings, stopKeepAlivePings, getPoolStats } = require('./src/utils/httpAgents');
@@ -2335,8 +2335,9 @@ sessionManager.waitUntilReady().then(() => {
 // Skip for localhost to allow local testing without session persistence
 if (process.env.FORCE_SESSION_READY !== 'false') {
     app.use(async (req, res, next) => {
-        // Skip static files, HTML, and public API endpoints
+        // Skip static files, HTML, health checks, and public API endpoints
         if (req.path.startsWith('/public/') ||
+            req.path === '/health' ||
             req.path.endsWith('.css') ||
             req.path.endsWith('.js') ||
             req.path.endsWith('.html') ||
@@ -2402,8 +2403,21 @@ app.get('/configure/:config', (req, res) => {
 
 
 // Health check endpoint for Kubernetes/Docker readiness and liveness probes
+// Startup probes get a simple 200 OK immediately (server is alive).
+// Full health details are available once sessions are loaded.
 app.get('/health', async (req, res) => {
     try {
+        // If session manager isn't ready yet, return a lightweight "starting" response
+        // so Kubernetes startup/liveness probes pass while heavy init is still running
+        if (!sessionManagerReady) {
+            return res.status(200).json({
+                status: 'starting',
+                timestamp: new Date().toISOString(),
+                uptime: Math.floor(process.uptime()),
+                message: 'Server is alive, session manager still initializing'
+            });
+        }
+
         const { getStorageAdapter } = require('./src/storage/StorageFactory');
         const { StorageAdapter } = require('./src/storage');
 
@@ -3845,7 +3859,6 @@ app.post('/api/translate-file', fileTranslationLimiter, validateRequest(fileTran
         log.debug(() => `[File Translation API] Using provider=${providerName} model=${effectiveModel}`);
 
         const effectiveWorkflow = config.advancedSettings?.translationWorkflow || 'xml';
-        const shouldUseEngine = singleBatchMode || effectiveWorkflow !== 'original' || process.env.FILE_UPLOAD_FORCE_ENGINE === 'true';
         let translatedContent = null;
 
         // --- Keepalive streaming to prevent Cloudflare 524 timeouts ---
@@ -3868,101 +3881,23 @@ app.post('/api/translate-file', fileTranslationLimiter, validateRequest(fileTran
                 } catch (_) { /* response already closed */ }
             }, KEEPALIVE_INTERVAL_MS);
 
-            if (shouldUseEngine) {
-                try {
-                    const engine = new TranslationEngine(
-                        translationProvider,
-                        effectiveModel,
-                        config.advancedSettings || {},
-                        { singleBatchMode, providerName, fallbackProviderName, enableStreaming: false }
-                    );
-                    log.debug(() => `[File Translation API] Using TranslationEngine (workflow=${effectiveWorkflow}, singleBatch=${singleBatchMode}, batchContext=${!!config.advancedSettings?.enableBatchContext})`);
-                    translatedContent = await engine.translateSubtitle(
-                        workingContent,
-                        targetLangName,
-                        config.translationPrompt,
-                        null
-                    );
-                } catch (engineErr) {
-                    // Only fall back to legacy path if using 'original' workflow without singleBatch
-                    // xml/json/ai workflows require the engine — falling back would produce garbled output
-                    if (singleBatchMode || effectiveWorkflow !== 'original') {
-                        throw engineErr;
-                    }
-                    log.warn(() => ['[File Translation API] TranslationEngine failed, falling back to legacy path:', engineErr.message]);
-                    translatedContent = null;
-                }
-            }
+            // Always use TranslationEngine — it handles batching, parallel translation,
+            // and all workflows (xml/json/original/ai) internally.
+            const engine = new TranslationEngine(
+                translationProvider,
+                effectiveModel,
+                config.advancedSettings || {},
+                { singleBatchMode, providerName, fallbackProviderName, enableStreaming: false }
+            );
+            log.debug(() => `[File Translation API] Using TranslationEngine (workflow=${effectiveWorkflow}, singleBatch=${singleBatchMode}, batchContext=${!!config.advancedSettings?.enableBatchContext})`);
+            translatedContent = await engine.translateSubtitle(
+                workingContent,
+                targetLangName,
+                config.translationPrompt,
+                null
+            );
 
-            if (translatedContent === null) {
-                // Estimate token count (prefer real count when the provider supports it)
-                let tokenCount = null;
-                if (typeof translationProvider.countTokensForTranslation === 'function') {
-                    try {
-                        tokenCount = await translationProvider.countTokensForTranslation(
-                            workingContent,
-                            targetLangName,
-                            config.translationPrompt
-                        );
-                    } catch (err) {
-                        log.debug(() => ['[File Translation API] Token count request failed, using estimate:', err.message]);
-                    }
-                }
-
-                const estimatedTokens = tokenCount
-                    || (typeof translationProvider.estimateTokenCount === 'function'
-                        ? translationProvider.estimateTokenCount(workingContent)
-                        : Math.ceil(String(workingContent || '').length / 3));
-                log.debug(() => `[File Translation API] Estimated tokens: ${estimatedTokens}${tokenCount ? ' (actual)' : ''}`);
-
-                // Use parallel translation for large files (>threshold tokens)
-                // Parallel translation provides:
-                // - Faster processing through concurrent API calls
-                // - Better context preservation with chunk overlap
-                // - Improved reliability with per-chunk retries
-                const parallelThreshold = parseInt(process.env.PARALLEL_TRANSLATION_THRESHOLD) || 15000;
-                const useParallel = estimatedTokens > parallelThreshold;
-
-                if (useParallel) {
-                    log.debug(() => `[File Translation API] Using parallel translation (${estimatedTokens} tokens)`);
-
-                    // Parallel translation configuration (environment variables with fallbacks)
-                    const maxConcurrency = parseInt(process.env.PARALLEL_MAX_CONCURRENCY) || 3;
-                    const targetChunkTokens = parseInt(process.env.PARALLEL_CHUNK_SIZE) || 12000;
-                    const contextSize = parseInt(process.env.PARALLEL_CONTEXT_SIZE) || 3;
-
-                    // Parallel translation with context preservation
-                    translatedContent = await translateInParallel(
-                        workingContent,
-                        translationProvider,
-                        targetLangName,
-                        {
-                            sourceLanguage: sourceLangName,
-                            customPrompt: config.translationPrompt,
-                            maxConcurrency,
-                            targetChunkTokens,
-                            contextSize,
-                            onProgress: (current, total) => {
-                                log.debug(() => `[File Translation API] Progress: ${current}/${total} chunks (concurrency: ${maxConcurrency})`);
-                            }
-                        }
-                    );
-                } else {
-                    log.debug(() => `[File Translation API] Using single-call translation (${estimatedTokens} tokens)`);
-
-                    // Single API call for smaller files
-                    translatedContent = await translationProvider.translateSubtitle(
-                        workingContent,
-                        sourceLangName,
-                        targetLangName,
-                        config.translationPrompt
-                    );
-                }
-
-                log.debug(() => `[File Translation API] Translation completed (${useParallel ? 'parallel' : 'single-call'})`);
-            } else {
-                log.debug(() => '[File Translation API] Translation completed via TranslationEngine');
-            }
+            log.debug(() => '[File Translation API] Translation completed via TranslationEngine');
 
             // Send translated content and end the response
             log.debug(() => `[File Translation API] Sending result (${keepaliveCount} keepalives sent during translation)`);
@@ -8176,6 +8111,27 @@ app.use((error, req, res, next) => {
 
 // Initialize caches and session manager, then start server
 (async () => {
+    // =========================================================================
+    // PHASE 1: Bind HTTP server IMMEDIATELY so Kubernetes startup probes pass.
+    // The readiness middleware (FORCE_SESSION_READY) already gates all
+    // session-dependent routes, so no requests will be served with missing
+    // sessions — but the port will be open and /health will respond.
+    // =========================================================================
+    const server = app.listen(PORT, () => {
+        log.info(() => `[Startup] HTTP server listening on port ${PORT} (accepting probe connections)`);
+    });
+
+    // Setup graceful shutdown handlers right away
+    sessionManager.setupShutdownHandlers(server);
+    process.on('SIGTERM', () => stopKeepAlivePings());
+    process.on('SIGINT', () => stopKeepAlivePings());
+
+    // =========================================================================
+    // PHASE 2: Run all the heavy initialization in the background.
+    // The server is already accepting connections (probes pass), but the
+    // readiness middleware will hold real requests until sessions are loaded.
+    // =========================================================================
+
     try {
         // Initialize sync cache
         await syncCache.initSyncCache();
@@ -8213,8 +8169,7 @@ app.use((error, req, res, next) => {
         log.error(() => '[Startup] Failed to initialize sync cache:', error.message);
     }
 
-    // CRITICAL FIX: Wait for session manager to be ready before accepting requests
-    // This prevents "session not found" errors during server startup
+    // Wait for session manager to be ready (this is the slow part with 21K+ Redis sessions)
     try {
         log.info(() => '[Startup] Waiting for session manager to be ready...');
         await sessionManager.waitUntilReady();
@@ -8253,21 +8208,22 @@ app.use((error, req, res, next) => {
         log.warn(() => '[Startup] Continuing startup anyway, but configuration may be invalid');
     }
 
-    // Start server and setup graceful shutdown
-    const server = app.listen(PORT, () => {
-        // Get log level and file logging status
-        const logLevel = (process.env.LOG_LEVEL || 'warn').toUpperCase();
-        const logToFile = process.env.LOG_TO_FILE !== 'false' ? 'ENABLED' : 'DISABLED';
-        const logDir = process.env.LOG_DIR || 'logs/';
-        const storageType = (process.env.STORAGE_TYPE || 'redis').toUpperCase();
-        // Session stats (after readiness, so counts are accurate)
-        // Use synchronous access to cache size for startup banner (storage count requires async)
-        const activeSessions = sessionManager.cache.size;
-        const maxSessions = sessionManager.maxSessions;
-        const sessionsInfo = maxSessions ? `${activeSessions} / ${maxSessions}` : String(activeSessions);
+    // =========================================================================
+    // PHASE 3: Print startup banner now that everything is initialized.
+    // =========================================================================
 
-        // Use console.startup to ensure banner always shows regardless of log level
-        console.startup(`
+    // Get log level and file logging status
+    const logLevel = (process.env.LOG_LEVEL || 'warn').toUpperCase();
+    const logToFile = process.env.LOG_TO_FILE !== 'false' ? 'ENABLED' : 'DISABLED';
+    const logDir = process.env.LOG_DIR || 'logs/';
+    const storageType = (process.env.STORAGE_TYPE || 'redis').toUpperCase();
+    // Session stats (after readiness, so counts are accurate)
+    const activeSessions = sessionManager.cache.size;
+    const maxSessions = sessionManager.maxSessions;
+    const sessionsInfo = maxSessions ? `${activeSessions} / ${maxSessions}` : String(activeSessions);
+
+    // Use console.startup to ensure banner always shows regardless of log level
+    console.startup(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
 ║   🎬 SubMaker - Subtitle Translator Addon                ║
@@ -8287,16 +8243,8 @@ app.use((error, req, res, next) => {
 ╚═══════════════════════════════════════════════════════════╝
     `);
 
-        // Also print a concise session count line
-        console.startup(`Active sessions: ${sessionsInfo}`);
-
-        // Setup graceful shutdown handlers now that server is running
-        sessionManager.setupShutdownHandlers(server);
-
-        // Stop keep-alive pings on graceful shutdown
-        process.on('SIGTERM', () => stopKeepAlivePings());
-        process.on('SIGINT', () => stopKeepAlivePings());
-    });
+    // Also print a concise session count line
+    console.startup(`Active sessions: ${sessionsInfo}`);
 })();
 
 module.exports = app;

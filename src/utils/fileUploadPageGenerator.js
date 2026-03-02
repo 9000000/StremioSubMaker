@@ -3696,7 +3696,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
                 }
 
                 // Trim leading keepalive newlines sent during translation
-                const translatedContent = rawContent.replace(/^\n+/, '');
+                const translatedContent = rawContent.replace(/^\\n+/, '');
                 if (!translatedContent) {
                     throw new Error(tt('fileUpload.errors.translationFailed', { error: 'empty response' }, 'Translation failed: empty response'));
                 }

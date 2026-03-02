@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.66
+
+**Bug Fixes:**
+
+- **Fixed Kubernetes startup probe failure causing restart loops with large session counts:** The HTTP server only bound to port 7001 *after* the session manager finished loading all sessions from Redis. With 21K+ sessions, the `verifySessionIndex()` SCAN + index rebuild took 2+ minutes, during which the Kubernetes startup probe received "connection refused" and eventually restarted the pod — creating an infinite restart loop. The server now binds the HTTP port immediately on startup (Phase 1), then runs all heavy initialization (session loading, cache init, validation) afterward (Phase 2). The existing `FORCE_SESSION_READY` middleware already gates all session-dependent routes, so no user requests are served with missing sessions. The `/health` endpoint now returns a lightweight `200 OK` with `{"status": "starting"}` while the session manager is still initializing, allowing startup/liveness probes to pass immediately. Added `/health` to the readiness middleware skip list so health checks are never blocked by session loading.
+
+- **Changed file upload page requiring `videoId` parameter:** File translation is a standalone tool that only needs the config token — `videoId` is now optional.
+
+- **File translation now always uses the `TranslationEngine`**, which already handles batching, parallel translation, and all workflows (xml/json/original/ai) internally.
+
 ## SubMaker v1.4.65
 
 **Bug Fixes:**
