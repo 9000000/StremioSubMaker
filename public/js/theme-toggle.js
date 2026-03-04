@@ -1,4 +1,4 @@
-(function() {
+(function () {
     'use strict';
 
     var html = document.documentElement;
@@ -8,7 +8,7 @@
         try {
             var saved = localStorage.getItem('theme');
             if (saved) return saved;
-        } catch (_) {}
+        } catch (_) { }
 
         if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
             return 'dark';
@@ -20,7 +20,7 @@
         html.setAttribute('data-theme', theme);
         try {
             localStorage.setItem('theme', theme);
-        } catch (_) {}
+        } catch (_) { }
     }
 
     function spawnCoin(x, y) {
@@ -30,9 +30,9 @@
             c.style.left = x + 'px';
             c.style.top = y + 'px';
             document.body.appendChild(c);
-            c.addEventListener('animationend', function() { c.remove(); }, { once: true });
-            setTimeout(function() { if (c && c.parentNode) c.remove(); }, 1200);
-        } catch (_) {}
+            c.addEventListener('animationend', function () { c.remove(); }, { once: true });
+            setTimeout(function () { if (c && c.parentNode) c.remove(); }, 1200);
+        } catch (_) { }
     }
 
     function wireToggle() {
@@ -41,9 +41,9 @@
         var current = html.getAttribute('data-theme') || getPreferredTheme();
         setTheme(current);
 
-        themeToggle.addEventListener('click', function(e) {
+        themeToggle.addEventListener('click', function (e) {
             var active = html.getAttribute('data-theme') || 'light';
-            var next = active === 'light' ? 'dark' : (active === 'dark' ? 'true-dark' : 'light');
+            var next = active === 'light' ? 'dark' : (active === 'dark' ? 'blackhole' : 'light');
             setTheme(next);
             if (e && e.clientX != null && e.clientY != null) {
                 spawnCoin(e.clientX, e.clientY);
@@ -51,12 +51,12 @@
         });
 
         if (window.matchMedia) {
-            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(event) {
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (event) {
                 try {
                     if (!localStorage.getItem('theme')) {
                         setTheme(event.matches ? 'dark' : 'light');
                     }
-                } catch (_) {}
+                } catch (_) { }
             });
         }
     }

@@ -1,6 +1,9 @@
 # Use Node.js LTS version
 FROM node:20-alpine
 
+# Install su-exec for privilege dropping in entrypoint (tiny, no overhead)
+RUN apk add --no-cache su-exec
+
 # Set working directory
 WORKDIR /app
 
@@ -21,8 +24,8 @@ RUN mkdir -p .cache/translations \
     keys
 
 # Set permissions: node owns everything, data dirs are world-writable (777)
-# so containers running with arbitrary UIDs (user: PUID:PGID) can write to them.
-# For bind mounts, host-side permissions still apply — the entrypoint checks those.
+# so containers running with arbitrary UIDs can write to them via named volumes.
+# For bind mounts, the entrypoint handles ownership automatically.
 RUN chown -R node:node /app && \
     chmod 777 .cache data logs keys
 
@@ -30,8 +33,17 @@ RUN chown -R node:node /app && \
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Use non-root user (override with `user:` in docker-compose for custom UID)
-USER node
+# NOTE: We intentionally do NOT set USER here.
+# The entrypoint starts as root, fixes bind-mount directory ownership
+# to PUID:PGID (default 1000:1000 = node), then drops privileges via
+# su-exec before starting the application. This is the standard Docker
+# pattern (used by postgres, redis, etc.) and handles the common case
+# where Docker creates bind-mount directories as root on the host.
+#
+# To run as a custom UID/GID, set PUID and PGID environment variables:
+#   environment:
+#     - PUID=1000
+#     - PGID=1000
 
 # Expose port (default 7001)
 EXPOSE 7001
@@ -40,6 +52,6 @@ EXPOSE 7001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD node -e "require('http').get('http://localhost:7001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Entrypoint validates directories/permissions before starting the app
+# Entrypoint fixes permissions and drops privileges before starting the app
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["npm", "start"]

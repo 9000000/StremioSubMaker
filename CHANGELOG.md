@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.68
+
+**Bug Fixes:**
+
+- **Fixed LLM hallucinating ASS override tags in translated SRT subtitles:** The translation model (Gemini) sometimes injected `{\an8}` and other ASS/SSA positioning tags into translated subtitle text, even when the source SRT contained none. Added a post-translation cleanup step in `cleanTranslatedText()` that strips all `{\...}` ASS override tag patterns (e.g., `{\an8}`, `{\pos(x,y)}`, `{\b1}`, `{\fad(...)}`) from translated text. The regex `{\\[^}]*}` targets the unique ASS signature (opening brace + backslash) to avoid false positives on normal text.
+
+- **Fixed Romanian (and 4 other languages) translating to Arabic instead of the correct language:** The `normalizeTargetLanguageForPrompt()` function used bare `nameKey.includes('oman')` to detect Arabic (Oman) regional variants, but `'romanian'.includes('oman')` is `true` — so Romanian, Romani, Aromanian, and Romansh all matched the Oman check and were sent to the AI as "Gulf Arabic". The same substring collision pattern affected 28 regional variant checks across Arabic, English, Korean, Serbian, Dutch, and Italian families (e.g., `'uk'` matched Sukuma/Chuukese/Inuktitut/Tumbuka/Volapük → British English; `'syria'` matched Classical Syriac → Syrian Arabic; `'south'` matched English (South Africa) → Korean). All `nameKey.includes()` checks now require the language family as a compound condition (e.g., `nameKey.includes('arabic') && nameKey.includes('oman')`), preventing cross-language false positives.
+
 ## SubMaker v1.4.67
 
 **New Features:**
@@ -17,6 +25,18 @@ All notable changes to this project will be documented in this file.
 - **Selected languages field now only appears when populated:** The "Click languages below to add..." selected-languages container is now hidden until at least one language is selected. Applies to all language sections (Source, Target, Just-fetch, and Learn Mode).
 
 - **Single-batch mode no longer forces bypass mode:** Users can now enable single-batch mode and independently choose whether to use the shared database or bypass mode.
+
+- **Docker entrypoint with automatic permission fixing (su-exec):** The Dockerfile no longer sets `USER node`. Instead, the entrypoint starts as root, creates required directories (`/app/.cache`, `/app/data`, `/app/logs`, `/app/keys`), chowns them to PUID:PGID (env vars, default 1000:1000 = `node`), then drops privileges via `su-exec` before starting the app. This is the standard Docker pattern (used by postgres, redis, etc.) and handles the common case where Docker creates bind-mount directories as root on the host. Users should use `PUID`/`PGID` environment variables instead of the `user:` compose directive — the entrypoint handles everything automatically. If running as non-root (via `user:` directive), the entrypoint falls back to best-effort directory creation with actionable error messages.
+
+- **Deterministic isolation key fallback instead of random ID:** When all methods of deriving a stable isolation key fail, the system now falls back to a deterministic hostname-based hash (`host_<hash>`) instead of a random `crypto.randomBytes` value. The previous random fallback changed on every container restart, causing the storage adapter to create a new cache directory each time — making all previously stored data unreachable.
+
+- **Accurate storage initialization error messages:** Fixed `StorageFactory` logging "Redis storage initialization failed" when `STORAGE_TYPE=filesystem` and the filesystem adapter failed to initialize. The error message now correctly identifies the actual storage type that failed (e.g., "filesystem storage initialization failed"). The retry failure path also now logs actionable guidance about checking directory permissions when using Docker with custom UIDs.
+
+**Bug Fixes:**
+
+- **Fixed self-hosted addon resetting to defaults on container restart:** When using `user: ${PUID}:${PGID}` in docker-compose with bind-mounted volumes, the container process ran as a different UID than the `node` user (UID 1000) that owned the directories at build time. This caused a cascade of EACCES permission errors: (1) encryption key couldn't be saved → fail-fast throw, (2) isolation key derivation fell back to a random in-memory ID that changed on every restart, (3) filesystem storage adapter couldn't create cache directories under the random isolation prefix, (4) session loading failed → config appeared reset to defaults.
+
+- **Fixed `syncCache.js` crashing on permission errors during legacy directory creation:** `initSyncCache()` previously threw on any `fs.mkdir` failure, including EACCES/EPERM permission errors. Since the actual sync cache operations use the storage adapter (which manages its own isolation-aware directories), the legacy `SYNC_CACHE_DIR` path is only needed for backwards compatibility. EACCES/EPERM errors are now caught and logged as warnings instead of crashing the sync cache initialization.
 
 - **Docker permission hardening for custom UID deployments:** Added `docker-entrypoint.sh` that creates required directories (`/app/.cache`, `/app/data`, `/app/logs`, `/app/keys`) and validates write access before the application starts — printing the current UID:GID, failing path, and exact `chown` command when a directory is not writable. Data directories are set to `chmod 777` at build time so containers with arbitrary UIDs via `user: PUID:PGID` can write when using named volumes (bind mounts still depend on host permissions, validated by the entrypoint). The encryption key handler also now includes UID:GID and a `chown` command in EACCES errors, with a suggestion to use the `ENCRYPTION_KEY` env var as an alternative.
 

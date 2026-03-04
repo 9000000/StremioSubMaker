@@ -2503,6 +2503,10 @@ OUTPUT (EXACTLY ${expectedCount} numbered entries, NO OTHER TEXT):`;
     const timecodePattern = /\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*\n?/g;
     cleaned = cleaned.replace(timecodePattern, '').trim();
 
+    // Strip ASS/SSA override tags that LLMs sometimes hallucinate into translated text
+    // Matches {\anX}, {\an8}, {\pos(x,y)}, {\fad(...)}, {\b1}, {\i1}, etc.
+    cleaned = cleaned.replace(/\{\\[^}]*\}/g, '').trim();
+
     // Normalize line endings (CRLF → LF)
     cleaned = cleaned.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 

@@ -115,7 +115,7 @@ function normalizeTargetLanguageForPrompt(targetLanguage) {
   }
 
   // English regional variants
-  if (codeKey === 'en-gb' || (nameKey.includes('english') && (nameKey.includes('uk') || nameKey.includes('united kingdom') || nameKey.includes('british')))) {
+  if (codeKey === 'en-gb' || (nameKey.includes('english') && (nameKey === 'english uk' || nameKey.includes('united kingdom') || nameKey.includes('british')))) {
     return 'British English';
   }
   if (codeKey === 'en-us' || (nameKey.includes('english') && nameKey.includes('american'))) {
@@ -124,7 +124,7 @@ function normalizeTargetLanguageForPrompt(targetLanguage) {
   if (codeKey === 'en-au' || (nameKey.includes('english') && nameKey.includes('australia'))) {
     return 'Australian English';
   }
-  if (codeKey === 'en-ca' || (nameKey.includes('english') && nameKey.includes('canad'))) {
+  if (codeKey === 'en-ca' || (nameKey.includes('english') && (nameKey.includes('canada') || nameKey.includes('canadian')))) {
     return 'Canadian English';
   }
   if (codeKey === 'en-in' || (nameKey.includes('english') && nameKey.includes('india'))) {
@@ -140,7 +140,7 @@ function normalizeTargetLanguageForPrompt(targetLanguage) {
     return 'South African English';
   }
   if (codeKey === 'en-sg' || (nameKey.includes('english') && nameKey.includes('singapore'))) {
-    return 'Singaporean English';
+    return 'Singaporean English';  // Note: codeKey check runs first, so Chinese (Singapore) won't match here
   }
   if (codeKey === 'en-ph' || (nameKey.includes('english') && nameKey.includes('philippines'))) {
     return 'Philippine English';
@@ -151,10 +151,10 @@ function normalizeTargetLanguageForPrompt(targetLanguage) {
   }
 
   // French regional variants
-  if (codeKey === 'fr-ca' || (nameKey.includes('french') && nameKey.includes('canad'))) {
+  if (codeKey === 'fr-ca' || (nameKey.includes('french') && (nameKey.includes('canada') || nameKey.includes('canadian')))) {
     return 'Canadian French (Français canadien)';
   }
-  if (codeKey === 'fr-be' || (nameKey.includes('french') && nameKey.includes('belg'))) {
+  if (codeKey === 'fr-be' || (nameKey.includes('french') && (nameKey.includes('belgium') || nameKey.includes('belgian')))) {
     return 'Belgian French (Français de Belgique)';
   }
   if (codeKey === 'fr-ch' || (nameKey.includes('french') && nameKey.includes('swiss'))) {
@@ -176,52 +176,52 @@ function normalizeTargetLanguageForPrompt(targetLanguage) {
   }
 
   // Arabic regional variants
-  if (codeKey === 'ar-eg' || nameKey.includes('egypt')) {
+  if (codeKey === 'ar-eg' || (nameKey.includes('arabic') && nameKey.includes('egypt'))) {
     return 'Egyptian Arabic (العربية المصرية)';
   }
-  if (codeKey === 'ar-sa' || nameKey.includes('saudi')) {
+  if (codeKey === 'ar-sa' || (nameKey.includes('arabic') && nameKey.includes('saudi'))) {
     return 'Saudi Arabic (العربية السعودية)';
   }
-  if (codeKey === 'ar-ma' || nameKey.includes('morocco')) {
+  if (codeKey === 'ar-ma' || (nameKey.includes('arabic') && nameKey.includes('morocco'))) {
     return 'Moroccan Arabic (الدارجة المغربية)';
   }
-  if (codeKey === 'ar-lb' || nameKey.includes('leban')) {
+  if (codeKey === 'ar-lb' || (nameKey.includes('arabic') && nameKey.includes('leban'))) {
     return 'Lebanese Arabic (اللهجة اللبنانية)';
   }
-  if (codeKey === 'ar-dz' || nameKey.includes('algeria')) {
+  if (codeKey === 'ar-dz' || (nameKey.includes('arabic') && nameKey.includes('algeria'))) {
     return 'Algerian Arabic (الدارجة الجزائرية)';
   }
-  if (codeKey === 'ar-tn' || nameKey.includes('tunisia')) {
+  if (codeKey === 'ar-tn' || (nameKey.includes('arabic') && nameKey.includes('tunisia'))) {
     return 'Tunisian Arabic (الدارجة التونسية)';
   }
-  if (codeKey === 'ar-ly' || nameKey.includes('libya')) {
+  if (codeKey === 'ar-ly' || (nameKey.includes('arabic') && nameKey.includes('libya'))) {
     return 'Libyan Arabic (اللهجة الليبية)';
   }
-  if (codeKey === 'ar-iq' || nameKey.includes('iraq')) {
+  if (codeKey === 'ar-iq' || (nameKey.includes('arabic') && nameKey.includes('iraq'))) {
     return 'Iraqi Arabic (اللهجة العراقية)';
   }
-  if (codeKey === 'ar-sy' || nameKey.includes('syria')) {
+  if (codeKey === 'ar-sy' || (nameKey.includes('arabic') && nameKey.includes('syria'))) {
     return 'Syrian Arabic (اللهجة السورية)';
   }
-  if (codeKey === 'ar-jo' || nameKey.includes('jordan')) {
+  if (codeKey === 'ar-jo' || (nameKey.includes('arabic') && nameKey.includes('jordan'))) {
     return 'Jordanian Arabic (اللهجة الأردنية)';
   }
-  if (codeKey === 'ar-ae' || nameKey.includes('uae') || nameKey.includes('emirates')) {
+  if (codeKey === 'ar-ae' || (nameKey.includes('arabic') && (nameKey.includes('uae') || nameKey.includes('emirates')))) {
     return 'Gulf Arabic (اللهجة الخليجية)';
   }
-  if (codeKey === 'ar-kw' || nameKey.includes('kuwait')) {
+  if (codeKey === 'ar-kw' || (nameKey.includes('arabic') && nameKey.includes('kuwait'))) {
     return 'Kuwaiti Arabic (اللهجة الكويتية)';
   }
-  if (codeKey === 'ar-qa' || nameKey.includes('qatar')) {
+  if (codeKey === 'ar-qa' || (nameKey.includes('arabic') && nameKey.includes('qatar'))) {
     return 'Gulf Arabic (اللهجة الخليجية)';
   }
-  if (codeKey === 'ar-bh' || nameKey.includes('bahrain')) {
+  if (codeKey === 'ar-bh' || (nameKey.includes('arabic') && nameKey.includes('bahrain'))) {
     return 'Gulf Arabic (اللهجة الخليجية)';
   }
-  if (codeKey === 'ar-om' || nameKey.includes('oman')) {
+  if (codeKey === 'ar-om' || (nameKey.includes('arabic') && nameKey.includes('oman'))) {
     return 'Gulf Arabic (اللهجة الخليجية)';
   }
-  if (codeKey === 'ar-ye' || nameKey.includes('yemen')) {
+  if (codeKey === 'ar-ye' || (nameKey.includes('arabic') && nameKey.includes('yemen'))) {
     return 'Yemeni Arabic (اللهجة اليمنية)';
   }
   if (nameKey === 'arabic' || codeKey === 'ar' || codeKey === 'ara') {
@@ -235,7 +235,7 @@ function normalizeTargetLanguageForPrompt(targetLanguage) {
   if (codeKey === 'zh-hans' || codeKey === 'zhs' || codeKey === 'zh-cn' || codeKey === 'chi' || nameKey.includes('simplified')) {
     return 'Simplified Chinese (简体中文)';
   }
-  if (codeKey === 'zh-sg' || (nameKey.includes('chinese') && nameKey.includes('singapore'))) {
+  if (codeKey === 'zh-sg' || (nameKey.includes('chinese') && nameKey.includes('singapore') && !nameKey.includes('english'))) {
     return 'Simplified Chinese (简体中文)'; // Singapore uses simplified
   }
   if (nameKey === 'chinese' || codeKey === 'zh') {
@@ -243,10 +243,10 @@ function normalizeTargetLanguageForPrompt(targetLanguage) {
   }
 
   // Serbian script variants
-  if (codeKey === 'sr-cyrl' || (nameKey.includes('serbian') && nameKey.includes('cyrillic'))) {
+  if (codeKey === 'sr-cyrl' || (nameKey.includes('serbian') && nameKey.includes('cyrillic') && !nameKey.includes('bosnian'))) {
     return 'Serbian (Cyrillic script - Ћирилица)';
   }
-  if (codeKey === 'sr-latn' || (nameKey.includes('serbian') && nameKey.includes('latin'))) {
+  if (codeKey === 'sr-latn' || (nameKey.includes('serbian') && nameKey.includes('latin') && !nameKey.includes('america'))) {
     return 'Serbian (Latin script - Latinica)';
   }
 
@@ -256,15 +256,15 @@ function normalizeTargetLanguageForPrompt(targetLanguage) {
   }
 
   // Korean variants (both are the same language, just political distinction)
-  if (codeKey === 'ko-kr' || (nameKey.includes('korean') && nameKey.includes('south'))) {
+  if (codeKey === 'ko-kr' || (nameKey.includes('korean') && nameKey.includes('south korea'))) {
     return 'Korean (한국어)';
   }
-  if (codeKey === 'ko-kp' || (nameKey.includes('korean') && nameKey.includes('north'))) {
+  if (codeKey === 'ko-kp' || (nameKey.includes('korean') && nameKey.includes('north korea'))) {
     return 'Korean (조선어)';
   }
 
   // Dutch variants
-  if (codeKey === 'nl-be' || (nameKey.includes('dutch') && nameKey.includes('belgium'))) {
+  if (codeKey === 'nl-be' || (nameKey.includes('dutch') && (nameKey.includes('belgium') || nameKey.includes('belgian')))) {
     return 'Flemish Dutch (Vlaams)';
   }
   if (codeKey === 'nl-nl' || nameKey === 'dutch' || codeKey === 'nl' || codeKey === 'nld' || codeKey === 'dut') {
@@ -272,7 +272,7 @@ function normalizeTargetLanguageForPrompt(targetLanguage) {
   }
 
   // Italian variants
-  if (codeKey === 'it-ch' || (nameKey.includes('italian') && nameKey.includes('switzerland'))) {
+  if (codeKey === 'it-ch' || (nameKey.includes('italian') && (nameKey.includes('switzerland') || nameKey.includes('swiss')))) {
     return 'Swiss Italian (Italiano svizzero)';
   }
   if (codeKey === 'it-it' || nameKey === 'italian' || codeKey === 'it' || codeKey === 'ita') {

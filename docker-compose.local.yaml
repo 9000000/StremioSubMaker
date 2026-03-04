@@ -1,8 +1,8 @@
 # Local development setup without Redis (uses filesystem storage)
 #
-# If using `user: PUID:PGID` to run as a custom UID, ensure the host
-# bind-mount directories are owned by that user:
-#   chown -R <PUID>:<PGID> ./data ./.cache ./logs ./keys
+# The entrypoint starts as root, creates bind-mount directories, sets
+# ownership to PUID:PGID (default 1000:1000), then drops to that user.
+# No manual chown required — everything works out of the box.
 #
 services:
   submaker:
@@ -24,11 +24,13 @@ services:
       # Encryption key file path (persisted in bind mount)
       - ENCRYPTION_KEY_FILE=/app/keys/.encryption-key
 
+      # Custom UID/GID for the application process (default: 1000 = node user)
+      # The entrypoint runs as root, chowns data dirs to PUID:PGID, then
+      # drops privileges via su-exec. No need for `user:` in compose.
+      # - PUID=1000
+      # - PGID=1000
     volumes:
       # Persist cache and data directories
-      # NOTE: These bind-mount directories must be writable by the user running
-      # the container. If using `user: PUID:PGID`, run:
-      #   chown -R <PUID>:<PGID> ./data ./.cache ./logs ./keys
       - ./data:/app/data
       - ./.cache:/app/.cache
       - ./logs:/app/logs
