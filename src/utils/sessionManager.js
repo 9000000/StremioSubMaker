@@ -52,6 +52,7 @@ const INTERNAL_FLAGS = [
     '__configHash',         // Added by ensureConfigHash()
     '__configHashScope',
     '__configBaseHash',
+    '__historyUserHash',    // Added from stable session metadata for history namespacing
     '__needsSessionPersist', // Added by normalizeConfig() for auto-correction
     '__persistReason',
     '__regenerated',        // Added by regenerateDefaultConfig()
@@ -104,6 +105,10 @@ function computeTokenFingerprint(token) {
         log.warn(() => ['[SessionManager] Failed to compute token fingerprint:', err?.message || String(err)]);
         return 'token_fingerprint_error';
     }
+}
+
+function computeHistoryUserHash(token) {
+    return `sesshist_${computeTokenFingerprint(token)}`;
 }
 
 // Prevent cache/key collisions from silently serving another user's config by
@@ -861,6 +866,7 @@ class SessionManager extends EventEmitter {
         const sessionData = {
             token,
             tokenFingerprint,
+            historyUserHash: computeHistoryUserHash(token),
             config: encryptedConfig,
             createdAt: Date.now(),
             lastAccessedAt: Date.now(),
@@ -869,7 +875,9 @@ class SessionManager extends EventEmitter {
         };
 
         this.cache.set(token, sessionData);
-        this.decryptedCache.set(token, cloneConfig(config));
+        const configForCache = cloneConfig(config);
+        configForCache.__historyUserHash = sessionData.historyUserHash;
+        this.decryptedCache.set(token, configForCache);
         this.dirty = true;
 
         try {
@@ -972,6 +980,11 @@ class SessionManager extends EventEmitter {
             return null;
         }
 
+        if (!sessionData.historyUserHash) {
+            sessionData.historyUserHash = computeHistoryUserHash(token);
+            needsPersist = true;
+        }
+
         // Update last accessed time
         const now = Date.now();
         sessionData.lastAccessedAt = now;
@@ -1006,7 +1019,9 @@ class SessionManager extends EventEmitter {
         // Use cached decrypted config when available to avoid redundant decrypt/log spam on page changes
         const cachedDecrypted = this.decryptedCache.get(token);
         if (cachedDecrypted) {
-            return cloneConfig(cachedDecrypted);
+            const cloned = cloneConfig(cachedDecrypted);
+            cloned.__historyUserHash = sessionData.historyUserHash;
+            return cloned;
         }
 
         // Decrypt sensitive fields in config before returning
@@ -1128,6 +1143,7 @@ class SessionManager extends EventEmitter {
             }));
         }
 
+        decryptedConfig.__historyUserHash = sessionData.historyUserHash;
         this.decryptedCache.set(token, cloneConfig(decryptedConfig));
 
         return cloneConfig(decryptedConfig);
@@ -1232,9 +1248,14 @@ class SessionManager extends EventEmitter {
         sessionData.fingerprint = fingerprint;
         sessionData.integrity = integrity;
         sessionData.tokenFingerprint = tokenFingerprint;
+        if (!sessionData.historyUserHash) {
+            sessionData.historyUserHash = computeHistoryUserHash(token);
+        }
 
         this.cache.set(token, sessionData);
-        this.decryptedCache.set(token, cloneConfig(config));
+        const configForCache = cloneConfig(config);
+        configForCache.__historyUserHash = sessionData.historyUserHash;
+        this.decryptedCache.set(token, configForCache);
         this.dirty = true;
 
         try {
@@ -1420,6 +1441,11 @@ class SessionManager extends EventEmitter {
                 return null;
             }
 
+            if (!stored.historyUserHash) {
+                stored.historyUserHash = computeHistoryUserHash(token);
+                needsPersist = true;
+            }
+
             // Refresh last accessed and cache it
             const now = Date.now();
             const inactivityAge = now - (stored.lastAccessedAt || stored.createdAt);
@@ -1532,6 +1558,7 @@ class SessionManager extends EventEmitter {
                     }
                 }
 
+                decryptedConfig.__historyUserHash = stored.historyUserHash;
                 this.decryptedCache.set(token, cloneConfig(decryptedConfig));
                 log.debug(() => `[SessionManager] loadSessionFromStorage: successfully loaded session ${redactToken(token)} from Redis`);
                 return cloneConfig(decryptedConfig);

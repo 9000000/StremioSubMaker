@@ -51,7 +51,7 @@ const { redactToken } = require('./src/utils/security');
 const { getAllLanguages, getAllTranslationLanguages, getLanguageName, toISO6392, findISO6391ByName, canonicalSyncLanguageCode } = require('./src/utils/languages');
 const { generateCacheKeys } = require('./src/utils/cacheKeys');
 const { getCached: getDownloadCached, saveCached: saveDownloadCached, getCacheStats: getDownloadCacheStats } = require('./src/utils/downloadCache');
-const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, createLoadingSubtitle, createSessionTokenErrorSubtitle, createOpenSubtitlesAuthErrorSubtitle, createOpenSubtitlesQuotaExceededSubtitle, createCredentialDecryptionErrorSubtitle, createTranslationErrorSubtitle, readFromPartialCache, hasCachedTranslation, purgeTranslationCache, translationStatus, inFlightTranslations, canUserStartTranslation, getHistoryForUser, resolveHistoryUserHash, saveRequestToHistory, resolveHistoryTitle, enrichHistoryEntriesBackground, maybeConvertToSRT } = require('./src/handlers/subtitles');
+const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, createLoadingSubtitle, createSessionTokenErrorSubtitle, createOpenSubtitlesAuthErrorSubtitle, createOpenSubtitlesQuotaExceededSubtitle, createCredentialDecryptionErrorSubtitle, createTranslationErrorSubtitle, readFromPartialCache, hasCachedTranslation, purgeTranslationCache, translationStatus, inFlightTranslations, canUserStartTranslation, getHistoryForUser, migrateHistoryNamespace, resolveHistoryUserHash, saveRequestToHistory, resolveHistoryTitle, enrichHistoryEntriesBackground, maybeConvertToSRT } = require('./src/handlers/subtitles');
 const GeminiService = require('./src/services/gemini');
 const TranslationEngine = require('./src/services/translationEngine');
 const { createProviderInstance, createTranslationProvider, resolveCfWorkersCredentials } = require('./src/services/translationProviderFactory');
@@ -64,7 +64,7 @@ const { warmUpConnections, startKeepAlivePings, stopKeepAlivePings, getPoolStats
 const embeddedCache = require('./src/utils/embeddedCache');
 const { generateSubtitleSyncPage } = require('./src/utils/syncPageGenerator');
 const { generateSubToolboxPage, generateEmbeddedSubtitlePage, generateAutoSubtitlePage } = require('./src/utils/toolboxPageGenerator');
-const { generateHistoryPage } = require('./src/utils/historyPageGenerator');
+const { generateHistoryPage, renderHistoryContent } = require('./src/utils/historyPageGenerator');
 const { generateSmdbPage } = require('./src/utils/smdbPageGenerator');
 const smdbCache = require('./src/utils/smdbCache');
 const { deriveVideoHash } = require('./src/utils/videoHash');
@@ -5733,6 +5733,42 @@ app.get('/smdb/:videoHash/:langCode.srt', async (req, res) => {
 });
 
 // Translation History Page
+function buildHistoryContentEndpoint(configStr, videoId, filename) {
+    const params = new URLSearchParams({ config: String(configStr || '') });
+    if (videoId) params.set('videoId', String(videoId));
+    if (filename) params.set('filename', String(filename));
+    return `/api/sub-history-content?${params.toString()}`;
+}
+
+async function loadHistoryEntriesForPage(config) {
+    const historyUserHash = resolveHistoryUserHash(config);
+    const stableHistoryUserHash = (typeof config.__historyUserHash === 'string' && config.__historyUserHash.trim())
+        ? config.__historyUserHash.trim()
+        : '';
+
+    let history = await getHistoryForUser(historyUserHash, {
+        allowSlowScan: !(stableHistoryUserHash && historyUserHash === stableHistoryUserHash)
+    });
+
+    if (
+        history.length === 0
+        && stableHistoryUserHash
+        && historyUserHash === stableHistoryUserHash
+        && typeof config.__configHash === 'string'
+        && config.__configHash.trim()
+        && config.__configHash.trim() !== stableHistoryUserHash
+    ) {
+        const legacyHistoryUserHash = config.__configHash.trim();
+        const legacyHistory = await getHistoryForUser(legacyHistoryUserHash, { allowSlowScan: false });
+        if (legacyHistory.length > 0) {
+            log.info(() => `[Sub History Page] Migrating ${legacyHistory.length} legacy history entr${legacyHistory.length === 1 ? 'y' : 'ies'} from ${legacyHistoryUserHash} to ${stableHistoryUserHash}`);
+            history = await migrateHistoryNamespace(legacyHistoryUserHash, stableHistoryUserHash, legacyHistory);
+        }
+    }
+
+    return { history, historyUserHash };
+}
+
 app.get('/sub-history', async (req, res) => {
     try {
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
@@ -5749,28 +5785,56 @@ app.get('/sub-history', async (req, res) => {
 
         setNoStore(res);
 
-        const historyUserHash = resolveHistoryUserHash(config);
-        if (!historyUserHash) {
-            log.warn(() => '[Sub History Page] Missing config hash for history request - rejecting');
-            return res.status(400).send(t('server.errors.missingHistoryHash', {}, 'Missing user hash for history requests'));
-        }
-
-        log.debug(() => `[Sub History Page] Loading history for user ${historyUserHash}`);
-
-        const history = await getHistoryForUser(historyUserHash);
-
-        // Render immediately — don't block on enrichment
-        const html = generateHistoryPage(configStr, history, config, videoId, filename);
+        const historyContentEndpoint = buildHistoryContentEndpoint(configStr, videoId, filename);
+        const html = generateHistoryPage(configStr, [], config, videoId, filename, {
+            deferHistoryLoad: true,
+            historyContentEndpoint
+        });
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.send(html);
-
-        // Fire-and-forget: enrich missing titles in background for next page load
-        enrichHistoryEntriesBackground(history, historyUserHash, videoId, filename, config)
-            .catch(e => log.debug(() => ['[Sub History Page] Background enrichment error:', e.message]));
     } catch (error) {
         const t = res.locals?.t || getTranslatorFromRequest(req, res);
         if (respondStorageUnavailable(res, error, '[Sub History Page]', t)) return;
         log.error(() => '[Sub History Page] Error:', error);
+        res.status(500).send(t('server.errors.historyPageFailed', {}, 'Failed to load History page'));
+    }
+});
+
+app.get('/api/sub-history-content', async (req, res) => {
+    try {
+        let t = res.locals?.t || getTranslatorFromRequest(req, res);
+        const { config: configStr, videoId, filename } = req.query;
+
+        if (!configStr) {
+            return res.status(400).send(t('server.errors.missingConfig', {}, 'Missing config'));
+        }
+
+        const config = await resolveConfigGuarded(configStr, req, res, '[Sub History Content] config', t);
+        if (!config) return;
+        t = getTranslatorFromRequest(req, res, config);
+        ensureConfigHash(config, configStr);
+
+        setNoStore(res);
+
+        const historyUserHash = resolveHistoryUserHash(config);
+        if (!historyUserHash) {
+            log.warn(() => '[Sub History Content] Missing config hash for history request - rejecting');
+            return res.status(400).send(t('server.errors.missingHistoryHash', {}, 'Missing user hash for history requests'));
+        }
+
+        log.debug(() => `[Sub History Content] Loading history for user ${historyUserHash}`);
+
+        const { history } = await loadHistoryEntriesForPage(config);
+        const html = renderHistoryContent(configStr, history, config, videoId, filename);
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(html);
+
+        enrichHistoryEntriesBackground(history, historyUserHash, videoId, filename, config)
+            .catch(e => log.debug(() => ['[Sub History Content] Background enrichment error:', e.message]));
+    } catch (error) {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Sub History Content]', t)) return;
+        log.error(() => '[Sub History Content] Error:', error);
         res.status(500).send(t('server.errors.historyPageFailed', {}, 'Failed to load History page'));
     }
 });

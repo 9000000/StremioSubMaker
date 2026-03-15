@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.74
+
+**Bug Fixes:**
+
+- **Fixed config saves minting unintended fresh sessions after transient update failures:** The config page previously fell back to creating a brand-new session on generic update errors or network failures, which could strand users on a fresh empty state and make history/session-backed data appear lost. Save now preserves the current token and asks the user to retry when session storage returns `503`, when update requests fail, or when the network flakes out, instead of silently generating a replacement session. Added regression coverage for the new stable history identity and the empty-history no-scan path.
+
+- **Fixed translation history disappearing after saving settings:** History identity was effectively tied to the recomputed config hash, so saving settings over the same session token could still move the user onto a different empty history namespace and make all prior cards appear to vanish. Sessions now persist a dedicated stable history user hash derived from the session token, and history reads/writes now prefer that stable session-scoped namespace instead of relying on the mutable config hash. Added a one-time legacy bridge on the history page so existing config-hash-based history is copied into the stable namespace when detected, preserving older entries after the upgrade.
+
+- **Fixed empty translation history pages still taking 20s+ on large Redis deployments:** The `/sub-history` route could still fall back to the legacy per-user Redis `SCAN` recovery path when both the aggregated history store key and the sorted-set index were missing, so a user with no history could still pay the cost of walking a large shared Redis keyspace. Added a session-scoped fast path that skips the slow scan for modern empty history namespaces, so truly empty first-load history pages now return immediately instead of stalling on Redis keyspace scans. Also added stale-index cleanup during indexed reads so expired history entry IDs are pruned from the Redis zset instead of causing repeated dead lookups on later page loads.
+
+- **Fixed the history page still feeling dead while stale Redis reads were in progress:** `/sub-history` no longer blocks first paint on the bounded stale-path history lookup. The route now returns the page shell immediately, shows a dedicated loading state, and fetches the history list asynchronously from a separate endpoint so the page stays responsive even when Redis is slow. Added an inline retry state for fragment-load failures instead of dumping the user onto a blank error page.
+
+- **Extended the history fast-path freshness window from 15s to 60s:** The aggregated history store key is now trusted for 1 minute before the page falls back to the bounded Redis index refresh path. This keeps hot history pages on the cheap single-GET path longer and reduces how often users hit the slower indexed recovery path on busy public deployments.
+
 ## SubMaker v1.4.73
 
 **Improvements:**

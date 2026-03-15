@@ -283,12 +283,15 @@ function buildToolLinks(configStr, videoId, filename) {
   };
 }
 
-function generateHistoryPage(configStr, historyEntries, config, videoId, filename) {
+function renderHistoryContent(configStr, historyEntries, config, videoId, filename, options = {}) {
   const links = buildToolLinks(configStr, videoId, filename);
   const t = getTranslator(config?.uiLanguage || 'en');
-  const devMode = (config || {}).devMode === true;
-  const themeToggleLabel = t('fileUpload.themeToggle', {}, 'Toggle theme');
-  const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
+  const state = options.state === 'loading'
+    ? 'loading'
+    : (options.state === 'error' ? 'error' : 'loaded');
+  const errorMessage = options.errorMessage
+    ? escapeHtml(options.errorMessage)
+    : escapeHtml(t('history.loading.errorBody', {}, 'The history request failed. You can retry without leaving the page.'));
 
   // Sort history: newest first
   const sortedHistory = [...(historyEntries || [])].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -484,6 +487,75 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
       <a href="${links.translateFiles}" class="btn-primary">Translate a file</a>
     </div>
   `;
+
+  const loadingState = `
+    <div class="history-loading" role="status" aria-live="polite">
+      <div class="history-loading-head">
+        <div class="history-loading-badge" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="history-loading-copy">
+          <h3>${t('history.loading.title', {}, 'Loading translation history')}</h3>
+          <p>${t('history.loading.body', {}, 'The page is ready. Recent translations will appear here as soon as the backend finishes reading Redis.')}</p>
+        </div>
+      </div>
+      <div class="history-skeleton" aria-hidden="true">
+        <div class="history-skeleton-card">
+          <div class="history-skeleton-line long"></div>
+          <div class="history-skeleton-line medium"></div>
+          <div class="history-skeleton-line short"></div>
+        </div>
+        <div class="history-skeleton-card">
+          <div class="history-skeleton-line long"></div>
+          <div class="history-skeleton-line medium"></div>
+          <div class="history-skeleton-line short"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const errorState = `
+    <div class="history-load-error" role="alert">
+      <div class="history-load-error-head">
+        <div class="history-load-error-badge" aria-hidden="true">!</div>
+        <div class="history-load-error-copy">
+          <h3>${t('history.loading.errorTitle', {}, 'Could not load history')}</h3>
+          <p>${errorMessage}</p>
+        </div>
+      </div>
+      <button type="button" class="btn-primary history-reload-btn" data-history-retry="true">${t('history.loading.retry', {}, 'Retry history load')}</button>
+    </div>
+  `;
+
+  const historyBody = state === 'loading'
+    ? loadingState
+    : (state === 'error'
+      ? errorState
+      : (sortedHistory.length ? `<div class="history-list">${historyRows}</div>` : emptyState));
+
+  return `
+    <div class="history-shell" data-history-state="${escapeHtml(state)}">
+      ${historyBody}
+      <div class="history-limit-note">Showing the newest 20 requests. Older history rolls off automatically.</div>
+    </div>
+  `;
+}
+
+function generateHistoryPage(configStr, historyEntries, config, videoId, filename, options = {}) {
+  const links = buildToolLinks(configStr, videoId, filename);
+  const t = getTranslator(config?.uiLanguage || 'en');
+  const devMode = (config || {}).devMode === true;
+  const themeToggleLabel = t('fileUpload.themeToggle', {}, 'Toggle theme');
+  const localeBootstrap = buildClientBootstrap(loadLocale(config?.uiLanguage || 'en'));
+  const historyContentEndpoint = typeof options.historyContentEndpoint === 'string'
+    ? options.historyContentEndpoint
+    : '';
+  const deferHistoryLoad = options.deferHistoryLoad === true && !!historyContentEndpoint;
+  const initialHistoryContent = deferHistoryLoad
+    ? renderHistoryContent(configStr, [], config, videoId, filename, { state: 'loading' })
+    : renderHistoryContent(configStr, historyEntries, config, videoId, filename);
 
   return `
 <!DOCTYPE html>
@@ -942,6 +1014,122 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
       font-size: 0.9rem;
       text-align: right;
     }
+
+    .history-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .history-loading,
+    .history-load-error {
+      background: linear-gradient(160deg, var(--surface) 0%, var(--surface-2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.35rem;
+      box-shadow: 0 12px 28px var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .history-loading-head,
+    .history-load-error-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .history-loading-badge,
+    .history-load-error-badge {
+      width: 3.1rem;
+      height: 3.1rem;
+      border-radius: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .history-loading-badge {
+      gap: 0.35rem;
+      background: linear-gradient(135deg, rgba(8, 164, 213, 0.18) 0%, rgba(51, 185, 225, 0.38) 100%);
+      border: 1px solid rgba(8, 164, 213, 0.22);
+      box-shadow: 0 10px 26px rgba(8, 164, 213, 0.16);
+    }
+
+    .history-loading-badge span {
+      width: 0.52rem;
+      height: 0.52rem;
+      border-radius: 999px;
+      background: #0b2336;
+      animation: history-loader-bounce 1.15s infinite ease-in-out;
+    }
+
+    .history-loading-badge span:nth-child(2) { animation-delay: 0.12s; }
+    .history-loading-badge span:nth-child(3) { animation-delay: 0.24s; }
+
+    .history-load-error-badge {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.24);
+      color: var(--error);
+      font-size: 1.3rem;
+      font-weight: 700;
+    }
+
+    .history-loading-copy h3,
+    .history-load-error-copy h3 {
+      margin: 0;
+      font-size: 1.12rem;
+      color: var(--text-primary);
+    }
+
+    .history-loading-copy p,
+    .history-load-error-copy p {
+      margin: 0.3rem 0 0;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    .history-skeleton {
+      display: grid;
+      gap: 0.8rem;
+    }
+
+    .history-skeleton-card {
+      border-radius: 12px;
+      border: 1px solid rgba(8, 164, 213, 0.1);
+      background: rgba(255, 255, 255, 0.32);
+      padding: 1rem;
+      display: grid;
+      gap: 0.65rem;
+      overflow: hidden;
+    }
+
+    [data-theme="dark"] .history-skeleton-card,
+    [data-theme="true-dark"] .history-skeleton-card {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .history-skeleton-line {
+      height: 0.82rem;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(148, 163, 184, 0.16) 0%, rgba(8, 164, 213, 0.22) 48%, rgba(148, 163, 184, 0.16) 100%);
+      background-size: 220% 100%;
+      animation: history-shimmer 1.45s linear infinite;
+    }
+
+    .history-skeleton-line.short { width: 36%; }
+    .history-skeleton-line.medium { width: 62%; }
+    .history-skeleton-line.long { width: 88%; }
+
+    .history-reload-btn {
+      border: none;
+      cursor: pointer;
+      font: inherit;
+      align-self: flex-start;
+      margin-top: 0.15rem;
+    }
     
     .history-error {
       margin-top: 0.75rem;
@@ -995,6 +1183,16 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
       box-shadow: 0 10px 26px var(--glow);
     }
 
+    @keyframes history-loader-bounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
+      40% { transform: translateY(-0.22rem); opacity: 1; }
+    }
+
+    @keyframes history-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
     @media (max-width: 920px) {
       .masthead { flex-direction: column; align-items: flex-start; }
       .masthead-actions { width: 100%; justify-content: flex-start; }
@@ -1005,6 +1203,8 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
       .history-tag, .history-chip { font-size: 0.78rem; }
       .history-provider-group { padding: 0.2rem 0.4rem; gap: 0.3rem; font-size: 0.78rem; }
       .history-provider-label { font-size: 0.68rem; }
+      .history-loading-head,
+      .history-load-error-head { flex-direction: column; }
     }
 
     @media (max-width: 768px) {
@@ -1034,15 +1234,107 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
       </div>
     </div>
     
-    <div class="history-list">
-      ${sortedHistory.length ? historyRows : emptyState}
+    <div id="history-content" data-history-endpoint="${escapeHtml(historyContentEndpoint)}" data-history-deferred="${deferHistoryLoad ? 'true' : 'false'}">
+      ${initialHistoryContent}
     </div>
-    <div class="history-limit-note">Showing the newest 20 requests. Older history rolls off automatically.</div>
   </div>
 
   <script src="/js/sw-register.js"></script>
   <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}"></script>
   <script>
+    (function initHistoryLoader() {
+      const host = document.getElementById('history-content');
+      if (!host) return;
+
+      const endpoint = host.dataset.historyEndpoint || '';
+      const deferred = host.dataset.historyDeferred === 'true';
+      if (!endpoint || !deferred) return;
+
+      const loadingHtml = host.innerHTML;
+
+      function tt(key, vars, fallback) {
+        try {
+          if (typeof window.t === 'function') return window.t(key, vars || {}, fallback || key);
+        } catch (_) {}
+        return fallback || key;
+      }
+
+      function escapeMarkup(value) {
+        return String(value === undefined || value === null ? '' : value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+
+      function buildErrorMarkup(message) {
+        const title = escapeMarkup(tt('history.loading.errorTitle', {}, 'Could not load history'));
+        const detail = escapeMarkup(message || tt('history.loading.errorBody', {}, 'The history request failed. You can retry without leaving the page.'));
+        const retry = escapeMarkup(tt('history.loading.retry', {}, 'Retry history load'));
+        const limit = escapeMarkup(tt('history.limitNote', {}, 'Showing the newest 20 requests. Older history rolls off automatically.'));
+        return [
+          '<div class="history-shell" data-history-state="error">',
+          '  <div class="history-load-error" role="alert">',
+          '    <div class="history-load-error-head">',
+          '      <div class="history-load-error-badge" aria-hidden="true">!</div>',
+          '      <div class="history-load-error-copy">',
+          '        <h3>' + title + '</h3>',
+          '        <p>' + detail + '</p>',
+          '      </div>',
+          '    </div>',
+          '    <button type="button" class="btn-primary history-reload-btn" data-history-retry="true">' + retry + '</button>',
+          '  </div>',
+          '  <div class="history-limit-note">' + limit + '</div>',
+          '</div>'
+        ].join('');
+      }
+
+      async function loadHistory() {
+        host.dataset.historyState = 'loading';
+        host.innerHTML = loadingHtml;
+
+        try {
+          const requestUrl = new URL(endpoint, window.location.origin);
+          requestUrl.searchParams.set('_ts', String(Date.now()));
+
+          const response = await fetch(requestUrl.toString(), {
+            headers: { 'Accept': 'text/html' },
+            cache: 'no-store'
+          });
+          const body = await response.text();
+
+          if (!response.ok) {
+            throw new Error((body || '').trim() || tt('history.loading.errorBody', {}, 'The history request failed. You can retry without leaving the page.'));
+          }
+
+          host.dataset.historyState = 'loaded';
+          host.innerHTML = body;
+        } catch (err) {
+          host.dataset.historyState = 'error';
+          host.innerHTML = buildErrorMarkup(err && err.message ? err.message : '');
+          console.warn('History load failed', err);
+        }
+      }
+
+      document.addEventListener('click', function(e) {
+        const retryBtn = e.target && typeof e.target.closest === 'function'
+          ? e.target.closest('[data-history-retry="true"]')
+          : null;
+        if (!retryBtn) return;
+        e.preventDefault();
+        loadHistory();
+      });
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function onHistoryReady() {
+          window.requestAnimationFrame(loadHistory);
+        }, { once: true });
+      } else {
+        window.requestAnimationFrame(loadHistory);
+      }
+    })();
+
     // Retranslate button handler
     (function initRetranslateButtons() {
       const CONFIG_STR = ${JSON.stringify(configStr || '')};
@@ -1191,4 +1483,4 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
   `;
 }
 
-module.exports = { generateHistoryPage };
+module.exports = { generateHistoryPage, renderHistoryContent };

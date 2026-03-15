@@ -6523,12 +6523,14 @@ Translate to {target_language}.`;
                             showAlert(tConfig('config.alerts.sessionExpiredCreating', {}, 'Session expired. Creating new session...'), 'info', 'config.alerts.sessionExpiredCreating', {});
                             localStorage.removeItem(TOKEN_KEY);
                             existingToken = null;
+                        } else if (updateResponse.status === 503) {
+                            showAlert(tConfig('config.alerts.sessionStorageUnavailable', {}, 'Session storage is temporarily unavailable. Please retry in a moment.'), 'warning', 'config.alerts.sessionStorageUnavailable', {});
+                            return;
                         } else if (!updateResponse.ok) {
-                            // Other errors - log and try to create new session
                             const errorText = await updateResponse.text();
-                            showAlert(tConfig('config.alerts.sessionUpdateFailed', {}, 'Session update failed. Creating new session...'), 'warning', 'config.alerts.sessionUpdateFailed', {});
-                            localStorage.removeItem(TOKEN_KEY);
-                            existingToken = null;
+                            const reason = errorText && errorText.trim() ? errorText.trim() : `HTTP ${updateResponse.status}`;
+                            showAlert(tConfig('config.alerts.sessionUpdateRetry', { reason }, 'Failed to update the current session. Please retry instead of creating a new one. Reason: ' + reason), 'error', 'config.alerts.sessionUpdateRetry', { reason });
+                            return;
                         } else {
                             // Success
                             const sessionData = await updateResponse.json();
@@ -6544,10 +6546,8 @@ Translate to {target_language}.`;
                             }
                         }
                     } catch (updateError) {
-                        // Network error or timeout - fall back to create new session
-                        showAlert(tConfig('config.alerts.sessionNetworkError', {}, 'Network error updating session. Creating new session...'), 'warning', 'config.alerts.sessionNetworkError', {});
-                        localStorage.removeItem(TOKEN_KEY);
-                        existingToken = null;
+                        showAlert(tConfig('config.alerts.sessionNetworkRetry', {}, 'Network error updating session. Please retry; your current session token was kept.'), 'warning', 'config.alerts.sessionNetworkRetry', {});
+                        return;
                     }
                 }
             }

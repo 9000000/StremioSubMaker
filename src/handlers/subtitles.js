@@ -5814,7 +5814,8 @@ function pruneHistoryEntries(entries = []) {
 }
 
 function resolveHistoryUserHash(config = {}, explicitHash = '') {
-  return normalizeHistoryUserHash(explicitHash)
+  return normalizeHistoryUserHash(config.__historyUserHash)
+    || normalizeHistoryUserHash(explicitHash)
     || normalizeHistoryUserHash(config.userHash)
     || normalizeHistoryUserHash(config.__configHash)
     || '';
@@ -5891,6 +5892,12 @@ async function getHistoryEntriesFromRedisIndex(userHash, adapter) {
     const fetched = await Promise.all(
       ids.map(id => adapter.get(buildHistoryKey(normalizedHash, id), StorageAdapter.CACHE_TYPES.HISTORY))
     );
+    const missingIds = ids.filter((id, index) => !fetched[index]?.id);
+    if (missingIds.length > 0) {
+      try {
+        await client.zrem(buildHistoryIndexKey(normalizedHash), ...missingIds);
+      } catch (_) { /* best-effort stale-index cleanup */ }
+    }
     return pruneHistoryEntries(fetched.filter(entry => entry && entry.id));
   } catch (_) {
     return null;
@@ -5961,11 +5968,13 @@ async function saveRequestToHistory(userHash, entry) {
 // How long to trust the aggregated store key before doing a full per-entry SCAN.
 // Within this window a history page load is just one Redis GET (fast path).
 // After the window, we scan per-entry keys written by all pods and rebuild the cache.
-// 15s means an entry from a sibling pod appears on the history page within 15s at most.
-const HISTORY_STORE_CACHE_TTL_MS = 15_000;
+// 60s keeps the history page on the cheap path longer, but a missed sibling-pod
+// cache refresh can also stay hidden for up to 60s before the indexed path corrects it.
+const HISTORY_STORE_CACHE_TTL_MS = 60_000;
 
-async function getHistoryForUser(userHash) {
+async function getHistoryForUser(userHash, options = {}) {
   try {
+    const allowSlowScan = options.allowSlowScan !== false;
     const normalizedHash = normalizeHistoryUserHash(userHash);
     if (!normalizedHash) return [];
     const adapter = await getStorageAdapter();
@@ -6016,6 +6025,10 @@ async function getHistoryForUser(userHash) {
       } catch (_) { /* best-effort store-key refresh */ }
 
       return result;
+    }
+
+    if (!allowSlowScan) {
+      return pruneHistoryEntries(Object.values(storeEntries)).slice(0, MAX_HISTORY_ITEMS);
     }
 
     // --- SLOW PATH ---
@@ -6073,6 +6086,25 @@ async function getHistoryForUser(userHash) {
     log.error(() => [`[History] Error fetching history for ${userHash}:`, err.message]);
     return [];
   }
+}
+
+async function migrateHistoryNamespace(sourceUserHash, targetUserHash, seedEntries = null) {
+  const normalizedSource = normalizeHistoryUserHash(sourceUserHash);
+  const normalizedTarget = normalizeHistoryUserHash(targetUserHash);
+  if (!normalizedSource || !normalizedTarget || normalizedSource === normalizedTarget) {
+    return [];
+  }
+
+  const entries = Array.isArray(seedEntries)
+    ? pruneHistoryEntries(seedEntries)
+    : await getHistoryForUser(normalizedSource);
+
+  if (entries.length === 0) {
+    return [];
+  }
+
+  await Promise.allSettled(entries.map(entry => saveRequestToHistory(normalizedTarget, entry)));
+  return entries;
 }
 
 /**
@@ -6243,6 +6275,7 @@ module.exports = {
   readFromStorage,
   resolveHistoryUserHash,
   getHistoryForUser,
+  migrateHistoryNamespace,
   saveRequestToHistory,
   resolveHistoryTitle,
   enrichHistoryEntriesBackground
