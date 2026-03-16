@@ -93,11 +93,59 @@ const CACHE_BUSTER_PATH = `/v${CACHE_BUSTER_VERSION}`;
 
 log.info(() => `[Startup] Cache buster active: ${CACHE_BUSTER_PATH}`);
 
+const SUBTITLE_EXTRA_QUERY_KEYS = new Set(['filename', 'videoHash', 'videoSize']);
+
 const PORT = process.env.PORT || 7001;
 // Reject suspicious host headers early (defense against host header injection)
 // Allow alphanumeric, dots, hyphens, underscores, and optional port
 const HOST_HEADER_REGEX = /^[A-Za-z0-9._-]+(?::\d+)?$/;
 const TRACE_CONFIG_RESOLVE = process.env.TRACE_CONFIG_RESOLVE === 'true';
+
+function normalizeSubtitleQueryExtras(req) {
+    if (!req || typeof req.url !== 'string') return false;
+
+    const queryIndex = req.url.indexOf('?');
+    if (queryIndex === -1) return false;
+
+    const pathPart = req.url.slice(0, queryIndex);
+    const queryPart = req.url.slice(queryIndex + 1);
+    if (!pathPart.includes('/subtitles/')) return false;
+
+    // Only rewrite requests that use the SDK-incompatible query-string variant:
+    //   /subtitles/{type}/{id}.json?filename=...&videoHash=...
+    if (!/\/subtitles\/[^/]+\/[^/]+\.json$/i.test(pathPart)) return false;
+
+    const params = new URLSearchParams(queryPart);
+    const normalizedEntries = [];
+    const passthroughEntries = [];
+    const seenExtraKeys = new Set();
+
+    for (const [key, value] of params.entries()) {
+        if (SUBTITLE_EXTRA_QUERY_KEYS.has(key) && !seenExtraKeys.has(key)) {
+            seenExtraKeys.add(key);
+            if (typeof value === 'string' && value.length > 0) {
+                normalizedEntries.push([key, value]);
+                continue;
+            }
+        }
+        passthroughEntries.push([key, value]);
+    }
+
+    if (normalizedEntries.length === 0) return false;
+
+    const extraSegment = normalizedEntries
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+        .join('&');
+    const rebuiltPath = pathPart.replace(/\.json$/i, `/${extraSegment}.json`);
+    const passthroughQuery = passthroughEntries.length
+        ? `?${new URLSearchParams(passthroughEntries).toString()}`
+        : '';
+
+    req.url = `${rebuiltPath}${passthroughQuery}`;
+    req.__subtitleQueryExtraNormalized = normalizedEntries.map(([key]) => key);
+    log.debug(() => `[Subtitle Extra Normalize] Rewrote query-style subtitle extras for ${pathPart.substring(0, 120)} (keys: ${req.__subtitleQueryExtraNormalized.join(',')})`);
+    return true;
+}
 
 // Initialize session manager with environment-based configuration
 // Memory limit: 30,000 sessions (LRU eviction) - reduced from 50k to balance memory usage
@@ -2254,8 +2302,11 @@ app.use('/addon/:config', async (req, res, next) => {
         } else {
             req.url = req.url.replace(versionSegment, '');
         }
+        normalizeSubtitleQueryExtras(req);
         return next();
     }
+
+    normalizeSubtitleQueryExtras(req);
 
     // Android compatibility dev mode: allow direct subtitle paths (no 307 hop)
     // for players that silently drop external subtitle URLs when a redirect is required.
@@ -7887,7 +7938,7 @@ function generateTranslationSelectorPage(subtitles, videoId, targetLang, configS
 // Middleware to replace {{ADDON_URL}} placeholder in responses
 // This is CRITICAL because Stremio SDK uses res.end() not res.json()
 app.use('/addon/:config', (req, res, next) => {
-    const requestPath = req.path || req.url || 'unknown';
+    const requestPath = req.originalUrl || req.url || req.path || 'unknown';
     const isSubtitlesRequest = requestPath.includes('/subtitles/');
     const isManifestRequest = requestPath.includes('/manifest.json');
     const isDownloadRequest = requestPath.includes('/subtitle/')
@@ -7902,6 +7953,10 @@ app.use('/addon/:config', (req, res, next) => {
     } else if (isDownloadRequest) {
         // Log download requests at DEBUG level (these are frequent)
         log.debug(() => `[Addon Request] ${req.method} ${requestPath.substring(0, 100)}`);
+    }
+
+    if (req.__subtitleQueryExtraNormalized?.length) {
+        log.debug(() => `[Addon Request] Subtitle extras normalized from query string (${req.__subtitleQueryExtraNormalized.join(',')})`);
     }
 
     // CRITICAL: Prevent caching to avoid cross-user config contamination
@@ -8037,7 +8092,8 @@ app.get('/manifest.json', (req, res) => {
             catalogs: [],
             resources: ['subtitles'],
             types: ['movie', 'series', 'anime'],
-            idPrefixes: ['tt', 'tmdb', 'anidb', 'kitsu', 'mal', 'myanimelist', 'anilist', 'tvdb', 'simkl', 'livechart', 'anisearch'],
+            // Leave idPrefixes unset so Stremio still calls the addon and the
+            // server can log + filter unsupported IDs explicitly.
             behaviorHints: {
                 configurable: true,
                 configurationRequired: true

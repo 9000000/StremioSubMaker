@@ -496,6 +496,113 @@ function normalizeImdbId(id) {
   return idStr;
 }
 
+const ANIME_PREFIX_ALIASES = {
+  myanimelist: 'mal'
+};
+
+const SUPPORTED_ANIME_PREFIXES = new Set([
+  'anidb',
+  'kitsu',
+  'mal',
+  'myanimelist',
+  'anilist',
+  'tvdb',
+  'simkl',
+  'livechart',
+  'anisearch'
+]);
+
+/**
+ * Classify whether a Stremio ID is supported by SubMaker before deeper parsing.
+ * This lets the server log filtered-out requests instead of relying on manifest
+ * `idPrefixes`, which causes Stremio to skip the addon entirely client-side.
+ *
+ * @param {string} id - Raw Stremio video ID
+ * @returns {{ raw: string, rawPrefix: string, canonicalPrefix: string, supported: boolean, reasonCode: string, reason: string }}
+ */
+function inspectStremioIdSupport(id) {
+  if (!id) {
+    return {
+      raw: '',
+      rawPrefix: '',
+      canonicalPrefix: '',
+      supported: false,
+      reasonCode: 'missing_id',
+      reason: 'missing Stremio ID'
+    };
+  }
+
+  const raw = String(id).trim();
+  if (!raw) {
+    return {
+      raw,
+      rawPrefix: '',
+      canonicalPrefix: '',
+      supported: false,
+      reasonCode: 'empty_id',
+      reason: 'empty Stremio ID'
+    };
+  }
+
+  const parts = raw.split(':');
+  const rawPrefix = String(parts[0] || '').toLowerCase();
+  const canonicalPrefix = ANIME_PREFIX_ALIASES[rawPrefix] || rawPrefix;
+
+  if (rawPrefix === 'tmdb') {
+    return {
+      raw,
+      rawPrefix,
+      canonicalPrefix,
+      supported: true,
+      reasonCode: 'supported_tmdb',
+      reason: ''
+    };
+  }
+
+  if (parts[0] && SUPPORTED_ANIME_PREFIXES.has(rawPrefix)) {
+    return {
+      raw,
+      rawPrefix,
+      canonicalPrefix,
+      supported: true,
+      reasonCode: 'supported_anime',
+      reason: ''
+    };
+  }
+
+  const normalizedImdbBase = normalizeImdbId(parts[0]);
+  if (/^tt\d{3,}$/i.test(String(normalizedImdbBase || ''))) {
+    return {
+      raw,
+      rawPrefix,
+      canonicalPrefix: 'tt',
+      supported: true,
+      reasonCode: 'supported_imdb',
+      reason: ''
+    };
+  }
+
+  if (parts.length > 1 && rawPrefix) {
+    return {
+      raw,
+      rawPrefix,
+      canonicalPrefix,
+      supported: false,
+      reasonCode: 'unsupported_prefix',
+      reason: `unsupported Stremio ID prefix "${rawPrefix}"`
+    };
+  }
+
+  return {
+    raw,
+    rawPrefix,
+    canonicalPrefix,
+    supported: false,
+    reasonCode: 'invalid_id',
+    reason: 'invalid IMDB-style Stremio ID'
+  };
+}
+
 /**
  * Extract video info from Stremio ID
  * @param {string} id - Stremio video ID (e.g., "tt1234567:1:2" for episode, "anidb:123:1:2" for anime, "tmdb:1234" for TMDB)
@@ -562,23 +669,8 @@ function parseStremioId(id, stremioType) {
   }
 
   // Handle anime IDs (extended compatibility with common anime catalog prefixes)
-  const animePrefixAliases = {
-    myanimelist: 'mal'
-  };
-  const supportedAnimePrefixes = new Set([
-    'anidb',
-    'kitsu',
-    'mal',
-    'myanimelist',
-    'anilist',
-    'tvdb',
-    'simkl',
-    'livechart',
-    'anisearch'
-  ]);
-
-  if (parts[0] && supportedAnimePrefixes.has(prefix)) {
-    const canonicalAnimePrefix = animePrefixAliases[prefix] || prefix;
+  if (parts[0] && SUPPORTED_ANIME_PREFIXES.has(prefix)) {
+    const canonicalAnimePrefix = ANIME_PREFIX_ALIASES[prefix] || prefix;
     const animeIdType = canonicalAnimePrefix;
     const animeRawId = String(parts[1] || '').trim();
     if (!animeRawId) return null;
@@ -717,6 +809,7 @@ module.exports = {
   appendHiddenInformationalNote,
   validateSRT,
   normalizeImdbId,
+  inspectStremioIdSupport,
   parseStremioId,
   createSubtitleUrl,
   sanitizeSubtitleText,

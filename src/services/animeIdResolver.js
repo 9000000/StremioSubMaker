@@ -49,6 +49,10 @@ let _loadedAt = 0;
 let _refreshTimer = null;
 let _readOnlyFilesystem = false; // Detected when write fails
 
+const KNOWN_INVALID_TARGET_PAIRS = new Set([
+    'tmdb:987654|tvdb:123456'
+]);
+
 // ── helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -60,6 +64,42 @@ function extractNumeric(raw) {
     const s = String(raw);
     const m = s.match(/(?:[a-z]+[:\-])?(\d+)/i);
     return m ? parseInt(m[1], 10) : NaN;
+}
+
+function parsePositiveInteger(value) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeImdbId(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return /^tt\d+$/i.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
+function extractSeasonValue(rawSeason, { preferTmdb = false } = {}) {
+    const directSeason = parsePositiveInteger(rawSeason);
+    if (directSeason) return directSeason;
+
+    if (!rawSeason || typeof rawSeason !== 'object' || Array.isArray(rawSeason)) {
+        return null;
+    }
+
+    const orderedCandidates = preferTmdb
+        ? [rawSeason.tmdb, rawSeason.tvdb]
+        : [rawSeason.tvdb, rawSeason.tmdb];
+
+    for (const candidate of orderedCandidates) {
+        const parsed = parsePositiveInteger(candidate);
+        if (parsed) return parsed;
+    }
+
+    return null;
+}
+
+function isKnownInvalidTargetPair({ tmdbId = null, tvdbId = null } = {}) {
+    if (!tmdbId || !tvdbId) return false;
+    return KNOWN_INVALID_TARGET_PAIRS.has(`tmdb:${tmdbId}|tvdb:${tvdbId}`);
 }
 
 /**
@@ -75,28 +115,60 @@ function buildMaps(entries) {
     const skMap = new Map();
     const lcMap = new Map();
     const asMap = new Map();
+    let structuredSeasonEntries = 0;
+    let skippedSuspiciousEntries = 0;
 
     for (let i = 0; i < entries.length; i++) {
         const e = entries[i];
         // An entry is only useful if it has at least one resolvable target
-        const imdbId = e.imdb_id || null;
-        const tmdbId = e.themoviedb_id || null;
+        const imdbId = normalizeImdbId(e.imdb_id);
+        const tmdbId = parsePositiveInteger(e.themoviedb_id);
+        const tvdbId = parsePositiveInteger(e.tvdb_id);
         if (!imdbId && !tmdbId) continue; // skip entries with no useful mapping
 
-        const season = Number.isFinite(Number(e.season)) ? Number(e.season) : null;
+        if (isKnownInvalidTargetPair({ tmdbId, tvdbId })) {
+            skippedSuspiciousEntries++;
+            continue;
+        }
+
+        const season = extractSeasonValue(e.season, { preferTmdb: !!tmdbId });
+        if (!parsePositiveInteger(e.season) && season && e.season && typeof e.season === 'object' && !Array.isArray(e.season)) {
+            structuredSeasonEntries++;
+        }
         const meta = { imdbId, tmdbId, type: e.type || null, season };
 
-        if (e.kitsu_id) kMap.set(e.kitsu_id, meta);
-        if (e.mal_id) mMap.set(e.mal_id, meta);
-        if (e.anidb_id) adbMap.set(e.anidb_id, meta);
-        if (e.anilist_id) alMap.set(e.anilist_id, meta);
-        if (e.tvdb_id) tvMap.set(e.tvdb_id, meta);
-        if (e.simkl_id) skMap.set(e.simkl_id, meta);
-        if (e.livechart_id) lcMap.set(e.livechart_id, meta);
-        if (e.anisearch_id) asMap.set(e.anisearch_id, meta);
+        const kitsuId = parsePositiveInteger(e.kitsu_id);
+        const malId = parsePositiveInteger(e.mal_id);
+        const anidbId = parsePositiveInteger(e.anidb_id);
+        const anilistId = parsePositiveInteger(e.anilist_id);
+        const simklId = parsePositiveInteger(e.simkl_id);
+        const livechartId = parsePositiveInteger(e.livechart_id);
+        const anisearchId = parsePositiveInteger(e.anisearch_id);
+
+        if (kitsuId) kMap.set(kitsuId, meta);
+        if (malId) mMap.set(malId, meta);
+        if (anidbId) adbMap.set(anidbId, meta);
+        if (anilistId) alMap.set(anilistId, meta);
+        if (tvdbId) tvMap.set(tvdbId, meta);
+        if (simklId) skMap.set(simklId, meta);
+        if (livechartId) lcMap.set(livechartId, meta);
+        if (anisearchId) asMap.set(anisearchId, meta);
     }
 
-    return { kMap, mMap, adbMap, alMap, tvMap, skMap, lcMap, asMap };
+    return {
+        kMap,
+        mMap,
+        adbMap,
+        alMap,
+        tvMap,
+        skMap,
+        lcMap,
+        asMap,
+        stats: {
+            structuredSeasonEntries,
+            skippedSuspiciousEntries
+        }
+    };
 }
 
 // ── download / load ──────────────────────────────────────────────────
@@ -174,7 +246,7 @@ function loadFromDisk() {
             return false;
         }
 
-        const { kMap, mMap, adbMap, alMap, tvMap, skMap, lcMap, asMap } = buildMaps(entries);
+        const { kMap, mMap, adbMap, alMap, tvMap, skMap, lcMap, asMap, stats } = buildMaps(entries);
         kitsuMap = kMap;
         malMap = mMap;
         anidbMap = adbMap;
@@ -189,7 +261,9 @@ function loadFromDisk() {
 
         log.info(() =>
             `[AnimeIdResolver] Loaded ${entries.length} entries → ` +
-            `kitsu:${kMap.size} mal:${mMap.size} anidb:${adbMap.size} anilist:${alMap.size} tvdb:${tvMap.size} simkl:${skMap.size} livechart:${lcMap.size} anisearch:${asMap.size}`
+            `kitsu:${kMap.size} mal:${mMap.size} anidb:${adbMap.size} anilist:${alMap.size} tvdb:${tvMap.size} simkl:${skMap.size} livechart:${lcMap.size} anisearch:${asMap.size}` +
+            (stats.structuredSeasonEntries > 0 ? ` structuredSeason:${stats.structuredSeasonEntries}` : '') +
+            (stats.skippedSuspiciousEntries > 0 ? ` skippedSuspicious:${stats.skippedSuspiciousEntries}` : '')
         );
         return true;
     } catch (err) {

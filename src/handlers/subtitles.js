@@ -12,7 +12,7 @@ const animeIdResolver = require('../services/animeIdResolver');
 const StremioCommunitySubtitlesService = require('../services/stremioCommunitySubtitles');
 const WyzieSubsService = require('../services/wyzieSubs');
 const SubsRoService = require('../services/subsRo');
-const { parseSRT, toSRT, parseStremioId, appendHiddenInformationalNote, normalizeImdbId, ensureSRTForTranslation, convertToSRT, detectASSFormat } = require('../utils/subtitle');
+const { parseSRT, toSRT, inspectStremioIdSupport, parseStremioId, appendHiddenInformationalNote, normalizeImdbId, ensureSRTForTranslation, convertToSRT, detectASSFormat } = require('../utils/subtitle');
 const { getLanguageName, getDisplayName, toISO6391, toISO6392, canonicalSyncLanguageCode, normalizeLanguageCode } = require('../utils/languages');
 const { getTranslator } = require('../utils/i18n');
 const { deriveVideoHash } = require('../utils/videoHash');
@@ -207,12 +207,6 @@ const inFlightSearches = new LRUCache({
 // - SUBTITLE_SEARCH_CACHE_TTL_MS: Time-to-live in milliseconds (default: 600000 = 10 minutes)
 const SUBTITLE_SEARCH_CACHE_MAX = parseInt(process.env.SUBTITLE_SEARCH_CACHE_MAX) || 5000;
 const SUBTITLE_SEARCH_CACHE_TTL_MS = parseInt(process.env.SUBTITLE_SEARCH_CACHE_TTL_MS) || (10 * 60 * 1000); // 10 minutes
-
-// Performance: Maximum time to wait for subtitle provider API responses
-// After this timeout, we return whatever results are available from faster providers
-// Set to 0 to disable timeout (wait for all providers indefinitely)
-// Default: 7000ms (7 seconds) - balances speed vs coverage
-const PROVIDER_SEARCH_TIMEOUT_MS = parseInt(process.env.PROVIDER_SEARCH_TIMEOUT_MS) || 15000;
 
 const subtitleSearchResultsCache = new LRUCache({
   max: SUBTITLE_SEARCH_CACHE_MAX,
@@ -475,6 +469,22 @@ function getVideoCacheIdComponent(videoInfo) {
   if (videoInfo?.imdbId) return videoInfo.imdbId;
   if (videoInfo?.tmdbId) return `tmdb:${videoInfo.tmdbId}`;
   return 'unknown';
+}
+
+function buildSubtitleSearchContextKey({ streamFilename = '', videoHash = '', videoSize = null } = {}) {
+  const normalizedFilename = String(streamFilename || '').trim().toLowerCase();
+  const normalizedHash = String(videoHash || '').trim().toLowerCase();
+  const normalizedSize = Number.isFinite(Number(videoSize)) && Number(videoSize) > 0
+    ? String(Number(videoSize))
+    : '';
+
+  const parts = [];
+  if (normalizedFilename) parts.push(`fn:${normalizedFilename}`);
+  if (normalizedHash) parts.push(`vh:${normalizedHash}`);
+  if (normalizedSize) parts.push(`vs:${normalizedSize}`);
+
+  if (parts.length === 0) return 'ctx:none';
+  return `ctx:${shortKey(parts.join('|'))}`;
 }
 
 /**
@@ -2129,7 +2139,8 @@ function createSubtitleHandler(config) {
   return async (args) => {
     const handlerStartTime = Date.now();
     try {
-      log.info(() => `[Subtitles] Handler called: type=${args.type}, id=${args.id?.substring(0, 30)}, extra.filename=${args.extra?.filename ? 'yes' : 'no'}, extra.videoHash=${args.extra?.videoHash ? 'yes' : 'no'}`);
+      const requestId = String(args.id || '').trim();
+      log.info(() => `[Subtitles] Handler called: type=${args.type}, id=${requestId.substring(0, 30)}, extra.filename=${args.extra?.filename ? 'yes' : 'no'}, extra.videoHash=${args.extra?.videoHash ? 'yes' : 'no'}`);
 
       // CRITICAL DEFENSIVE CHECK: Validate config structure to detect contamination
       if (!config || typeof config !== 'object') {
@@ -2156,10 +2167,16 @@ function createSubtitleHandler(config) {
         return { subtitles: [] };
       }
 
+      const idSupport = inspectStremioIdSupport(id);
+      if (!idSupport.supported) {
+        log.warn(() => `[Subtitles] Filtered request before lookup: reason=${idSupport.reasonCode} prefix=${idSupport.rawPrefix || 'none'} type=${type || 'unknown'} id=${requestId.substring(0, 80)}`);
+        return { subtitles: [] };
+      }
+
       const videoInfo = parseStremioId(id, type);
 
       if (!videoInfo) {
-        log.error(() => ['[Subtitles] Invalid video ID:', id]);
+        log.warn(() => `[Subtitles] Filtered malformed supported ID: prefix=${idSupport.canonicalPrefix || idSupport.rawPrefix || 'unknown'} type=${type || 'unknown'} id=${requestId.substring(0, 80)}`);
         return { subtitles: [] };
       }
 
@@ -2425,10 +2442,15 @@ function createSubtitleHandler(config) {
       const cacheIdComponent = getVideoCacheIdComponent(videoInfo);
       const subtitleSearchRevisionKey = `${CACHE_PREFIXES.SUBTITLE_SEARCH_REV}${userHash}`;
       const subtitleSearchRevision = Math.max(0, await getCounter(subtitleSearchRevisionKey));
+      const streamContextKey = buildSubtitleSearchContextKey({
+        streamFilename,
+        videoHash: hasRealStremioHash ? extra.videoHash : '',
+        videoSize: validVideoSize
+      });
       // Create user-scoped deduplication key based on video info, languages, and config hash
       // This ensures different users (or same user with different configs) get separate cached results
       // Cache automatically purges when user changes config (different hash = different cache key)
-      const dedupKey = `subtitle-search:${cacheIdComponent}:${videoInfo.type}:${videoInfo.season || ''}:${videoInfo.episode || ''}:${normalizedSearchLanguages.join(',')}:${userHash}:rev=${subtitleSearchRevision}`;
+      const dedupKey = `subtitle-search:${cacheIdComponent}:${videoInfo.type}:${videoInfo.season || ''}:${videoInfo.episode || ''}:${normalizedSearchLanguages.join(',')}:${userHash}:${streamContextKey}:rev=${subtitleSearchRevision}`;
 
       // Collect subtitles from all enabled providers with deduplication
       let openSubsAuthFailed = false; // track OpenSubtitles auth failures to append UX hint entries later
@@ -2436,12 +2458,16 @@ function createSubtitleHandler(config) {
         // Parallelize all provider searches using Promise.allSettled for better performance
         // This reduces search time from (OpenSubtitles + SubDL + SubSource) sequential
         // to max(OpenSubtitles, SubDL, SubSource) parallel
-        const searchPromises = [];
+        const searchTasks = [];
         const skippedProviders = []; // Track providers skipped due to circuit breaker
+        const addSearchTask = (provider, promise) => {
+          searchTasks.push({ provider, promise });
+        };
 
         // Check if OpenSubtitles provider is enabled
         if (config.subtitleProviders?.opensubtitles?.enabled) {
           const implementationType = config.subtitleProviders.opensubtitles.implementationType || 'v3';
+          const providerLabel = `OpenSubtitles (${implementationType})`;
 
           // Check circuit breaker health before making request
           const providerKey = implementationType === 'v3' ? 'opensubtitles_v3' : 'opensubtitles_auth';
@@ -2449,7 +2475,7 @@ function createSubtitleHandler(config) {
 
           if (!health.healthy) {
             log.debug(() => `[Subtitles] Skipping OpenSubtitles (${implementationType}): ${health.reason} (retry in ${health.retryInSec}s)`);
-            skippedProviders.push({ provider: `OpenSubtitles (${implementationType})`, reason: health.reason });
+            skippedProviders.push({ provider: providerLabel, reason: health.reason });
           } else {
             log.debug(() => `[Subtitles] OpenSubtitles provider is enabled (implementation: ${implementationType})`);
 
@@ -2460,12 +2486,12 @@ function createSubtitleHandler(config) {
               opensubtitles = new OpenSubtitlesService(config.subtitleProviders.opensubtitles);
             }
 
-            searchPromises.push(
+            addSearchTask(providerLabel,
               opensubtitles.searchSubtitles(searchParams)
                 .then(results => {
                   // Record success for circuit breaker
                   circuitBreaker.recordSuccess(implementationType === 'v3' ? 'opensubtitlesV3' : 'opensubtitlesV3');
-                  return { provider: `OpenSubtitles (${implementationType})`, results };
+                  return { provider: providerLabel, results };
                 })
                 .catch(error => {
                   // Record failure for circuit breaker if it's a connection error
@@ -2479,7 +2505,7 @@ function createSubtitleHandler(config) {
                       openSubsAuthFailed = true;
                     }
                   } catch (_) { }
-                  return ({ provider: `OpenSubtitles (${implementationType})`, results: [], error });
+                  return ({ provider: providerLabel, results: [], error });
                 })
             );
           }
@@ -2496,7 +2522,7 @@ function createSubtitleHandler(config) {
           } else {
             log.debug(() => '[Subtitles] SubDL provider is enabled');
             const subdl = new SubDLService(config.subtitleProviders.subdl.apiKey);
-            searchPromises.push(
+            addSearchTask('SubDL',
               subdl.searchSubtitles(searchParams)
                 .then(results => {
                   circuitBreaker.recordSuccess('subdl');
@@ -2524,7 +2550,7 @@ function createSubtitleHandler(config) {
           } else {
             log.debug(() => '[Subtitles] SubSource provider is enabled');
             const subsource = new SubSourceService(config.subtitleProviders.subsource.apiKey);
-            searchPromises.push(
+            addSearchTask('SubSource',
               subsource.searchSubtitles(searchParams)
                 .then(results => {
                   circuitBreaker.recordSuccess('subsource');
@@ -2560,7 +2586,7 @@ function createSubtitleHandler(config) {
             }
 
             const scs = new StremioCommunitySubtitlesService();
-            searchPromises.push(
+            addSearchTask('StremioCommunitySubtitles',
               scs.searchSubtitles(searchParams)
                 .then(results => {
                   circuitBreaker.recordSuccess('scs');
@@ -2590,7 +2616,7 @@ function createSubtitleHandler(config) {
             const wyzie = new WyzieSubsService();
             // Pass sources config so Wyzie only queries user-selected sources
             const wyzieParams = { ...searchParams, sources: config.subtitleProviders.wyzie.sources };
-            searchPromises.push(
+            addSearchTask('WyzieSubs',
               wyzie.searchSubtitles(wyzieParams)
                 .then(results => {
                   circuitBreaker.recordSuccess('wyzie');
@@ -2618,7 +2644,7 @@ function createSubtitleHandler(config) {
           } else {
             log.debug(() => '[Subtitles] Subs.ro provider is enabled');
             const subsro = new SubsRoService(config.subtitleProviders.subsro.apiKey);
-            searchPromises.push(
+            addSearchTask('SubsRo',
               subsro.searchSubtitles(searchParams)
                 .then(results => {
                   circuitBreaker.recordSuccess('subsro');
@@ -2642,21 +2668,18 @@ function createSubtitleHandler(config) {
         // This prevents slow/unresponsive providers from blocking the entire response
         let providerResults = [];
 
-        // Use configurable timeout from config (default 12s), with env override still available
-        // Orchestration timeout = config value (individual requests already have -2s buffer built in)
-        const orchestrationTimeoutMs = process.env.PROVIDER_SEARCH_TIMEOUT_MS
-          ? parseInt(process.env.PROVIDER_SEARCH_TIMEOUT_MS)
-          : ((config.subtitleProviderTimeout || 12) * 1000);
+        // Orchestration timeout follows the user's configured subtitle timeout exactly.
+        const orchestrationTimeoutMs = (config.subtitleProviderTimeout || 12) * 1000;
 
-        if (orchestrationTimeoutMs > 0 && searchPromises.length > 0) {
+        if (orchestrationTimeoutMs > 0 && searchTasks.length > 0) {
           // Create a collector for results as they arrive
           const collectedResults = [];
           let resolvedCount = 0;
           let timeoutFired = false;
 
           // Wrap each promise to collect results as they complete
-          const wrappedPromises = searchPromises.map(p =>
-            p.then(result => {
+          const wrappedPromises = searchTasks.map(task =>
+            task.promise.then(result => {
               if (!timeoutFired) {
                 collectedResults.push(result);
               }
@@ -2665,7 +2688,7 @@ function createSubtitleHandler(config) {
             })
           );
 
-          // Race between: all promises completing OR timeout
+          // Race between: all promises completing OR the overall orchestration timeout.
           const timeoutPromise = new Promise(resolve => {
             setTimeout(() => {
               timeoutFired = true;
@@ -2674,23 +2697,22 @@ function createSubtitleHandler(config) {
           });
 
           const allSettledPromise = Promise.all(wrappedPromises).then(() => 'completed');
-
           const winner = await Promise.race([allSettledPromise, timeoutPromise]);
 
           if (winner === 'timeout') {
             // Timeout fired - use whatever results we have so far
             providerResults = [...collectedResults];
-            const pending = searchPromises.length - resolvedCount;
+            const pending = searchTasks.length - resolvedCount;
             if (pending > 0) {
-              log.warn(() => `[Subtitles] Provider search timeout after ${orchestrationTimeoutMs}ms - returning ${resolvedCount}/${searchPromises.length} provider results (${pending} still pending)`);
+              log.warn(() => `[Subtitles] Provider search timeout after ${orchestrationTimeoutMs}ms - returning ${resolvedCount}/${searchTasks.length} provider results (${pending} still pending)`);
             }
           } else {
             // All completed before timeout
             providerResults = collectedResults;
           }
-        } else if (searchPromises.length > 0) {
+        } else if (searchTasks.length > 0) {
           // Timeout disabled - wait for all providers
-          providerResults = await Promise.all(searchPromises);
+          providerResults = await Promise.all(searchTasks.map(task => task.promise));
         }
 
         // Collect and log results from all providers

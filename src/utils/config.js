@@ -1382,8 +1382,9 @@ function buildManifest(config, baseUrl = '') {
     catalogs: [],
     resources: ['subtitles'],
     types: ['movie', 'series', 'anime'],
-
-    idPrefixes: ['tt', 'tmdb', 'anidb', 'kitsu', 'mal', 'myanimelist', 'anilist', 'tvdb', 'simkl', 'livechart', 'anisearch'],
+    // Do not advertise idPrefixes here: Stremio filters addons client-side with
+    // exact prefix matching, which prevents unsupported IDs from ever reaching
+    // SubMaker and makes request-level debugging impossible.
 
     behaviorHints: {
       configurable: true,

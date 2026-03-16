@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.75
+
+**Bug Fixes:**
+
+- **Improved subtitle matching for query-style subtitle requests that already reach SubMaker:** Some Stremio clients were requesting subtitles in a query-string form such as `/subtitles/{type}/{id}.json?filename=...&videoHash=...`, while the Stremio addon SDK only parses subtitle `extra` fields from the path segment form (`/.../filename=...&videoHash=....json`). This meant SubMaker could receive the request but silently lose `filename`, `videoHash`, and `videoSize`, producing weaker subtitle matching and inconsistent subtitle coverage depending on which request shape the client used. Added a pre-router normalization step in `index.js` that rewrites query-style subtitle requests into the SDK-compatible path form before the addon router runs, while preserving non-subtitle query params. Also upgraded addon request logging to use the original incoming URL and to explicitly log when subtitle extras were normalized from the query string, making request-shape issues visible in server logs. This improves requests that hit SubMaker, but does not address cases where Stremio never sends the subtitle request at all.
+
+- **Fixed weak subtitle-search requests poisoning later retries for the same title/episode:** Subtitle search deduplication/cache keys previously scoped results by content ID, type, season/episode, languages, and config hash, but not by the actual stream context. If the first request for a title arrived without `filename`/`videoHash`/`videoSize`, its weaker results could be reused by a later stronger request for the same content, causing retries to appear inconsistent. Subtitle search keys now include a normalized stream-context component derived from the incoming filename, Stremio video hash, and video size, isolating weak-metadata searches from stronger stream-aware searches.
+
+- **Fixed unsupported Stremio ID requests being filtered client-side before SubMaker could log them:** The manifest previously advertised `idPrefixes`, which caused Stremio to skip addon requests for non-matching prefixes entirely on the client side. Removed `idPrefixes` from the manifest and added explicit server-side Stremio ID inspection/filtering in the subtitle handler, so unsupported or malformed IDs now reach SubMaker, get logged with the rejection reason, and return an empty subtitle list consistently instead of disappearing with no server visibility.
+
+- **Fixed provider search orchestration timeout drifting from the user-configured subtitle timeout:** Subtitle provider orchestration previously allowed a separate `PROVIDER_SEARCH_TIMEOUT_MS` environment override to take precedence over the configured `subtitleProviderTimeout`, so the real end-to-end wait time could differ from what the user set in SubMaker. The orchestration timeout now follows the configured subtitle timeout directly, making provider cutoff behavior match the visible setting consistently.
+
+**Improvements:**
+
+- **Refreshed bundled anime ID mappings and added a local updater script:** Updated `data/anime-list-full.json` with newer upstream IMDb, TMDB, TVDB, and season mappings for anime entries, and added `update-anime-list.js` plus the `npm run update:anime-list` script so the bundled mapping file can be refreshed locally from the upstream anime-lists source. `animeIdResolver` now also understands the newer structured `season` shape in the upstream data and skips known placeholder target-ID pairs while loading the bundled file, reducing the chance of bad rows poisoning offline anime resolution.
+
 ## SubMaker v1.4.74
 
 **Bug Fixes:**
