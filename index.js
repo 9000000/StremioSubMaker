@@ -85,6 +85,7 @@ const { StorageUnavailableError } = require('./src/storage/errors');
 const StorageFactory = require('./src/storage/StorageFactory');
 const { loadLocale, getTranslator, DEFAULT_LANG } = require('./src/utils/i18n');
 const { incrementCounter, CACHE_PREFIXES, CACHE_TTLS } = require('./src/utils/sharedCache');
+const { loadChangelog } = require('./src/utils/changelog');
 
 // Cache-buster path segment for temporary HA cache invalidation
 // Default to current package version so it auto-advances on releases
@@ -2776,28 +2777,12 @@ let _changelogCacheTime = 0;
 const CHANGELOG_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 function parseChangelog() {
-    try {
-        const changelogPath = path.join(__dirname, 'CHANGELOG.md');
-        const raw = fs.readFileSync(changelogPath, 'utf-8');
-        const entries = [];
-        // Split by version headers: ## SubMaker vX.Y.Z
-        const versionRegex = /^## SubMaker v([\d.]+)/gm;
-        let match;
-        const positions = [];
-        while ((match = versionRegex.exec(raw)) !== null) {
-            positions.push({ version: match[1], index: match.index, headerEnd: match.index + match[0].length });
-        }
-        for (let i = 0; i < Math.min(positions.length, CHANGELOG_MAX_ENTRIES); i++) {
-            const start = positions[i].headerEnd;
-            const end = i + 1 < positions.length ? positions[i + 1].index : raw.length;
-            const content = raw.slice(start, end).trim();
-            entries.push({ version: positions[i].version, content });
-        }
-        return { currentVersion: version, entries };
-    } catch (err) {
-        log.warn(() => `[Changelog] Failed to parse CHANGELOG.md: ${err.message}`);
-        return { currentVersion: version, entries: [] };
-    }
+    return loadChangelog({
+        currentVersion: version,
+        baseDir: __dirname,
+        maxEntries: CHANGELOG_MAX_ENTRIES,
+        logger: log
+    });
 }
 
 app.get('/api/changelog', (req, res) => {

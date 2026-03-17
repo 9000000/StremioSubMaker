@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.76
+
+**Bug Fixes:**
+
+- **Fixed Docker deployments shipping without the in-app changelog file:** .dockerignore was excluding all Markdown files except README.md, which stripped CHANGELOG.md from the official image even though /api/changelog reads it from /app/CHANGELOG.md. Docker builds now keep CHANGELOG.md in the image, and the changelog loader now falls back to a small release-note stub that points users to the GitHub release page if the file is missing or malformed, instead of leaving the "What's New" panel blank.
+
 ## SubMaker v1.4.75
 
 **New Features:**

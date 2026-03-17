@@ -46,6 +46,7 @@ coverage
 # Misc
 *.md
 !README.md
+!CHANGELOG.md
 .editorconfig
 
 # Extensions & temp files
