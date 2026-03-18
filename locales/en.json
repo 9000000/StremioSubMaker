@@ -1445,8 +1445,8 @@
         "title": "Dev"
       },
       "reset": {
-        "hint": "Need a clean reset? Clear this browser's SubMaker data ->",
-        "cta": "Clear Data"
+        "hint": "Any problems? Reset settings to default \u2192",
+        "cta": "Reset"
       }
     },
     "nav": {

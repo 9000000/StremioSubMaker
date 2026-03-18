@@ -1445,8 +1445,8 @@
         "title": "Dev"
       },
       "reset": {
-        "hint": "Precisa de um reinício limpo? Limpe os dados do SubMaker neste navegador ->",
-        "cta": "Limpar Dados"
+        "hint": "Algum problema? Repor definições para padrão \u2192",
+        "cta": "Repor"
       }
     },
     "nav": {

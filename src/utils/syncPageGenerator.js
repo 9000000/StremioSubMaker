@@ -587,10 +587,10 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
     ${localeBootstrap}
     <title>${escapeHtml(copy.documentTitle)}</title>
     <!-- Favicon -->
-    <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
-    <link rel="shortcut icon" href="/favicon-toolbox.svg">
-    <link rel="apple-touch-icon" href="/favicon-toolbox.svg">
-    <link rel="stylesheet" href="/css/combobox.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+    <link rel="shortcut icon" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+    <link rel="apple-touch-icon" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+    <link rel="stylesheet" href="/css/combobox.css?_cb=${escapeHtml(appVersion || 'dev')}">
     <script>
       (function() {
         var html = document.documentElement;
@@ -1984,7 +1984,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         }
     ${themeToggleStyles()}
     </style>
-    <script src="/js/theme-toggle.js" defer></script>
+    <script src="/js/theme-toggle.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
 </head>
 <body>
     ${themeToggleMarkup(themeToggleLabel)}
@@ -2198,8 +2198,8 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         </div>
     </div>
 
-    <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}"></script>
-    <script src="/js/combobox.js"></script>
+    <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}&_cb=${escapeHtml(appVersion || 'dev')}"></script>
+    <script src="/js/combobox.js?_cb=${escapeHtml(appVersion || 'dev')}"></script>
     <script>
         ${quickNavScript()}
 

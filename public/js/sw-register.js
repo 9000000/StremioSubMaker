@@ -46,7 +46,7 @@
         var versionTag = (window.__APP_VERSION__ || 'dev').toString();
         // Hourly bump ensures changed SW rolls out even if app version stays the same
         var cacheBust = versionTag + '-h' + Math.floor(Date.now() / 3600000);
-        navigator.serviceWorker.register('/sw.js?v=' + encodeURIComponent(cacheBust), { scope: '/', updateViaCache: 'none' })
+        navigator.serviceWorker.register('/sw.js?v=' + encodeURIComponent(cacheBust) + '&_cb=' + encodeURIComponent(versionTag), { scope: '/', updateViaCache: 'none' })
             .then(function(reg) {
                 setInterval(function() {
                     reg.update().catch(function(){});

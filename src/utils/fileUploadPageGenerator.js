@@ -279,11 +279,11 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
     ${localeBootstrap}
     <title>${t('fileUpload.documentTitle', {}, 'File Translation - SubMaker')}</title>
     <!-- Favicon -->
-    <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
-    <link rel="shortcut icon" href="/favicon-toolbox.svg">
-    <link rel="apple-touch-icon" href="/favicon-toolbox.svg">
-    <script src="/js/sw-register.js" defer></script>
-    <link rel="stylesheet" href="/css/combobox.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+    <link rel="shortcut icon" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+    <link rel="apple-touch-icon" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+    <script src="/js/sw-register.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
+    <link rel="stylesheet" href="/css/combobox.css?_cb=${escapeHtml(appVersion || 'dev')}">
     <script>
       (function() {
         var html = document.documentElement;
@@ -2002,7 +2002,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             }
         }
     </style>
-    <script src="/js/theme-toggle.js" defer></script>
+    <script src="/js/theme-toggle.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
 </head>
 <body>
     <!-- Theme Toggle Button -->
@@ -2424,7 +2424,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         </div>
     </div>
 
-        <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}"></script>
+        <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}&_cb=${escapeHtml(appVersion || 'dev')}"></script>
         <script src="/js/combobox.js"></script>
         <script>
         const clientConfig = ${JSON.stringify(clientConfig)};

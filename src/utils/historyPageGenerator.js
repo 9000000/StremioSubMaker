@@ -565,8 +565,8 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>${t('history.documentTitle', {}, 'Translation History - SubMaker')}</title>
   ${localeBootstrap}
-  <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
-  <link rel="shortcut icon" href="/favicon-toolbox.svg">
+  <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+  <link rel="shortcut icon" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600&display=swap" rel="stylesheet">
@@ -1215,7 +1215,7 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
       }
     }
   </style>
-  <script src="/js/theme-toggle.js" defer></script>
+  <script src="/js/theme-toggle.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
 </head>
 <body>
   ${themeToggleMarkup(themeToggleLabel)}
@@ -1239,8 +1239,8 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
     </div>
   </div>
 
-  <script src="/js/sw-register.js"></script>
-  <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}"></script>
+  <script src="/js/sw-register.js?_cb=${escapeHtml(appVersion || 'dev')}"></script>
+  <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}&_cb=${escapeHtml(appVersion || 'dev')}"></script>
   <script>
     (function initHistoryLoader() {
       const host = document.getElementById('history-content');

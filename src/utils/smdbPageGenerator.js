@@ -919,7 +919,7 @@ async function generateSmdbPage(configStr, videoId, filename, config = {}) {
 
     ${themeToggleStyles()}
   </style>
-  <script src="/js/theme-toggle.js" defer></script>
+  <script src="/js/theme-toggle.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
 </head>
 <body>
   ${themeToggleMarkup(themeToggleLabel)}

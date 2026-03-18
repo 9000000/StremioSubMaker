@@ -1348,6 +1348,21 @@ Translate to {target_language}.`;
         return trimmed;
     }
 
+    function getDetachedActiveVaultToken(store = getTokenVaultStore(), activeToken = getActiveConfigRef()) {
+        const normalizedToken = extractSessionTokenFromInput(activeToken);
+        if (!normalizedToken) return '';
+        return getVaultEntryForToken(normalizedToken, store) ? '' : normalizedToken;
+    }
+
+    function getTokenVaultProfileCount(store = getTokenVaultStore(), activeToken = getActiveConfigRef()) {
+        const savedCount = Array.isArray(store?.entries) ? store.entries.length : 0;
+        return savedCount + (getDetachedActiveVaultToken(store, activeToken) ? 1 : 0);
+    }
+
+    function getTokenVaultDisplayCount(store = getTokenVaultStore(), activeToken = getActiveConfigRef()) {
+        return Math.min(getTokenVaultProfileCount(store, activeToken), TOKEN_VAULT_MAX_ENTRIES);
+    }
+
     function buildVaultProfileOrdering(store = getTokenVaultStore()) {
         return (Array.isArray(store?.entries) ? store.entries : [])
             .filter(entry => isValidSessionToken(entry?.token))
@@ -1367,11 +1382,16 @@ Translate to {target_language}.`;
         if (!isValidSessionToken(normalizedToken)) return 0;
         const orderedEntries = buildVaultProfileOrdering(store);
         const existingIndex = orderedEntries.findIndex(entry => entry.token === normalizedToken);
-        return existingIndex >= 0 ? existingIndex + 1 : orderedEntries.length + 1;
+        if (existingIndex >= 0) return existingIndex + 1;
+        const detachedActiveToken = getDetachedActiveVaultToken(store);
+        if (normalizedToken === detachedActiveToken) {
+            return orderedEntries.length + 1;
+        }
+        return orderedEntries.length + 1;
     }
 
     function getDraftProfileNumber(store = getTokenVaultStore()) {
-        return buildVaultProfileOrdering(store).length + 1;
+        return getTokenVaultProfileCount(store) + 1;
     }
 
     function buildDefaultVaultLabel(profileNumber) {
@@ -1827,6 +1847,79 @@ Translate to {target_language}.`;
         return false;
     }
 
+    function prepareDetachedActiveTokenCapturePlan(options = {}) {
+        const store = options.store || getTokenVaultStore();
+        const activeToken = extractSessionTokenFromInput(options.activeToken || getActiveConfigRef());
+        if (!activeToken || getVaultEntryForToken(activeToken, store)) {
+            return null;
+        }
+
+        const session = options.session !== undefined ? options.session : activeSessionContext.session;
+        const fallbackTimestamp = Date.now();
+        return prepareTokenVaultEntryUpsert(activeToken, {
+            addedAt: Number(session?.createdAt) || fallbackTimestamp,
+            lastOpenedAt: Number(options.lastOpenedAt) || fallbackTimestamp,
+            lastSavedAt: Number(session?.updatedAt) || Number(session?.createdAt) || fallbackTimestamp,
+            lastKnownCreatedAt: Number(session?.createdAt) || 0,
+            lastKnownUpdatedAt: Number(session?.updatedAt) || 0,
+            lastKnownLastAccessedAt: Number(session?.lastAccessedAt) || 0,
+            lastKnownDisabled: session?.disabled === true
+        }, { store });
+    }
+
+    function captureDetachedActiveTokenInVault(options = {}) {
+        const activeToken = extractSessionTokenFromInput(options.activeToken || getActiveConfigRef());
+        const store = options.store || getTokenVaultStore();
+        const existingEntry = activeToken ? getVaultEntryForToken(activeToken, store) : null;
+        const plan = prepareDetachedActiveTokenCapturePlan({
+            ...options,
+            activeToken,
+            store
+        });
+
+        if (!plan) {
+            return {
+                status: 'noop',
+                activeToken,
+                plan: null,
+                entry: existingEntry
+            };
+        }
+
+        if (plan.overflowVictims.length > 0 && options.allowOverflow !== true) {
+            return {
+                status: 'needs-approval',
+                activeToken,
+                plan,
+                entry: null
+            };
+        }
+
+        const appliedEntry = applyTokenVaultEntryPlan(plan, {
+            activeToken,
+            allowVictimTokens: options.allowOverflow === true
+                ? plan.overflowVictims.map(entry => entry.token)
+                : []
+        });
+
+        return {
+            status: appliedEntry ? 'captured' : 'blocked',
+            activeToken,
+            plan,
+            entry: appliedEntry || null
+        };
+    }
+
+    function safelyBackfillActiveTokenIntoVault(options = {}) {
+        const result = captureDetachedActiveTokenInVault(options);
+        if (result.status === 'captured' && options.render !== false) {
+            renderTokenVaultRail();
+            renderTokenVault();
+            renderTokenVaultCreator();
+        }
+        return result;
+    }
+
     function removeTokenVaultEntry(token) {
         if (!isValidSessionToken(token)) return;
         const normalizedToken = token.toLowerCase();
@@ -1858,8 +1951,7 @@ Translate to {target_language}.`;
             tokenVaultBriefMap.set(activeSessionContext.token, activeSessionContext.session);
             rememberTokenVaultSingleBrief(activeSessionContext.token, activeSessionContext.session);
         }
-        updateTokenVaultButtonState();
-        renderTokenVaultRail();
+        syncTokenVaultUi();
         reconcileActiveInstallState();
     }
 
@@ -1918,6 +2010,12 @@ Translate to {target_language}.`;
             ? `Token Vault - ${maskToken(activeSessionContext.token)}`
             : 'Token Vault - First save creates a token');
         scheduleFloatingBottomSafeZoneSync();
+    }
+
+    function syncTokenVaultUi() {
+        updateTokenVaultButtonState();
+        renderTokenVault();
+        renderTokenVaultCreator();
     }
 
     function extractSessionTokenFromInput(rawValue) {
@@ -2155,7 +2253,9 @@ Translate to {target_language}.`;
         if (entry.token) {
             menuItems.push(`<button type="button" class="token-vault-rail-menu-item" data-vault-action="duplicate-token"${actionTokenAttr}>Duplicate</button>`);
             menuItems.push(`<button type="button" class="token-vault-rail-menu-item" data-vault-action="export-current"${actionTokenAttr}>Export</button>`);
-            menuItems.push(`<button type="button" class="token-vault-rail-menu-item danger" data-vault-action="forget-token"${actionTokenAttr}>Forget</button>`);
+            if (entry.entry) {
+                menuItems.push(`<button type="button" class="token-vault-rail-menu-item danger" data-vault-action="forget-token"${actionTokenAttr}>Forget</button>`);
+            }
         }
 
         return menuItems.join('');
@@ -2445,7 +2545,7 @@ Translate to {target_language}.`;
         const activeToken = getActiveConfigRef();
         const store = getTokenVaultStore();
         const draftAlreadyActive = !activeToken && activeSessionContext.provenance === 'draft';
-        const savedCount = Math.min(Array.isArray(store.entries) ? store.entries.length : 0, TOKEN_VAULT_MAX_ENTRIES);
+        const savedCount = getTokenVaultDisplayCount(store, activeToken);
         const addTokenLabel = 'Add Profile';
         const addTokenMeta = draftAlreadyActive
             ? 'Draft already open. Create, import, or back up profiles from here.'
@@ -2606,6 +2706,11 @@ Translate to {target_language}.`;
                     });
                 } else {
                     setActiveSessionContext({ token: liveActiveToken, session: activeBrief || null });
+                    safelyBackfillActiveTokenIntoVault({
+                        activeToken: liveActiveToken,
+                        session: activeBrief || null,
+                        render: false
+                    });
                 }
             }
 
@@ -2971,10 +3076,10 @@ Translate to {target_language}.`;
         if (!content) return;
 
         const store = getTokenVaultStore();
-        const savedCount = Math.min(Array.isArray(store.entries) ? store.entries.length : 0, TOKEN_VAULT_MAX_ENTRIES);
+        const activeToken = getActiveConfigRef();
+        const savedCount = getTokenVaultDisplayCount(store, activeToken);
         const vaultFill = Math.max(savedCount > 0 ? 18 : 0, Math.round((savedCount / TOKEN_VAULT_MAX_ENTRIES) * 100));
         const nextOverflowVictim = getDraftOverflowVictims(store)[0] || null;
-        const activeToken = getActiveConfigRef();
         const draftAlreadyActive = !activeToken && activeSessionContext.provenance === 'draft';
         const toolsNote = savedCount >= TOKEN_VAULT_MAX_ENTRIES
             ? `Next replacement: ${nextOverflowVictim ? deriveVaultLabel(nextOverflowVictim.token, nextOverflowVictim.label || '', { store }) : 'oldest profile'}.`
@@ -2988,7 +3093,7 @@ Translate to {target_language}.`;
                     <div class="token-vault-create-card-copy">
                         <div class="token-vault-section-title">Add a profile or import a token</div>
                     </div>
-                    <span class="token-vault-status-chip ${escapeVaultHtml(savedCount >= TOKEN_VAULT_MAX_ENTRIES ? 'disabled' : 'live')}">${savedCount}/${TOKEN_VAULT_MAX_ENTRIES} saved</span>
+                    <span class="token-vault-status-chip ${escapeVaultHtml(savedCount >= TOKEN_VAULT_MAX_ENTRIES ? 'disabled' : 'live')}">${savedCount}/${TOKEN_VAULT_MAX_ENTRIES} profiles</span>
                 </div>
                 <div class="token-vault-create-primary-stack">
                     <button type="button" class="token-vault-action token-vault-action-primary token-vault-create-draft-btn" id="tokenVaultCreateDraftBtn" data-vault-action="create-draft-fork" ${draftAlreadyActive ? 'disabled' : ''}>${draftAlreadyActive ? 'Draft already open' : 'Add new profile'}</button>
@@ -3252,17 +3357,7 @@ Translate to {target_language}.`;
         });
     }
 
-    function createFreshTokenDraft() {
-        const activeToken = getActiveConfigRef();
-        const alreadyDraft = !activeToken && activeSessionContext.provenance === 'draft';
-        const vaultIsFull = getTokenVaultStore().entries.length >= TOKEN_VAULT_MAX_ENTRIES;
-
-        closeTokenVaultRail();
-        if (alreadyDraft) {
-            showAlert('This page is already a fresh draft. Save to mint a new token.', 'info');
-            return;
-        }
-
+    function finalizeFreshTokenDraft(activeToken, vaultIsFull) {
         currentConfig = buildFreshDraftConfig({
             defaultConfig: getDefaultConfig(),
             disableSubtitleProviders: true
@@ -3297,8 +3392,81 @@ Translate to {target_language}.`;
         );
     }
 
-    async function navigateToVaultToken(token) {
+    function createFreshTokenDraft(options = {}) {
+        const activeToken = getActiveConfigRef();
+        const alreadyDraft = !activeToken && activeSessionContext.provenance === 'draft';
+        const store = getTokenVaultStore();
+        const captureResult = captureDetachedActiveTokenInVault({
+            activeToken,
+            store,
+            session: activeSessionContext.session,
+            allowOverflow: options.allowOverflow === true
+        });
+        const vaultIsFull = getTokenVaultDisplayCount(store, activeToken) >= TOKEN_VAULT_MAX_ENTRIES;
+
+        closeTokenVaultRail();
+        if (alreadyDraft) {
+            showAlert('This page is already a fresh draft. Save to mint a new token.', 'info');
+            return;
+        }
+
+        if (captureResult.status === 'needs-approval') {
+            openTokenVaultOverridePrompt({
+                eyebrow: `${TOKEN_VAULT_MAX_ENTRIES} saved tokens max`,
+                title: 'Keep the current profile before opening a new draft?',
+                message: 'The live profile on this page is not in your local vault yet. Keeping it switchable while starting a new draft will purge the oldest local entry below.',
+                detail: 'Only the local browser vault changes. The current live token is not deleted from the server.',
+                confirmLabel: 'Keep profile and continue',
+                victims: captureResult.plan?.overflowVictims || [],
+                onCancel: async () => {
+                    renderTokenVaultCreator({ forceContent: true });
+                    openModalById('tokenVaultCreateModal');
+                },
+                onConfirm: async () => {
+                    createFreshTokenDraft({ allowOverflow: true });
+                }
+            });
+            return;
+        }
+        if (captureResult.status === 'blocked') {
+            showAlert('The current live profile could not be preserved locally. Draft creation was cancelled.', 'error');
+            openTokenVaultCreator();
+            return;
+        }
+
+        finalizeFreshTokenDraft(activeToken, vaultIsFull);
+    }
+
+    async function navigateToVaultToken(token, options = {}) {
         if (!isValidSessionToken(token)) return false;
+
+        const currentActiveToken = getActiveConfigRef();
+        if (currentActiveToken && currentActiveToken !== token) {
+            const captureResult = captureDetachedActiveTokenInVault({
+                activeToken: currentActiveToken,
+                session: activeSessionContext.session,
+                allowOverflow: options.allowOverflow === true
+            });
+            if (captureResult.status === 'needs-approval') {
+                openTokenVaultOverridePrompt({
+                    eyebrow: `${TOKEN_VAULT_MAX_ENTRIES} saved tokens max`,
+                    title: 'Keep the current profile before switching?',
+                    message: 'The live profile on this page is not in your local vault yet. Keeping it switchable before loading another profile will purge the oldest local entry below.',
+                    detail: 'Only the local browser vault changes. The current live token is not deleted from the server.',
+                    confirmLabel: 'Keep profile and switch',
+                    victims: captureResult.plan?.overflowVictims || [],
+                    onConfirm: async () => {
+                        await navigateToVaultToken(token, { allowOverflow: true });
+                    }
+                });
+                return false;
+            }
+            if (captureResult.status === 'blocked') {
+                showAlert('The current live profile could not be preserved locally. Profile switch was cancelled.', 'error');
+                return false;
+            }
+        }
+
         closeTokenVaultRail();
         tokenVaultPendingSwitch = '';
         resetTokenVaultTitleEditor();
@@ -3474,9 +3642,16 @@ Translate to {target_language}.`;
         const targetToken = extractSessionTokenFromInput(tokenOverride) || getTokenVaultManagerToken() || getActiveConfigRef();
         const store = getTokenVaultStore();
         const exportEntry = buildTokenVaultExportEntry(targetToken, store);
+        const detachedActiveToken = getDetachedActiveVaultToken(store);
+        const detachedActiveExportEntry = detachedActiveToken
+            ? buildTokenVaultExportEntry(detachedActiveToken, store)
+            : null;
         const entries = mode === 'current'
             ? (exportEntry ? [exportEntry] : [])
-            : store.entries;
+            : [
+                ...store.entries,
+                ...(detachedActiveExportEntry ? [detachedActiveExportEntry] : [])
+            ];
 
         if (mode === 'current' && entries.length === 0) {
             showAlert('No token is loaded on this page yet.', 'warning');
@@ -4318,6 +4493,11 @@ Translate to {target_language}.`;
                     recoveredFromToken: '',
                     regenerated: false
                 });
+                safelyBackfillActiveTokenIntoVault({
+                    activeToken: loadPlan.intendedToken,
+                    session: null,
+                    render: false
+                });
             }
         } else if (loadPlan.shouldFetchSession) {
             const sessionToken = loadPlan.fetchToken;
@@ -4453,6 +4633,11 @@ Translate to {target_language}.`;
                             session: data?.session || null,
                             recoveredFromToken: '',
                             regenerated: false
+                        });
+                        safelyBackfillActiveTokenIntoVault({
+                            activeToken: sessionToken,
+                            session: data?.session || null,
+                            render: false
                         });
                         syncTokenVaultEntryWithBrief(sessionToken, data?.session, {
                             lastOpenedAt: Date.now(),

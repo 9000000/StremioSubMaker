@@ -1445,8 +1445,8 @@
         "title": "Desarrollo"
       },
       "reset": {
-        "hint": "¿Necesitas un reinicio limpio? Borra los datos de SubMaker en este navegador ->",
-        "cta": "Borrar datos"
+        "hint": "¿Problemas? Restablece la configuración a los valores predeterminados \u2192",
+        "cta": "Restablecer"
       }
     },
     "nav": {

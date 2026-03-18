@@ -476,10 +476,10 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${t('toolbox.documentTitle', {}, 'Sub Toolbox - SubMaker')}</title>
   ${localeBootstrap}
-  <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
-  <link rel="shortcut icon" href="/favicon-toolbox.svg">
-  <link rel="apple-touch-icon" href="/favicon-toolbox.svg">
-  <script src="/js/sw-register.js" defer></script>
+  <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+  <link rel="shortcut icon" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+  <link rel="apple-touch-icon" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+  <script src="/js/sw-register.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
   <script>
     (function() {
       var html = document.documentElement;
@@ -1300,7 +1300,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       }
     }
   </style>
-  <script src="/js/theme-toggle.js" defer></script>
+  <script src="/js/theme-toggle.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
 </head>
 <body>
   <!-- Theme Toggle Button -->
@@ -1428,7 +1428,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
     </div>
 
   </div>
-  <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}"></script>
+  <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}&_cb=${escapeHtml(appVersion || 'dev')}"></script>
   <script>
     const TOOLBOX = ${safeJsonSerialize({
     configStr,
@@ -3065,7 +3065,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     }
   ${themeToggleStyles()}
   </style>
-  <script src="/js/theme-toggle.js" defer></script>
+  <script src="/js/theme-toggle.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
 </head>
 <body>
   ${themeToggleMarkup(themeToggleLabel)}
@@ -4174,6 +4174,15 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       const spaced = withoutExt.replace(/[_\\.]+/g, ' ').replace(/\s+/g, ' ').trim();
       return spaced || withoutExt || lastSegment;
     }
+
+    function cleanDisplayNameClient(raw) {
+      if (!raw) return '';
+      const lastSegment = String(raw).split(/[\\/]/).pop() || '';
+      const withoutExt = lastSegment.replace(/\.[^.]+$/, '');
+      const spaced = withoutExt.replace(/[_\\.]+/g, ' ').replace(/\s+/g, ' ').trim();
+      return spaced || withoutExt || lastSegment;
+    }
+
     function isPlaceholderTitle(title, filename, videoId) {
       if (!title) return true;
       const normalizedTitle = cleanLinkedName(title).toLowerCase();
@@ -4418,10 +4427,10 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       for (const value of values) {
         const lower = String(value || '').trim().toLowerCase();
         if (!lower) continue;
-        if (lower.includes('webvtt') || /\bvtt\b/.test(lower)) return 'vtt';
-        if (lower.includes('s_text/ssa') || lower.includes('substation alpha') || /\bssa\b/.test(lower)) return 'ssa';
-        if (lower.includes('s_text/ass') || lower.includes('advanced substation alpha') || /\bass\b/.test(lower)) return 'ass';
-        if (lower.includes('subrip') || lower.includes('utf8') || lower.includes('mov_text') || lower.includes('tx3g') || /\bsrt\b/.test(lower)) return 'srt';
+        if (lower.includes('webvtt') || /\\bvtt\\b/.test(lower)) return 'vtt';
+        if (lower.includes('s_text/ssa') || lower.includes('substation alpha') || /\\bssa\\b/.test(lower)) return 'ssa';
+        if (lower.includes('s_text/ass') || lower.includes('advanced substation alpha') || /\\bass\\b/.test(lower)) return 'ass';
+        if (lower.includes('subrip') || lower.includes('utf8') || lower.includes('mov_text') || lower.includes('tx3g') || /\\bsrt\\b/.test(lower)) return 'srt';
       }
       return 'srt';
     }
@@ -4437,7 +4446,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       const preferredMime = (() => {
         const raw = String(track.mime || '').trim();
         if (!raw) return '';
-        if (/^text\/plain\b/i.test(raw) || /^application\/octet-stream\b/i.test(raw)) return '';
+        if (/^text\\/plain\\b/i.test(raw) || /^application\\/octet-stream\\b/i.test(raw)) return '';
         return raw;
       })();
       const format = normalizeSubtitleFormatHintClient(track.codec, track.mime, track.label, track.originalLabel);
@@ -8397,11 +8406,11 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(copy.meta.title)}</title>
     ${localeBootstrap}
-    <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg">
-    <link rel="shortcut icon" href="/favicon-toolbox.svg">
-    <link rel="apple-touch-icon" href="/favicon-toolbox.svg">
-    <script src="/js/sw-register.js" defer></script>
-    <link rel="stylesheet" href="/css/combobox.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+    <link rel="shortcut icon" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+    <link rel="apple-touch-icon" href="/favicon-toolbox.svg?_cb=${escapeHtml(appVersion || 'dev')}">
+    <script src="/js/sw-register.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
+    <link rel="stylesheet" href="/css/combobox.css?_cb=${escapeHtml(appVersion || 'dev')}">
     <script>
       (function() {
         var html = document.documentElement;
@@ -9354,7 +9363,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     }
   ${themeToggleStyles()}
   </style>
-  <script src="/js/theme-toggle.js" defer></script>
+  <script src="/js/theme-toggle.js?_cb=${escapeHtml(appVersion || 'dev')}" defer></script>
 </head>
 <body>
   ${themeToggleMarkup(themeToggleLabel)}
