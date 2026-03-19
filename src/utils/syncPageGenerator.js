@@ -13,7 +13,8 @@ const axios = require('axios');
 const { getLanguageName, getAllLanguages, buildLanguageLookupMaps } = require('./languages');
 const { deriveVideoHash } = require('./videoHash');
 const { parseStremioId } = require('./subtitle');
-const { version: appVersion, xsyncMinVersion: REQUIRED_XSYNC_VERSION } = require('../../package.json');
+const { version: appVersion } = require('./version');
+const { xsyncMinVersion: REQUIRED_XSYNC_VERSION } = require('../../package.json');
 const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = require('./quickNav');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
 
@@ -2639,6 +2640,11 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                 const cached = resolvedUrlCache.get(url);
                 if (cached && (Date.now() - cached.timestamp < REDIRECT_CACHE_TTL)) {
                     return cached.resolved;
+                }
+                const parsed = new URL(url, window.location.href);
+                if (parsed.origin !== window.location.origin) {
+                    resolvedUrlCache.set(url, { resolved: url, timestamp: Date.now() });
+                    return url;
                 }
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 8000);

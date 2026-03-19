@@ -313,6 +313,13 @@ function getLanguageName(code) {
   const allLang = toolLanguages.find(l => l.code.toLowerCase() === codeLower);
   if (allLang) return allLang.name;
 
+  // Finally, resolve alias-only tags (e.g., es-419, pt-PT, zh-Hans)
+  // through the canonical subtitle-provider code and reuse its display name.
+  const canonical = normalizeLanguageCode(code);
+  if (canonical && canonical !== codeLower) {
+    return getLanguageName(canonical);
+  }
+
   return null;
 }
 

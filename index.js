@@ -51,7 +51,7 @@ const { redactToken } = require('./src/utils/security');
 const { getAllLanguages, getAllTranslationLanguages, getLanguageName, toISO6392, findISO6391ByName, canonicalSyncLanguageCode } = require('./src/utils/languages');
 const { generateCacheKeys } = require('./src/utils/cacheKeys');
 const { getCached: getDownloadCached, saveCached: saveDownloadCached, getCacheStats: getDownloadCacheStats } = require('./src/utils/downloadCache');
-const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, getAvailableSubtitlesForTranslation, createLoadingSubtitle, createSessionTokenErrorSubtitle, createOpenSubtitlesAuthErrorSubtitle, createOpenSubtitlesQuotaExceededSubtitle, createCredentialDecryptionErrorSubtitle, createTranslationErrorSubtitle, readFromPartialCache, hasCachedTranslation, purgeTranslationCache, translationStatus, inFlightTranslations, canUserStartTranslation, getHistoryForUser, migrateHistoryNamespace, resolveHistoryUserHash, saveRequestToHistory, resolveHistoryTitle, enrichHistoryEntriesBackground, maybeConvertToSRT } = require('./src/handlers/subtitles');
+const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, createLoadingSubtitle, createSessionTokenErrorSubtitle, createOpenSubtitlesAuthErrorSubtitle, createOpenSubtitlesQuotaExceededSubtitle, createCredentialDecryptionErrorSubtitle, createTranslationErrorSubtitle, readFromPartialCache, hasCachedTranslation, purgeTranslationCache, translationStatus, inFlightTranslations, canUserStartTranslation, getHistoryForUser, migrateHistoryNamespace, resolveHistoryUserHash, saveRequestToHistory, resolveHistoryTitle, enrichHistoryEntriesBackground, maybeConvertToSRT } = require('./src/handlers/subtitles');
 const GeminiService = require('./src/services/gemini');
 const TranslationEngine = require('./src/services/translationEngine');
 const { createProviderInstance, createTranslationProvider, resolveCfWorkersCredentials } = require('./src/services/translationProviderFactory');
@@ -62,10 +62,13 @@ const syncCache = require('./src/utils/syncCache');
 const autoSubCache = require('./src/utils/autoSubCache');
 const { warmUpConnections, startKeepAlivePings, stopKeepAlivePings, getPoolStats } = require('./src/utils/httpAgents');
 const embeddedCache = require('./src/utils/embeddedCache');
+const { prepareEmbeddedSubtitleDelivery } = require('./src/utils/embeddedSubtitleDelivery');
+const { buildEmbeddedHistoryContext, normalizeEmbeddedHistoryValue } = require('./src/utils/embeddedHistoryContext');
 const { generateSubtitleSyncPage } = require('./src/utils/syncPageGenerator');
 const { generateSubToolboxPage, generateEmbeddedSubtitlePage, generateAutoSubtitlePage } = require('./src/utils/toolboxPageGenerator');
 const { generateHistoryPage, renderHistoryContent } = require('./src/utils/historyPageGenerator');
 const { generateSmdbPage } = require('./src/utils/smdbPageGenerator');
+const { generateConfigurePage } = require('./src/utils/configurePageGenerator');
 const smdbCache = require('./src/utils/smdbCache');
 const { deriveVideoHash } = require('./src/utils/videoHash');
 const { registerFileUploadRoutes } = require('./src/routes/fileUploadRoutes');
@@ -74,7 +77,6 @@ const {
     subtitleParamsSchema,
     subtitleContentParamsSchema,
     translationParamsSchema,
-    translationSelectorParamsSchema,
     fileTranslationBodySchema,
     configStringSchema,
     validateInput
@@ -2215,7 +2217,6 @@ app.use((req, res, next) => {
     const stremioClient = isStremioClient(req);
     const isAddonBrowserPage =
         req.path.startsWith('/addon/') && (
-            req.path.includes('/translate-selector/') ||
             req.path.includes('/file-translate/') ||
             req.path.includes('/sync-subtitles/') ||
             req.path.includes('/sub-toolbox/') ||
@@ -2437,7 +2438,7 @@ app.use('/addon/:config', async (req, res, next) => {
         '/subtitle/',           // custom subtitle download
         '/subtitle-resolve/',   // test C subtitle resolver
         '/subtitle-content/',   // test C typed subtitle content
-        '/translate',           // translate + translate-selector
+        '/translate',           // translate downloads
         '/learn',               // learn mode
         '/xsync',               // synced subtitles
         '/auto/',               // automatic subtitles cache
@@ -2553,6 +2554,27 @@ app.get('/sw.js', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'sw.js'));
 });
 
+function sendConfigurePage(res) {
+    setNoStore(res);
+    res.type('html').send(generateConfigurePage());
+}
+
+app.get('/', (req, res) => {
+    sendConfigurePage(res);
+});
+
+app.get('/configure', (req, res) => {
+    sendConfigurePage(res);
+});
+
+app.get('/configure/', (req, res) => {
+    sendConfigurePage(res);
+});
+
+app.get('/configure.html', (req, res) => {
+    sendConfigurePage(res);
+});
+
 
 // Serve static files with caching enabled
 // CSS and JS files get 1 year cache (bust with version in filename if needed)
@@ -2620,19 +2642,6 @@ if (process.env.FORCE_SESSION_READY !== 'false') {
     });
 }
 
-// Serve configuration page with no-cache to ensure users always get latest version
-app.get('/', (req, res) => {
-    // CRITICAL: Prevent caching to avoid cross-user config contamination
-    setNoStore(res);
-    res.sendFile(path.join(__dirname, 'public', 'configure.html'));
-});
-
-// Serve trailing-slash configure without redirect to avoid proxy-induced redirect loops.
-app.get('/configure/', (req, res) => {
-    setNoStore(res);
-    res.sendFile(path.join(__dirname, 'public', 'configure.html'));
-});
-
 app.get('/configure/:config/', (req, res) => {
     const params = new URLSearchParams(req.query || {});
     if (req.params.config) {
@@ -2640,12 +2649,6 @@ app.get('/configure/:config/', (req, res) => {
     }
     const qs = params.toString();
     res.redirect(302, `/configure${qs ? `?${qs}` : ''}`);
-});
-
-app.get('/configure', (req, res) => {
-    // CRITICAL: Prevent caching to avoid cross-user config contamination (can receive config via query params)
-    setNoStore(res);
-    res.sendFile(path.join(__dirname, 'public', 'configure.html'));
 });
 
 app.get('/configure/:config', (req, res) => {
@@ -5035,56 +5038,6 @@ app.get('/addon/:config/error-subtitle/:errorType.srt', async (req, res) => {
     }
 });
 
-// Custom route: Translation selector page (BEFORE SDK router to take precedence)
-app.get('/addon/:config/translate-selector/:videoId/:targetLang', searchLimiter, validateRequest(translationSelectorParamsSchema, 'params'), async (req, res) => {
-    try {
-        // Defense-in-depth: Prevent caching (already set by early middleware, but explicit is safer)
-        setNoStore(res);
-        let t = res.locals?.t || getTranslatorFromRequest(req, res);
-
-        const { config: configStr, videoId, targetLang } = req.params;
-        const config = await resolveConfigGuarded(configStr, req, res, '[Translation Selector] config', t);
-        if (!config) return;
-        if (isInvalidSessionConfig(config)) {
-            log.warn(() => `[Translation Selector] Blocked due to invalid session token ${redactToken(configStr)}`);
-            t = getTranslatorFromRequest(req, res, config);
-            return res.status(401).send(t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token'));
-        }
-        t = getTranslatorFromRequest(req, res, config);
-        const configKey = ensureConfigHash(config, configStr);
-        const streamFilename = req.query.filename || req.query.file || config?.lastStream?.filename || '';
-
-        // Create deduplication key based on video ID and config
-        const dedupKey = `translate-selector:${configKey}:${videoId}:${targetLang}`;
-
-        // Check if already in flight BEFORE logging
-        const isAlreadyInFlight = inFlightRequests.has(dedupKey);
-
-        if (isAlreadyInFlight) {
-            log.debug(() => `[Translation Selector] Duplicate request detected for ${videoId} to ${targetLang}`);
-        } else {
-            log.debug(() => `[Translation Selector] New request for ${videoId} to ${targetLang}`);
-        }
-
-        // Get available subtitles with deduplication
-        const subtitles = await deduplicate(dedupKey, () =>
-            getAvailableSubtitlesForTranslation(videoId, config)
-        );
-
-        // Generate HTML page for subtitle selection
-        const html = generateTranslationSelectorPage(subtitles, videoId, targetLang, configStr, config, t, res.locals?.uiLanguage, streamFilename);
-
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.send(html);
-
-    } catch (error) {
-        const t = res.locals?.t || getTranslatorFromRequest(req, res);
-        if (respondStorageUnavailable(res, error, '[Translation Selector]', t)) return;
-        log.error(() => '[Translation Selector] Error:', error);
-        res.status(500).send(t('server.errors.subtitleSelectorFailed', {}, 'Failed to load subtitle selector'));
-    }
-});
-
 // Custom route: Perform translation (BEFORE SDK router to take precedence)
 app.get('/addon/:config/translate/:sourceFileId/:targetLang', normalizeSubtitleFormatParams, searchLimiter, validateRequest(translationParamsSchema, 'params'), async (req, res) => {
     try {
@@ -6373,10 +6326,15 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
             translationModel,
             sendTimestampsToAI = false,
             singleBatchMode = false,
+            enableBatchContext = false,
             translationPrompt,
             sendFullVideo = false,
             diarization = false
         } = req.body || {};
+        const options = (req.body && typeof req.body.options === 'object' && req.body.options) ? req.body.options : {};
+        const hasLegacySendTimestamps = typeof req.body?.sendTimestampsToAI === 'boolean';
+        const hasLegacySingleBatch = typeof req.body?.singleBatchMode === 'boolean';
+        const hasLegacyBatchContext = typeof req.body?.enableBatchContext === 'boolean';
         // Force diarization for all auto-subs modes (labels are stripped from outputs)
         diarization = true;
 
@@ -6403,6 +6361,36 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
             });
         }
         t = getTranslatorFromRequest(req, res, config);
+
+        const validWorkflows = ['xml', 'json', 'original', 'ai'];
+        const requestedWorkflow = (typeof options.translationWorkflow === 'string')
+            ? options.translationWorkflow.trim().toLowerCase()
+            : ((typeof req.body?.translationWorkflow === 'string') ? req.body.translationWorkflow.trim().toLowerCase() : '');
+        const savedWorkflow = (() => {
+            const raw = String(config.advancedSettings?.translationWorkflow || '').trim().toLowerCase();
+            return validWorkflows.includes(raw) ? raw : '';
+        })();
+        const translationWorkflow = validWorkflows.includes(requestedWorkflow)
+            ? requestedWorkflow
+            : (((options.sendTimestampsToAI === true) || (hasLegacySendTimestamps && sendTimestampsToAI === true))
+                ? 'ai'
+                : (savedWorkflow || (config.advancedSettings?.sendTimestampsToAI === true ? 'ai' : 'xml')));
+        singleBatchMode = (typeof options.singleBatchMode === 'boolean')
+            ? options.singleBatchMode
+            : (hasLegacySingleBatch ? singleBatchMode === true : config.singleBatchMode === true);
+        enableBatchContext = (typeof options.enableBatchContext === 'boolean')
+            ? options.enableBatchContext
+            : (hasLegacyBatchContext ? enableBatchContext === true : config.advancedSettings?.enableBatchContext === true);
+        sendTimestampsToAI = translationWorkflow === 'ai';
+        config.singleBatchMode = singleBatchMode === true;
+        config.advancedSettings = { ...(config.advancedSettings || {}) };
+        config.advancedSettings.translationWorkflow = translationWorkflow;
+        config.advancedSettings.enableBatchContext = enableBatchContext === true;
+        if (sendTimestampsToAI) {
+            config.advancedSettings.sendTimestampsToAI = true;
+        } else {
+            delete config.advancedSettings.sendTimestampsToAI;
+        }
 
         const linkedHash = deriveVideoHash(filename || '', videoId || '');
         const streamHashInfo = deriveStreamHashFromUrlServer(streamUrl, { filename, videoId });
@@ -6572,11 +6560,17 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
                     ? `${providerBundle.providerName} (fallback from ${providerBundle.fallbackProviderName})`
                     : providerBundle.providerName;
                 logStep(`Using translation provider ${providerLabelFull} (${providerBundle.providerModel || 'default model'})`, 'info');
+                logStep(`Translation workflow=${translationWorkflow}, singleBatch=${singleBatchMode === true}, batchContext=${enableBatchContext === true}`, 'info');
                 const translationEngine = new TranslationEngine(
                     providerBundle.provider,
                     providerBundle.providerModel,
-                    { ...(config.advancedSettings || {}), sendTimestampsToAI: sendTimestampsToAI === true },
-                    { singleBatchMode: singleBatchMode === true, providerName: providerBundle.providerName, fallbackProviderName: providerBundle.fallbackProviderName }
+                    config.advancedSettings || {},
+                    {
+                        singleBatchMode: singleBatchMode === true,
+                        providerName: providerBundle.providerName,
+                        fallbackProviderName: providerBundle.fallbackProviderName,
+                        enableStreaming: false
+                    }
                 );
 
                 for (const targetLang of normalizedTargets) {
@@ -6600,7 +6594,11 @@ app.post('/api/auto-subtitles/run', autoSubLimiter, async (req, res) => {
                                         ...baseMetadata,
                                         provider: providerBundle.providerName,
                                         model: providerBundle.providerModel || providerBundle.providerName,
-                                        targetLanguage: targetLang
+                                        targetLanguage: targetLang,
+                                        translationWorkflow,
+                                        singleBatchMode: singleBatchMode === true,
+                                        enableBatchContext: enableBatchContext === true,
+                                        sendTimestampsToAI: sendTimestampsToAI === true
                                     }
                                 });
                                 downloadUrl = `/addon/${encodeURIComponent(configStr)}/auto/${videoHash}/${targetLang}/${sourceId}`;
@@ -7080,13 +7078,27 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId/original', async (re
         }
 
         const strictSrtHeaders = String(config.androidSubtitleCompatMode || 'off').toLowerCase() === 'aggressive';
-        const { isVtt, isAss, isSsa, ext } = detectSubtitlePayloadFormat(match.content);
-        if (isVtt) {
+        const prepared = prepareEmbeddedSubtitleDelivery({
+            content: match.content,
+            codec: metadata.codec,
+            mime: metadata.mime,
+            label: metadata.label,
+            originalLabel: metadata.originalLabel,
+            name: metadata.name,
+            sourceFormat: metadata.sourceFormat,
+            metadata
+        }, config, { logPrefix: '[xEmbed Original]' });
+
+        if (prepared.conversionFailed) {
+            log.warn(() => `[xEmbed Original] Requested SRT delivery but conversion fell back to ${prepared.sourceFormat || 'original'} for ${safeVideoHash}_${safeLang}_${safeTrackId}`);
+        }
+
+        if (prepared.deliveryFormat === 'vtt') {
             res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
             res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_original.vtt"`);
-        } else if (isAss || isSsa) {
+        } else if (prepared.deliveryFormat === 'ass' || prepared.deliveryFormat === 'ssa') {
             res.setHeader('Content-Type', 'text/x-ssa; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_original.${ext}"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_original.${prepared.ext}"`);
         } else if (strictSrtHeaders) {
             res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
             res.setHeader('Content-Disposition', `inline; filename="${safeVideoHash}_${safeLang}_original.srt"`);
@@ -7095,12 +7107,70 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId/original', async (re
             res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_original.srt"`);
         }
         setSubtitleCacheHeaders(res, 'final');
-        res.send(match.content);
+        res.send(prepared.content);
     } catch (error) {
         const t = res.locals?.t || getTranslatorFromRequest(req, res);
         if (respondStorageUnavailable(res, error, '[xEmbed Original]', t)) return;
         log.error(() => '[xEmbed Original] Error:', error);
         res.status(500).send(t('server.errors.downloadEmbeddedOriginalFailed', {}, 'Failed to download original embedded subtitle'));
+    }
+});
+
+app.post('/api/prepare-embedded-track-delivery', async (req, res) => {
+    try {
+        setNoStore(res);
+        let t = res.locals?.t || getTranslatorFromRequest(req, res, req.body);
+        const { configStr, tracks } = req.body || {};
+
+        if (!configStr || !Array.isArray(tracks) || tracks.length === 0) {
+            return res.status(400).json({ error: t('server.errors.missingOrInvalidFields', {}, 'Missing or invalid required fields') });
+        }
+        if (tracks.length > 40) {
+            return res.status(413).json({ error: t('server.errors.embeddedTooLarge', {}, 'Embedded subtitle is too large') });
+        }
+
+        const config = await resolveConfigGuarded(configStr, req, res, '[Embedded Delivery] config', t);
+        if (!config) return;
+        if (!config || config.__sessionTokenError === true) {
+            log.warn(() => '[Embedded Delivery] Rejected due to invalid/missing session token');
+            t = getTranslatorFromRequest(req, res, config);
+            return res.status(401).json({ error: t('server.errors.invalidSessionToken', {}, 'Invalid or expired session token') });
+        }
+        t = getTranslatorFromRequest(req, res, config);
+
+        let totalChars = 0;
+        const preparedTracks = tracks.map((track, index) => {
+            const safeTrackId = (typeof track?.id === 'string' || typeof track?.id === 'number')
+                ? String(track.id)
+                : String(index);
+            const content = typeof track?.content === 'string' ? track.content : '';
+            totalChars += content.length;
+            return {
+                id: safeTrackId,
+                content,
+                codec: track?.codec,
+                mime: track?.mime,
+                label: track?.label,
+                originalLabel: track?.originalLabel,
+                name: track?.name,
+                sourceFormat: track?.sourceFormat
+            };
+        });
+
+        if (totalChars > 8 * 1024 * 1024) {
+            return res.status(413).json({ error: t('server.errors.embeddedTooLarge', {}, 'Embedded subtitle is too large') });
+        }
+
+        const results = preparedTracks.map((track) => ({
+            id: track.id,
+            ...prepareEmbeddedSubtitleDelivery(track, config, { logPrefix: '[Embedded Delivery]' })
+        }));
+
+        return res.json({ success: true, tracks: results });
+    } catch (error) {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        log.error(() => ['[Embedded Delivery] Error:', error]);
+        res.status(500).json({ error: t('server.errors.downloadEmbeddedOriginalFailed', {}, 'Failed to prepare embedded subtitle delivery') });
     }
 });
 
@@ -7201,6 +7271,8 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
             configStr,
             videoHash,
             trackId,
+            videoId: requestVideoId,
+            filename: requestFilename,
             sourceLanguageCode,
             targetLanguage,
             content,
@@ -7213,10 +7285,14 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
 
         const normalizedVideoHash = typeof videoHash === 'string' ? videoHash.trim() : '';
         const normalizedTrackId = (typeof trackId === 'string' || typeof trackId === 'number') ? String(trackId).trim() : '';
+        const normalizedRequestVideoId = normalizeEmbeddedHistoryValue(requestVideoId, '', 200);
+        const normalizedRequestFilename = normalizeEmbeddedHistoryValue(requestFilename, '', 200);
         const normalizedTargetLang = typeof targetLanguage === 'string' ? targetLanguage.trim().toLowerCase() : '';
         const normalizedSourceLang = typeof sourceLanguageCode === 'string' ? sourceLanguageCode.trim().toLowerCase() : 'und';
         const subtitleContent = typeof content === 'string' ? content : '';
         let mergedMetadata = (metadata && typeof metadata === 'object') ? { ...metadata } : {};
+        if (normalizedRequestVideoId) mergedMetadata.videoId = normalizedRequestVideoId;
+        if (normalizedRequestFilename) mergedMetadata.filename = normalizedRequestFilename;
         const incomingBatchId = Number(mergedMetadata.batchId);
         const skipCacheWrites = skipCache === true;
 
@@ -7252,12 +7328,30 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
         };
 
         // Apply TranslationEngine-specific toggles
+        const validWorkflows = ['xml', 'json', 'original', 'ai'];
+        const requestedWorkflow = (options && typeof options.translationWorkflow === 'string')
+            ? options.translationWorkflow.trim().toLowerCase()
+            : '';
+        const savedWorkflow = (() => {
+            const raw = String(workingConfig.advancedSettings?.translationWorkflow || '').trim().toLowerCase();
+            return validWorkflows.includes(raw) ? raw : '';
+        })();
+        const translationWorkflow = validWorkflows.includes(requestedWorkflow)
+            ? requestedWorkflow
+            : ((options && options.sendTimestampsToAI === true)
+                ? 'ai'
+                : (savedWorkflow || (workingConfig.advancedSettings.sendTimestampsToAI === true ? 'ai' : 'xml')));
         const singleBatchMode = (options && typeof options.singleBatchMode === 'boolean')
             ? options.singleBatchMode
             : workingConfig.singleBatchMode === true;
-        const sendTimestampsToAI = (options && typeof options.sendTimestampsToAI === 'boolean')
-            ? options.sendTimestampsToAI
-            : workingConfig.advancedSettings.sendTimestampsToAI === true;
+        const enableBatchContext = (options && typeof options.enableBatchContext === 'boolean')
+            ? options.enableBatchContext
+            : workingConfig.advancedSettings.enableBatchContext === true;
+        const sendTimestampsToAI = translationWorkflow === 'ai';
+
+        workingConfig.singleBatchMode = singleBatchMode;
+        workingConfig.advancedSettings.translationWorkflow = translationWorkflow;
+        workingConfig.advancedSettings.enableBatchContext = enableBatchContext;
         if (sendTimestampsToAI) {
             workingConfig.advancedSettings.sendTimestampsToAI = true;
         } else {
@@ -7355,11 +7449,7 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
 
         // History tracking (Sub Toolbox translations previously skipped history)
         const normalizeHistoryLabel = (value, fallback) => {
-            if (typeof value === 'string') {
-                const trimmed = value.trim();
-                if (trimmed) return trimmed.slice(0, 200);
-            }
-            return fallback;
+            return normalizeEmbeddedHistoryValue(value, fallback, 200);
         };
         historyUserHash = resolveHistoryUserHash(baseConfig);
         historyEnabled = !!historyUserHash;
@@ -7369,18 +7459,22 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
         const ensureHistoryEntry = () => {
             if (!historyEnabled) return false;
             if (historyEntry) return true;
-            const videoHash = deriveVideoHash(
-                normalizeHistoryLabel(mergedMetadata.label || metadata?.label || '', '') || safeVideoHash,
-                safeVideoHash || ''
-            );
+            const historyContext = buildEmbeddedHistoryContext({
+                videoHash: safeVideoHash,
+                trackId: safeTrackId,
+                requestVideoId: normalizedRequestVideoId,
+                requestFilename: normalizedRequestFilename,
+                metadata: mergedMetadata
+            });
             historyEntry = {
                 id: crypto.randomUUID(),
                 status: 'processing',
-                title: normalizeHistoryLabel(mergedMetadata.label || metadata?.label, `Track ${safeTrackId}`),
-                filename: normalizeHistoryLabel(mergedMetadata.label || metadata?.label, `Track ${safeTrackId}`),
-                videoId: safeVideoHash || 'unknown',
-                videoHash,
+                title: historyContext.title,
+                filename: historyContext.filename,
+                videoId: historyContext.videoId,
+                videoHash: historyContext.videoHash,
                 trackId: safeTrackId,
+                trackLabel: historyContext.trackLabel,
                 sourceLanguage: safeSourceLanguage || 'und',
                 targetLanguage: safeTargetLanguage,
                 createdAt: Date.now(),
@@ -7393,10 +7487,33 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
         };
 
         const cacheMatchesOptions = (meta = {}) => {
+            const metaWorkflow = typeof meta.translationWorkflow === 'string'
+                ? meta.translationWorkflow.trim().toLowerCase()
+                : '';
+            if (metaWorkflow) {
+                if (metaWorkflow !== translationWorkflow) {
+                    return false;
+                }
+            } else if (translationWorkflow === 'ai') {
+                if (meta.sendTimestampsToAI !== true) {
+                    return false;
+                }
+            } else {
+                // Older embedded cache entries do not record non-AI workflows,
+                // so they are ambiguous between XML/original/JSON modes.
+                return false;
+            }
+
             if (meta.singleBatchMode !== undefined && meta.singleBatchMode !== singleBatchMode) {
                 return false;
             }
             if (meta.sendTimestampsToAI !== undefined && meta.sendTimestampsToAI !== sendTimestampsToAI) {
+                return false;
+            }
+            if (meta.enableBatchContext !== undefined && meta.enableBatchContext !== enableBatchContext) {
+                return false;
+            }
+            if (enableBatchContext && meta.enableBatchContext !== true) {
                 return false;
             }
 
@@ -7532,7 +7649,7 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
             { singleBatchMode, providerName, fallbackProviderName, enableStreaming: false }
         );
 
-        log.debug(() => `[Embedded Translate] Translating track ${safeTrackId} to ${targetLangName} (singleBatch=${singleBatchMode}, timestamps=${sendTimestampsToAI})`);
+        log.debug(() => `[Embedded Translate] Translating track ${safeTrackId} to ${targetLangName} (workflow=${translationWorkflow}, singleBatch=${singleBatchMode}, batchContext=${enableBatchContext}, timestamps=${sendTimestampsToAI})`);
         const translatedContent = await engine.translateSubtitle(
             sourceContent,
             targetLangName,
@@ -7545,7 +7662,9 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
             provider: providerName,
             model: model || requestedModel || getEffectiveGeminiModel(workingConfig),
             translatedAt: Date.now(),
+            translationWorkflow,
             singleBatchMode,
+            enableBatchContext,
             sendTimestampsToAI,
             promptSignature
         };
@@ -7611,561 +7730,6 @@ function escapeHtml(text) {
         '=': '&#x3D;'
     }[m] || m));
     return escaped.replace(/[\u0000-\u001F\u007F-\u009F]/g, ch => `&#${ch.charCodeAt(0)};`);
-}
-
-// Generate HTML page for translation selector
-function generateTranslationSelectorPage(subtitles, videoId, targetLang, configStr, config, t, lang, streamFilename = '') {
-    const selectedLang = lang || (config && config.uiLanguage) || DEFAULT_LANG;
-    const tx = typeof t === 'function' ? t : getTranslator(selectedLang);
-    const targetLangName = getLanguageName(targetLang) || targetLang;
-    const sourceLangs = config.sourceLanguages.map(lang => getLanguageName(lang) || lang).join(', ');
-    const translateQueryParts = [];
-    if (videoId) translateQueryParts.push(`videoId=${encodeURIComponent(videoId)}`);
-    if (streamFilename) translateQueryParts.push(`filename=${encodeURIComponent(streamFilename)}`);
-    const translateQuery = translateQueryParts.length ? `?${translateQueryParts.join('&')}` : '';
-
-    const subtitleOptions = subtitles.map(sub => `
-        <div class="subtitle-option">
-            <a href="/addon/${encodeURIComponent(configStr)}/translate/${sub.fileId}/${targetLang}.srt${translateQuery}" class="subtitle-link">
-                <div class="subtitle-info">
-                    <div class="subtitle-name">${escapeHtml(sub.name)}</div>
-                    <div class="subtitle-meta">
-                        ${sub.language} • Downloads: ${sub.downloads} • Rating: ${sub.rating.toFixed(1)}
-                    </div>
-                </div>
-            </a>
-        </div>
-    `).join('');
-
-    return `
-<!DOCTYPE html>
-<html lang="${escapeHtml(selectedLang)}" data-third-theme="true-dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${escapeHtml(tx('server.selector.title', { target: targetLangName }, `Select Subtitle to Translate`))}</title>
-    <script>
-        (function() {
-            var html = document.documentElement;
-            var thirdTheme = html.getAttribute('data-third-theme') === 'true-dark' ? 'true-dark' : 'blackhole';
-            var theme = 'dark';
-            var saved = null;
-            try { saved = localStorage.getItem('theme'); } catch (_) {}
-            if (saved === 'blackhole' || saved === 'true-dark') {
-                theme = thirdTheme;
-            } else if (saved === 'light' || saved === 'dark') {
-                theme = saved;
-            } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-                theme = 'light';
-            }
-            html.setAttribute('data-theme', theme);
-        })();
-    </script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        :root {
-            --bg-gradient-start: #0A0E27;
-            --bg-gradient-end: #1a1f3a;
-            --text-primary: #E8EAED;
-            --text-secondary: #9AA0A6;
-            --card-bg: #141931;
-            --card-border: #2A3247;
-            --card-hover-border: #7B68EE;
-            --card-hover-shadow: rgba(123, 104, 238, 0.3);
-            --badge-bg: #2A3247;
-            --badge-text: #9AA0A6;
-            --badge-border: #2A3247;
-            --primary-gradient-start: #9B88FF;
-            --primary-gradient-end: #7B68EE;
-        }
-
-        [data-theme="light"] {
-            --bg-gradient-start: #f7fafc;
-            --bg-gradient-end: #ffffff;
-            --text-primary: #0f172a;
-            --text-secondary: #475569;
-            --card-bg: #ffffff;
-            --card-border: #dbe3ea;
-            --card-hover-border: #08A4D5;
-            --card-hover-shadow: rgba(8, 164, 213, 0.3);
-            --badge-bg: rgba(8, 164, 213, 0.1);
-            --badge-text: #068DB7;
-            --badge-border: rgba(8, 164, 213, 0.3);
-            --primary-gradient-start: #08A4D5;
-            --primary-gradient-end: #33B9E1;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-            background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
-            color: var(--text-primary);
-            min-height: 100vh;
-            padding: 2rem 1rem;
-        }
-
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-        }
-
-        h1 {
-            text-align: center;
-            margin-bottom: 0.5rem;
-            font-size: 2rem;
-            background: linear-gradient(135deg, var(--primary-gradient-start) 0%, var(--primary-gradient-end) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .version-badge {
-            display: inline-block;
-            background: var(--badge-bg);
-            color: var(--badge-text);
-            border: 1px solid var(--badge-border);
-            border-radius: 999px;
-            padding: 0.15rem 0.6rem;
-            font-size: 0.8rem;
-            margin-left: 0.5rem;
-            vertical-align: middle;
-        }
-
-        .subtitle-header {
-            text-align: center;
-            margin-bottom: 2rem;
-            color: var(--text-secondary);
-            font-size: 0.95rem;
-        }
-
-        .subtitle-option {
-            background: var(--card-bg);
-            border: 2px solid var(--card-border);
-            border-radius: 12px;
-            margin-bottom: 1rem;
-            transition: all 0.3s ease;
-        }
-
-        .subtitle-option:hover {
-            border-color: var(--card-hover-border);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px var(--card-hover-shadow);
-        }
-
-        .subtitle-link {
-            display: block;
-            padding: 1.5rem;
-            text-decoration: none;
-            color: inherit;
-        }
-
-        .subtitle-name {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-        }
-
-        .subtitle-meta {
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-        }
-
-        .no-subtitles {
-            text-align: center;
-            padding: 3rem;
-            color: var(--text-secondary);
-        }
-
-        /* Theme Toggle Button */
-        .theme-toggle {
-            position: fixed;
-            top: 2rem;
-            right: 2rem;
-            width: 48px;
-            height: 48px;
-            background: var(--card-bg);
-            border: 2px solid var(--card-border);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            z-index: 9999;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        }
-
-        .theme-toggle:hover {
-            transform: translateY(-2px) scale(1.05);
-            border-color: var(--card-hover-border);
-            box-shadow: 0 8px 20px var(--card-hover-shadow);
-        }
-
-        .theme-toggle:active {
-            transform: translateY(0) scale(0.98);
-        }
-
-        .theme-toggle-icon {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-            transition: all 0.3s ease;
-            width: 100%;
-            height: 100%;
-        }
-
-        .theme-toggle-icon svg {
-            display: block;
-            margin: auto;
-        }
-
-        .theme-toggle-icon.sun {
-            display: block;
-        }
-
-        .theme-toggle-icon.moon {
-            display: none;
-        }
-
-        .theme-toggle-icon.blackhole {
-            display: none;
-        }
-
-        [data-theme="dark"] .theme-toggle-icon.sun {
-            display: none;
-        }
-
-        [data-theme="dark"] .theme-toggle-icon.moon {
-            display: block;
-        }
-
-        [data-theme="dark"] .theme-toggle-icon.blackhole {
-            display: none;
-        }
-
-        [data-theme="true-dark"] .theme-toggle-icon.sun {
-            display: none;
-        }
-
-        [data-theme="true-dark"] .theme-toggle-icon.moon {
-            display: none;
-        }
-
-        [data-theme="true-dark"] .theme-toggle-icon.blackhole {
-            display: block;
-        }
-
-        @media (max-width: 768px) {
-            .theme-toggle {
-                top: 1rem;
-                right: 1rem;
-                width: 42px;
-                height: 42px;
-            }
-
-            .theme-toggle-icon {
-                font-size: 1.25rem;
-            }
-        }
-    </style>
-    <style>
-        /* Mario-style block + coin animation (perf-friendly: transforms only) */
-        .theme-toggle.mario {
-            background: linear-gradient(180deg, #f7d13e 0%, #e6b526 60%, #d49c1d 100%);
-            border-color: #8a5a00;
-            box-shadow:
-                inset 0 2px 0 #fff3b0,
-                inset 0 -3px 0 #b47a11,
-                0 6px 0 #7a4d00,
-                0 10px 16px rgba(0,0,0,0.35);
-            position: fixed;
-        }
-        .theme-toggle.mario::before {
-            content: '';
-            position: absolute;
-            width: 5px; height: 5px; border-radius: 50%;
-            background: #b47a11;
-            top: 6px; left: 6px;
-            box-shadow:
-                calc(100% - 12px) 0 0 #b47a11,
-                0 calc(100% - 12px) 0 #b47a11,
-                calc(100% - 12px) calc(100% - 12px) 0 #b47a11;
-            opacity: .9;
-        }
-        .theme-toggle.mario:active { transform: translateY(2px) scale(0.98); box-shadow:
-            inset 0 1px 0 #fff3b0,
-            inset 0 -1px 0 #b47a11,
-            0 4px 0 #7a4d00,
-            0 8px 14px rgba(0,0,0,0.3);
-        }
-        .theme-toggle-icon {
-            transition: transform 0.25s ease;
-            display: grid;
-            place-items: center;
-            width: 100%;
-            height: 100%;
-        }
-        .theme-toggle-icon svg {
-            display: block;
-            filter: drop-shadow(0 2px 0 rgba(0,0,0,0.2));
-            margin: auto;
-        }
-        /* Coin effect */
-        .coin { position: fixed; left: 0; top: 0; width: 22px; height: 22px; pointer-events: none; z-index: 10000; transform: translate(-50%, -50%); will-change: transform, opacity; contain: layout paint style; }
-        .coin::before { content: ''; display: block; width: 100%; height: 100%; border-radius: 50%;
-            background:
-                linear-gradient(90deg, rgba(0,0,0,0) 45%, rgba(0,0,0,0.2) 55%) ,
-                radial-gradient(40% 40% at 35% 30%, #fff6bf 0%, rgba(255,255,255,0) 70%),
-                linear-gradient(180deg, #ffd24a 0%, #ffc125 50%, #e2a415 100%);
-            border: 2px solid #8a5a00; box-shadow: 0 2px 0 #7a4d00, inset 0 1px 0 #fff8c6;
-        }
-        @keyframes coin-pop {
-            0% { opacity: 0; transform: translate(-50%, -50%) translateY(0) scale(0.9) rotateY(0deg); }
-            10% { opacity: 1; }
-            60% { transform: translate(-50%, -50%) translateY(-52px) scale(1.0) rotateY(360deg); }
-            100% { opacity: 0; transform: translate(-50%, -50%) translateY(-70px) scale(0.95) rotateY(540deg); }
-        }
-        .coin.animate { animation: coin-pop 0.7s cubic-bezier(.2,.8,.2,1) forwards; }
-        @media (prefers-reduced-motion: reduce) { .coin.animate { animation: none; opacity: 0; } }
-
-        /* Theme variants for subtitle-selection page (light vs default=dark) */
-        [data-theme="light"] .theme-toggle.mario {
-            background: linear-gradient(180deg, #f7d13e 0%, #e6b526 60%, #d49c1d 100%);
-            border-color: #8a5a00;
-            box-shadow:
-                inset 0 2px 0 #fff3b0,
-                inset 0 -3px 0 #b47a11,
-                0 6px 0 #7a4d00,
-                0 10px 16px rgba(0,0,0,0.35);
-        }
-        :not([data-theme="light"]) .theme-toggle.mario {
-            background: linear-gradient(180deg, #4c6fff 0%, #2f4ed1 60%, #1e2f8a 100%);
-            border-color: #1b2a78;
-            box-shadow:
-                inset 0 2px 0 #b3c4ff,
-                inset 0 -3px 0 #213a9a,
-                0 6px 0 #16246a,
-                0 10px 16px rgba(20,25,49,0.6);
-        }
-        [data-theme="light"] .theme-toggle.mario::before { background: #b47a11; box-shadow:
-            calc(100% - 12px) 0 0 #b47a11,
-            0 calc(100% - 12px) 0 #b47a11,
-            calc(100% - 12px) calc(100% - 12px) 0 #b47a11;
-        }
-        :not([data-theme="light"]) .theme-toggle.mario::before { background: #213a9a; box-shadow:
-            calc(100% - 12px) 0 0 #213a9a,
-            0 calc(100% - 12px) 0 #213a9a,
-            calc(100% - 12px) calc(100% - 12px) 0 #213a9a;
-        }
-    </style>
-    <style>
-        /* Mario-style block + coin animation (perf-friendly: transforms only) */
-        .theme-toggle.mario {
-            background: linear-gradient(180deg, #f7d13e 0%, #e6b526 60%, #d49c1d 100%);
-            border-color: #8a5a00;
-            box-shadow:
-                inset 0 2px 0 #fff3b0,
-                inset 0 -3px 0 #b47a11,
-                0 6px 0 #7a4d00,
-                0 10px 16px rgba(0,0,0,0.35);
-            position: fixed;
-        }
-        .theme-toggle.mario::before {
-            content: '';
-            position: absolute;
-            width: 5px; height: 5px; border-radius: 50%;
-            background: #b47a11;
-            top: 6px; left: 6px;
-            box-shadow:
-                calc(100% - 12px) 0 0 #b47a11,
-                0 calc(100% - 12px) 0 #b47a11,
-                calc(100% - 12px) calc(100% - 12px) 0 #b47a11;
-            opacity: .9;
-        }
-        .theme-toggle.mario:active { transform: translateY(2px) scale(0.98); box-shadow:
-            inset 0 1px 0 #fff3b0,
-            inset 0 -1px 0 #b47a11,
-            0 4px 0 #7a4d00,
-            0 8px 14px rgba(0,0,0,0.3);
-        }
-        .theme-toggle-icon {
-            transition: transform 0.25s ease;
-            display: grid;
-            place-items: center;
-            width: 100%;
-            height: 100%;
-        }
-        .theme-toggle-icon svg {
-            display: block;
-            filter: drop-shadow(0 2px 0 rgba(0,0,0,0.2));
-            margin: auto;
-        }
-        /* Coin effect */
-        .coin { position: fixed; left: 0; top: 0; width: 22px; height: 22px; pointer-events: none; z-index: 10000; transform: translate(-50%, -50%); will-change: transform, opacity; contain: layout paint style; }
-        .coin::before { content: ''; display: block; width: 100%; height: 100%; border-radius: 50%;
-            background:
-                linear-gradient(90deg, rgba(0,0,0,0) 45%, rgba(0,0,0,0.2) 55%) ,
-                radial-gradient(40% 40% at 35% 30%, #fff6bf 0%, rgba(255,255,255,0) 70%),
-                linear-gradient(180deg, #ffd24a 0%, #ffc125 50%, #e2a415 100%);
-            border: 2px solid #8a5a00; box-shadow: 0 2px 0 #7a4d00, inset 0 1px 0 #fff8c6;
-        }
-        @keyframes coin-pop {
-            0% { opacity: 0; transform: translate(-50%, -50%) translateY(0) scale(0.9) rotateY(0deg); }
-            10% { opacity: 1; }
-            60% { transform: translate(-50%, -50%) translateY(-52px) scale(1.0) rotateY(360deg); }
-            100% { opacity: 0; transform: translate(-50%, -50%) translateY(-70px) scale(0.95) rotateY(540deg); }
-        }
-        .coin.animate { animation: coin-pop 0.7s cubic-bezier(.2,.8,.2,1) forwards; }
-        @media (prefers-reduced-motion: reduce) { .coin.animate { animation: none; opacity: 0; } }
-
-        /* Theme variants for file-translation page (light/dark) */
-        [data-theme="light"] .theme-toggle.mario {
-            background: linear-gradient(180deg, #f7d13e 0%, #e6b526 60%, #d49c1d 100%);
-            border-color: #8a5a00;
-            box-shadow:
-                inset 0 2px 0 #fff3b0,
-                inset 0 -3px 0 #b47a11,
-                0 6px 0 #7a4d00,
-                0 10px 16px rgba(0,0,0,0.35);
-        }
-        [data-theme="dark"] .theme-toggle.mario {
-            background: linear-gradient(180deg, #4c6fff 0%, #2f4ed1 60%, #1e2f8a 100%);
-            border-color: #1b2a78;
-            box-shadow:
-                inset 0 2px 0 #b3c4ff,
-                inset 0 -3px 0 #213a9a,
-                0 6px 0 #16246a,
-                0 10px 16px rgba(20,25,49,0.6);
-        }
-        [data-theme="true-dark"] .theme-toggle.mario {
-            background: linear-gradient(180deg, #1b1029 0%, #110b1a 60%, #0b0711 100%);
-            border-color: #3b2a5d;
-            box-shadow:
-                inset 0 2px 0 #6b65ff33,
-                inset 0 -3px 0 #2b2044,
-                0 6px 0 #2a1e43,
-                0 0 18px rgba(107,101,255,0.35);
-        }
-        [data-theme="light"] .theme-toggle.mario::before { background: #b47a11; box-shadow:
-            calc(100% - 12px) 0 0 #b47a11,
-            0 calc(100% - 12px) 0 #b47a11,
-            calc(100% - 12px) calc(100% - 12px) 0 #b47a11;
-        }
-        [data-theme="dark"] .theme-toggle.mario::before { background: #213a9a; box-shadow:
-            calc(100% - 12px) 0 0 #213a9a,
-            0 calc(100% - 12px) 0 #213a9a,
-            calc(100% - 12px) calc(100% - 12px) 0 #213a9a;
-        }
-        [data-theme="true-dark"] .theme-toggle.mario::before { background: #2b2044; box-shadow:
-            calc(100% - 12px) 0 0 #2b2044,
-            0 calc(100% - 12px) 0 #2b2044,
-            calc(100% - 12px) calc(100% - 12px) 0 #2b2044;
-        }
-    </style>
-    <script src="/js/theme-toggle.js" defer></script>
-</head>
-<body>
-    <!-- Theme Toggle Button -->
-    <button class="theme-toggle mario" id="themeToggle" aria-label="Toggle theme">
-        <span class="theme-toggle-icon sun" aria-hidden="true">
-            <svg viewBox="0 0 64 64" width="28" height="28" role="img">
-                <defs>
-                    <radialGradient id="gSun" cx="50%" cy="50%" r="60%">
-                        <stop offset="0%" stop-color="#fff4b0"/>
-                        <stop offset="60%" stop-color="#f7d13e"/>
-                        <stop offset="100%" stop-color="#e0a81e"/>
-                    </radialGradient>
-                </defs>
-                <g fill="none" stroke="#8a5a00" stroke-linecap="round">
-                    <circle cx="32" cy="32" r="13" fill="url(#gSun)" stroke-width="3"/>
-                    <g stroke-width="3">
-                        <line x1="32" y1="6" x2="32" y2="14"/>
-                        <line x1="32" y1="50" x2="32" y2="58"/>
-                        <line x1="6" y1="32" x2="14" y2="32"/>
-                        <line x1="50" y1="32" x2="58" y2="32"/>
-                        <line x1="13" y1="13" x2="19" y2="19"/>
-                        <line x1="45" y1="45" x2="51" y2="51"/>
-                        <line x1="13" y1="51" x2="19" y2="45"/>
-                        <line x1="45" y1="19" x2="51" y2="13"/>
-                    </g>
-                </g>
-            </svg>
-        </span>
-        <span class="theme-toggle-icon moon" aria-hidden="true">
-            <svg viewBox="0 0 64 64" width="28" height="28" role="img">
-                <defs>
-                    <radialGradient id="gMoon" cx="40%" cy="35%" r="65%">
-                        <stop offset="0%" stop-color="#fff7cc"/>
-                        <stop offset="70%" stop-color="#f1c93b"/>
-                        <stop offset="100%" stop-color="#d19b16"/>
-                    </radialGradient>
-                    <mask id="mMoon">
-                        <rect width="100%" height="100%" fill="#ffffff"/>
-                        <circle cx="44" cy="22" r="18" fill="#000000"/>
-                    </mask>
-                </defs>
-                <g fill="none" stroke="#8a5a00">
-                    <circle cx="32" cy="32" r="22" fill="url(#gMoon)" stroke-width="3" mask="url(#mMoon)"/>
-                </g>
-            </svg>
-        </span>
-        <span class="theme-toggle-icon blackhole" aria-hidden="true">
-            <svg viewBox="0 0 64 64" width="28" height="28" role="img">
-                <defs>
-                    <radialGradient id="gRing" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stop-color="#6b65ff"/>
-                        <stop offset="60%" stop-color="#4b2ed6"/>
-                        <stop offset="100%" stop-color="#1a103a"/>
-                    </radialGradient>
-                </defs>
-                <circle cx="32" cy="32" r="12" fill="#000"/>
-                <circle cx="32" cy="32" r="20" fill="none" stroke="url(#gRing)" stroke-width="6"/>
-            </svg>
-        </span>
-    </button>
-    <div id="episodeToast" class="episode-toast" role="status" aria-live="polite">
-        <div class="icon">!</div>
-        <div class="content">
-            <p class="title" id="episodeToastTitle">${escapeHtml(tx('toolbox.toast.title', {}, 'New stream detected'))}</p>
-            <p class="meta" id="episodeToastMeta">${escapeHtml(tx('toolbox.toast.meta', {}, 'A different episode is playing in Stremio.'))}</p>
-        </div>
-        <button class="close" id="episodeToastDismiss" type="button" aria-label="${escapeHtml(tx('toolbox.toast.dismiss', {}, 'Dismiss notification'))}">×</button>
-        <button class="action" id="episodeToastUpdate" type="button">${escapeHtml(tx('toolbox.toast.update', {}, 'Update'))}</button>
-    </div>
-
-    <div class="container">
-        <h1>${escapeHtml(tx('server.selector.heading', { target: targetLangName }, `Translate to ${targetLangName}`))} <span class="version-badge">v${version}</span></h1>
-        <div class="subtitle-header">${escapeHtml(tx('server.selector.subheader', { sources: sourceLangs }, `Select a ${sourceLangs} subtitle to translate`))}</div>
-        ${subtitles.length > 0 ? subtitleOptions : `<div class="no-subtitles">${escapeHtml(tx('server.selector.empty', { sources: sourceLangs }, `No ${sourceLangs} subtitles available`))}</div>`}
-    </div>
-
-    <script>
-    const PAGE = { configStr: ${JSON.stringify(configStr)}, videoId: ${JSON.stringify(videoId)}, filename: ${JSON.stringify(streamFilename || config?.lastStream?.filename || '')}, videoHash: ${JSON.stringify(config?.videoHash || '')} };
-    ${quickNavScript()}
-
-    // Episode change watcher (shared quick-nav version)
-    if (typeof window.initStreamWatcher === 'function') {
-        window.initStreamWatcher({
-            configStr: PAGE.configStr,
-            current: { videoId: PAGE.videoId, filename: PAGE.filename, videoHash: PAGE.videoHash },
-            buildUrl: (payload) => {
-                return '/file-upload?config=' + encodeURIComponent(PAGE.configStr) +
-                    '&videoId=' + encodeURIComponent(payload.videoId || '') +
-                    '&filename=' + encodeURIComponent(payload.filename || '');
-            }
-        });
-    }
-    </script>
-</body>
-</html>
-    `;
 }
 
 // Middleware to replace {{ADDON_URL}} placeholder in responses
@@ -8579,16 +8143,6 @@ app.use('/addon/:config/translate', (error, req, res, next) => {
     res.status(500).end(`${t('server.errors.translationUnavailable', {}, 'ERROR: Translation unavailable')}\n\n`);
 });
 
-// Error handler for /addon/:config/translate-selector/* routes (returns HTML format)
-app.use('/addon/:config/translate-selector', (error, req, res, next) => {
-    const t = res.locals?.t || getTranslatorFromRequest(req, res);
-    log.error(() => ['[Server] Translation Selector Error:', error]);
-    sentry.captureError(error, { module: 'TranslateSelectorErrorHandler', path: req.path, method: req.method });
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    const message = escapeHtml(t('server.errors.subtitleSelectorFailed', {}, 'Failed to load subtitle selector'));
-    res.status(500).end(`<html><body><p>${message}</p></body></html>`);
-});
-
 // Error handler for /addon/:config/file-translate/* routes (returns redirect/HTML format)
 app.use('/addon/:config/file-translate', (error, req, res, next) => {
     const t = res.locals?.t || getTranslatorFromRequest(req, res);
@@ -8681,7 +8235,7 @@ app.use((error, req, res, next) => {
     try {
         startKeepAlivePings();
     } catch (error) {
-        log.error(() => '[Startup] Failed to initialize sync cache:', error.message);
+        log.error(() => '[Startup] Failed to start keep-alive pings:', error.message);
     }
 
     // Wait for session manager to be ready (this is the slow part with 21K+ Redis sessions)

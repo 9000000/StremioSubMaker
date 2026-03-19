@@ -23,6 +23,7 @@ const KEY_LENGTH = 32; // 256 bits
 const IV_LENGTH = 16; // 128 bits
 const AUTH_TAG_LENGTH = 16; // 128 bits
 const ENCRYPTION_KEY_FILE = process.env.ENCRYPTION_KEY_FILE || path.join(process.cwd(), '.encryption-key');
+const MAX_ENCRYPTION_UNWRAP_LAYERS = 4;
 
 let encryptionKey = null;
 
@@ -252,6 +253,138 @@ function isEncrypted(data) {
   return parts.length === 4 && parts[0] === '1';
 }
 
+function unwrapEncryptedStringLayers(value, fieldName = 'unknown', options = {}) {
+  const {
+    returnOriginalOnFailure = false
+  } = options;
+
+  if (!value || typeof value !== 'string' || !isEncrypted(value)) {
+    return {
+      value,
+      layersRemoved: 0,
+      failed: false
+    };
+  }
+
+  let current = value;
+  let layersRemoved = 0;
+
+  while (typeof current === 'string' && isEncrypted(current) && layersRemoved < MAX_ENCRYPTION_UNWRAP_LAYERS) {
+    const next = decrypt(current, true);
+    if (next === null || next === current) {
+      return {
+        value: layersRemoved === 0 && returnOriginalOnFailure ? value : current,
+        layersRemoved,
+        failed: layersRemoved === 0
+      };
+    }
+    current = next;
+    layersRemoved += 1;
+  }
+
+  if (layersRemoved >= MAX_ENCRYPTION_UNWRAP_LAYERS && typeof current === 'string' && isEncrypted(current)) {
+    log.warn(() => `[Encryption] Reached nested encryption unwrap limit for ${fieldName}. Keeping current value to avoid over-processing.`);
+  }
+
+  return {
+    value: current,
+    layersRemoved,
+    failed: false
+  };
+}
+
+function normalizeSensitiveInputsForStorage(config) {
+  if (!config || typeof config !== 'object') {
+    return config;
+  }
+
+  const normalized = JSON.parse(JSON.stringify(config));
+  const normalizedFields = [];
+
+  const normalizeField = (getter, setter, fieldName) => {
+    const currentValue = getter();
+    if (!currentValue || typeof currentValue !== 'string' || !isEncrypted(currentValue)) {
+      return;
+    }
+
+    const result = unwrapEncryptedStringLayers(currentValue, fieldName, { returnOriginalOnFailure: true });
+    if (result.layersRemoved > 0 && result.value !== currentValue) {
+      setter(result.value);
+      normalizedFields.push(fieldName);
+    }
+  };
+
+  normalizeField(
+    () => normalized.geminiApiKey,
+    (value) => { normalized.geminiApiKey = value; },
+    'geminiApiKey'
+  );
+
+  if (Array.isArray(normalized.geminiApiKeys) && normalized.geminiApiKeys.length > 0) {
+    normalized.geminiApiKeys = normalized.geminiApiKeys.map((key, idx) => {
+      const result = unwrapEncryptedStringLayers(key, `geminiApiKeys[${idx}]`, { returnOriginalOnFailure: true });
+      if (result.layersRemoved > 0 && result.value !== key) {
+        normalizedFields.push(`geminiApiKeys[${idx}]`);
+      }
+      return result.value;
+    });
+  }
+
+  normalizeField(
+    () => normalized.assemblyAiApiKey,
+    (value) => { normalized.assemblyAiApiKey = value; },
+    'assemblyAiApiKey'
+  );
+
+  if (normalized.subtitleProviders?.opensubtitles) {
+    normalizeField(
+      () => normalized.subtitleProviders.opensubtitles.username,
+      (value) => { normalized.subtitleProviders.opensubtitles.username = value; },
+      'opensubtitles.username'
+    );
+    normalizeField(
+      () => normalized.subtitleProviders.opensubtitles.password,
+      (value) => { normalized.subtitleProviders.opensubtitles.password = value; },
+      'opensubtitles.password'
+    );
+  }
+
+  normalizeField(
+    () => normalized.subtitleProviders?.subdl?.apiKey,
+    (value) => { normalized.subtitleProviders.subdl.apiKey = value; },
+    'subdl.apiKey'
+  );
+
+  normalizeField(
+    () => normalized.subtitleProviders?.subsource?.apiKey,
+    (value) => { normalized.subtitleProviders.subsource.apiKey = value; },
+    'subsource.apiKey'
+  );
+
+  normalizeField(
+    () => normalized.subtitleProviders?.subsro?.apiKey,
+    (value) => { normalized.subtitleProviders.subsro.apiKey = value; },
+    'subsro.apiKey'
+  );
+
+  if (normalized.providers && typeof normalized.providers === 'object') {
+    for (const [key, provider] of Object.entries(normalized.providers)) {
+      if (!provider || typeof provider !== 'object') continue;
+      normalizeField(
+        () => normalized.providers[key].apiKey,
+        (value) => { normalized.providers[key].apiKey = value; },
+        `providers.${key}.apiKey`
+      );
+    }
+  }
+
+  if (normalizedFields.length > 0) {
+    log.warn(() => `[Encryption] Normalized encrypted sensitive input before storage: ${normalizedFields.join(', ')}`);
+  }
+
+  return normalized;
+}
+
 /**
  * Encrypt specific sensitive fields in a user config object
  * @param {Object} config - User configuration object
@@ -345,6 +478,7 @@ function encryptUserConfig(config) {
  */
 // Track if any decryption operations fail during this call - helps detect encryption key mismatches
 let decryptionWarnings = [];
+let nestedEncryptionRecoveredFields = [];
 
 function decryptUserConfig(config) {
   if (!config || typeof config !== 'object') {
@@ -353,6 +487,7 @@ function decryptUserConfig(config) {
 
   // Reset warnings for this call
   decryptionWarnings = [];
+  nestedEncryptionRecoveredFields = [];
 
   // Clone config to avoid modifying original
   const decrypted = JSON.parse(JSON.stringify(config));
@@ -367,20 +502,24 @@ function decryptUserConfig(config) {
   const safeDecrypt = (value, fieldName) => {
     if (!value) return value;
     const wasEncrypted = isEncrypted(value);
-    const result = decrypt(value, true);
+    const result = unwrapEncryptedStringLayers(value, fieldName, { returnOriginalOnFailure: false });
     // decrypt() returns null when encrypted data can't be decrypted (key mismatch)
     // In that case, clear the field to prevent ciphertext from leaking into API calls
-    if (result === null && wasEncrypted) {
+    if (result.failed && wasEncrypted) {
       decryptionWarnings.push(fieldName);
       log.warn(() => `[Encryption] Failed to decrypt ${fieldName} - encryption key mismatch. Field cleared to prevent ciphertext leak.`);
       return '';
     }
+    if (result.layersRemoved > 1) {
+      nestedEncryptionRecoveredFields.push(fieldName);
+      log.warn(() => `[Encryption] Detected nested encryption for ${fieldName}. Recovered ${result.layersRemoved} layers using the current key.`);
+    }
     // Check if decryption actually happened (value changed) or if it returned raw encrypted data
-    if (wasEncrypted && result === value) {
+    if (wasEncrypted && result.value === value) {
       decryptionWarnings.push(fieldName);
       log.warn(() => `[Encryption] Failed to decrypt ${fieldName} - encryption key mismatch? Returning raw encrypted data.`);
     }
-    return result;
+    return result.value;
   };
 
   try {
@@ -484,6 +623,12 @@ function decryptUserConfig(config) {
       log.warn(() => `[Encryption] Decryption warnings detected for fields: ${decryptionWarnings.join(', ')}. This may indicate encryption key mismatch between server instances.`);
     }
 
+    if (nestedEncryptionRecoveredFields.length > 0) {
+      decrypted.__nestedEncryptionRecovered = true;
+      decrypted.__nestedEncryptionRecoveredFields = [...nestedEncryptionRecoveredFields];
+      log.warn(() => `[Encryption] Recovered nested encryption for fields: ${nestedEncryptionRecoveredFields.join(', ')}. Session should be re-saved in normalized form.`);
+    }
+
     return decrypted;
   } catch (error) {
     log.error(() => ['[Encryption] Failed to decrypt user config:', error.message]);
@@ -503,6 +648,7 @@ module.exports = {
   isEncrypted,
   encryptUserConfig,
   decryptUserConfig,
+  normalizeSensitiveInputsForStorage,
   getEncryptionKey,
   getDecryptionWarnings
 };

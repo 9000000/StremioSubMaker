@@ -78,7 +78,6 @@
         "translateFileError": "La traducción falló: {reason}",
         "subtitleNotFound": "Subtítulo no encontrado",
         "errorSubtitleUnavailable": "Subtítulo de error no disponible",
-        "subtitleSelectorFailed": "No se pudo cargar el selector de subtítulos",
         "translationInProgress": "La traducción ya está en curso; esperando la solicitud principal.",
         "translationInvalidContent": "La traducción devolvió contenido no válido",
         "translationFailed": "La traducción falló: {reason}",
@@ -136,12 +135,6 @@
       },
       "sync": {
         "saveSuccess": "Subtítulo sincronizado guardado correctamente"
-      },
-      "selector": {
-        "title": "Selecciona subtítulo para traducir",
-        "heading": "Traducir a {target}",
-        "subheader": "Selecciona un subtítulo en {sources} para traducir",
-        "empty": "No hay subtítulos en {sources}"
       }
     },
     "apiErrors": {
@@ -309,9 +302,11 @@
             "4": "Haz clic en \"Traducir subtítulos\"."
           },
           "download": "Puedes descargar los subtítulos extraídos o traducidos como SRT.",
+          "downloadDelivery": "Puedes descargar los originales extraídos en su formato entregado (passthrough ASS/SSA o SRT convertido) y los subtítulos traducidos como SRT.",
           "upload": "Los subtítulos traducidos se suben automáticamente a la base de datos, coincidiendo con el hash del video, bajo la entrada \"xEmbed (Idioma)\" (recarga el stream en Stremio para verla).",
           "retry": "Si ocurren problemas de traducción/sincronización, simplemente vuelve a traducir el subtítulo para sobrescribir la caché xEmbed.",
           "originals": "Los subtítulos extraídos se guardan en xEmbed como originales y aparecen bajo su idioma de origen (sin etiqueta separada).",
+          "originalsDelivery": "Los subtítulos extraídos se guardan en xEmbed como originales usando tu configuración actual de entrega ASS/SSA y aparecen bajo su idioma de origen (sin etiqueta separada).",
           "ocrNote": "Actualmente no funciona con subtítulos basados en imágenes; quizá se implemente OCR.",
           "dontShow": "No mostrar esto de nuevo",
           "gotIt": "Entendido"
@@ -1445,7 +1440,7 @@
         "title": "Desarrollo"
       },
       "reset": {
-        "hint": "¿Problemas? Restablece la configuración a los valores predeterminados \u2192",
+        "hint": "¿Problemas? Restablece la configuración a los valores predeterminados →",
         "cta": "Restablecer"
       }
     },

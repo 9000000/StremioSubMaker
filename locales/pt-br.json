@@ -78,7 +78,6 @@
         "translateFileError": "Tradução falhou: {reason}",
         "subtitleNotFound": "Legenda não encontrada",
         "errorSubtitleUnavailable": "Legenda de erro indisponível",
-        "subtitleSelectorFailed": "Falha ao carregar seletor de legendas",
         "translationInProgress": "Tradução já em andamento; aguardando solicitação primária.",
         "translationInvalidContent": "A tradução retornou conteúdo inválido",
         "translationFailed": "Tradução falhou: {reason}",
@@ -136,12 +135,6 @@
       },
       "sync": {
         "saveSuccess": "Legenda sincronizada salva com sucesso"
-      },
-      "selector": {
-        "title": "Selecione a Legenda para Traduzir",
-        "heading": "Traduzir para {target}",
-        "subheader": "Selecione uma legenda {sources} para traduzir",
-        "empty": "Nenhuma legenda {sources} disponível"
       }
     },
     "apiErrors": {
@@ -309,9 +302,11 @@
             "4": "Clique em \"Traduzir legendas\"."
           },
           "download": "Você pode baixar as legendas extraídas ou traduzidas em SRT.",
+          "downloadDelivery": "Você pode baixar os originais extraídos no formato entregue (pass-through ASS/SSA ou SRT convertido) e as legendas traduzidas em SRT.",
           "upload": "As legendas traduzidas são enviadas automaticamente para o banco de dados, combinando com o hash do vídeo, na entrada \"xEmbed (Idioma)\" (recarregue o stream no Stremio para vê-la).",
           "retry": "Se houver problemas de tradução/sincronização, basta retraduzir a legenda para sobrescrever o cache do xEmbed.",
           "originals": "As legendas extraídas são salvas no xEmbed como originais e aparecem no idioma de origem (sem etiqueta separada).",
+          "originalsDelivery": "As legendas extraídas são salvas no xEmbed como originais usando sua configuração atual de entrega ASS/SSA e aparecem no idioma de origem (sem etiqueta separada).",
           "ocrNote": "Atualmente não funciona com legendas baseadas em imagem; OCR pode ser implementado.",
           "dontShow": "Não mostrar novamente",
           "gotIt": "Entendi"
@@ -1445,7 +1440,7 @@
         "title": "Desenvolvimento"
       },
       "reset": {
-        "hint": "Algum problema? Redefinir configurações para o padrão \u2192",
+        "hint": "Algum problema? Redefinir configurações para o padrão →",
         "cta": "Redefinir"
       }
     },

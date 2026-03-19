@@ -23,6 +23,7 @@ const axios = require('axios');
 const { toISO6391 } = require('../utils/languages');
 const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const { detectAndConvertEncoding } = require('../utils/encodingDetector');
+const { getSeasonHintCandidates, hasExplicitSeasonEpisodeMismatch } = require('../utils/animeSearchResolver');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const log = require('../utils/logger');
 const { version } = require('../utils/version');
@@ -117,6 +118,79 @@ function inferFormatFromFilename(filename) {
     if (lower.endsWith('.ssa')) return 'ssa';
     if (lower.endsWith('.sub')) return 'sub';
     return 'srt';
+}
+
+function filterEpisodeResultsForSeason(results, { type, targetSeason, targetEpisode }) {
+    return results.filter(sub => {
+        const name = String(sub.name || '').toLowerCase();
+
+        if (hasExplicitSeasonEpisodeMismatch(name, targetSeason, targetEpisode)) {
+            return false;
+        }
+
+        const seasonPackPatterns = [
+            new RegExp(`(?:complete|full|entire)?\\s*(?:season|s)\\s*0*${targetSeason}(?:\\s+(?:complete|full|pack))?(?!.*e0*\\d)`, 'i'),
+            new RegExp(`(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\\s+season(?!.*episode)`, 'i'),
+            new RegExp(`s0*${targetSeason}\\s*(?:complete|full|pack)`, 'i')
+        ];
+
+        const animeSeasonPackPatterns = [
+            /(?:complete|batch|full(?:\s+series)?|\d{1,2}\s*[-~]\s*\d{1,2})/i,
+            /\[(?:batch|complete|full)\]/i,
+            /(?:episode\s*)?(?:01|001)\s*[-~]\s*(?:\d{2}|\d{3})/i
+        ];
+
+        let isSeasonPack = false;
+        if (type === 'anime-episode') {
+            isSeasonPack = animeSeasonPackPatterns.some(p => p.test(name)) &&
+                !new RegExp(`(?:^|[^0-9])0*${targetEpisode}(?:v\\d+)?(?:[^0-9]|$)`, 'i').test(name);
+        } else {
+            isSeasonPack = seasonPackPatterns.some(p => p.test(name)) &&
+                !/s0*\d+e0*\d+|\d+x\d+|episode\s*\d+|ep\s*\d+/i.test(name);
+        }
+
+        if (isSeasonPack) {
+            sub.is_season_pack = true;
+            sub.season_pack_season = targetSeason;
+            sub.season_pack_episode = targetEpisode;
+
+            const originalFileId = sub.fileId || sub.id;
+            sub.fileId = `${originalFileId}_seasonpack_s${targetSeason}e${targetEpisode}`;
+            sub.id = sub.fileId;
+
+            log.debug(() => `[SubsRo] Detected season pack: ${sub.name}`);
+            return true;
+        }
+
+        const seasonEpisodePatterns = [
+            new RegExp(`s0*${targetSeason}e0*${targetEpisode}(?![0-9])`, 'i'),
+            new RegExp(`${targetSeason}x0*${targetEpisode}(?![0-9])`, 'i'),
+            new RegExp(`s0*${targetSeason}[\\s._-]*x[\\s._-]*e?0*${targetEpisode}(?![0-9])`, 'i'),
+            new RegExp(`0*${targetSeason}[\\s._-]*x[\\s._-]*e?0*${targetEpisode}(?![0-9])`, 'i'),
+            new RegExp(`s0*${targetSeason}\\.e0*${targetEpisode}(?![0-9])`, 'i'),
+            new RegExp(`season\\s*0*${targetSeason}.*episode\\s*0*${targetEpisode}(?![0-9])`, 'i')
+        ];
+
+        const animeEpisodePatterns = [
+            new RegExp(`(?<=\\b|\\s|\\[|\\(|-|_)e(?:p(?:isode)?)?[\\s._-]*0*${targetEpisode}(?:v\\d+)?(?=\\b|\\s|\\]|\\)|\\.|-|_|$)`, 'i'),
+            new RegExp(`(?:^|[\\s\\[\\(\\-_.])0*${targetEpisode}(?:v\\d+)?(?=$|[\\s\\[\\]\\(\\)\\-_.])`, 'i'),
+            new RegExp(`(?:episode|episodio|ep|cap(?:itulo)?)\\s*0*${targetEpisode}(?![0-9])`, 'i')
+        ];
+
+        if (seasonEpisodePatterns.some(p => p.test(name))) {
+            return true;
+        }
+
+        if (type === 'anime-episode' && animeEpisodePatterns.some(p => p.test(name))) {
+            return true;
+        }
+
+        if (sub.type === 'series') {
+            return true;
+        }
+
+        return true;
+    });
 }
 
 class SubsRoService {
@@ -245,7 +319,9 @@ class SubsRoService {
 
             // Determine if we're searching for TV episode
             const isEpisodeSearch = (type === 'episode' || type === 'anime-episode') && episode;
-            const targetSeason = season || 1;
+            const seasonCandidates = isEpisodeSearch
+                ? getSeasonHintCandidates(params, { fallback: 1 })
+                : [];
             const targetEpisode = episode;
 
             let results = items
@@ -314,96 +390,30 @@ class SubsRoService {
             // subs.ro API doesn't support season/episode filtering, so we must filter results
             if (isEpisodeSearch) {
                 const beforeCount = results.length;
-
-                results = results.filter(sub => {
-                    const name = String(sub.name || '').toLowerCase();
-
-                    // Season pack patterns (keep as fallback, mark for extraction)
-                    const seasonPackPatterns = [
-                        new RegExp(`(?:complete|full|entire)?\\s*(?:season|s)\\s*0*${targetSeason}(?:\\s+(?:complete|full|pack))?(?!.*e0*\\d)`, 'i'),
-                        new RegExp(`(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\\s+season(?!.*episode)`, 'i'),
-                        new RegExp(`s0*${targetSeason}\\s*(?:complete|full|pack)`, 'i')
-                    ];
-
-                    // Anime-specific season pack patterns
-                    const animeSeasonPackPatterns = [
-                        /(?:complete|batch|full(?:\s+series)?|\d{1,2}\s*[-~]\s*\d{1,2})/i,
-                        /\[(?:batch|complete|full)\]/i,
-                        /(?:episode\s*)?(?:01|001)\s*[-~]\s*(?:\d{2}|\d{3})/i
-                    ];
-
-                    let isSeasonPack = false;
-                    if (type === 'anime-episode') {
-                        isSeasonPack = animeSeasonPackPatterns.some(p => p.test(name)) &&
-                            !new RegExp(`(?:^|[^0-9])0*${targetEpisode}(?:v\\d+)?(?:[^0-9]|$)`, 'i').test(name);
-                    } else {
-                        isSeasonPack = seasonPackPatterns.some(p => p.test(name)) &&
-                            !/s0*\d+e0*\d+|\d+x\d+|episode\s*\d+|ep\s*\d+/i.test(name);
-                    }
-
-                    if (isSeasonPack) {
-                        // Mark as season pack for download extraction
-                        sub.is_season_pack = true;
-                        sub.season_pack_season = targetSeason;
-                        sub.season_pack_episode = targetEpisode;
-
-                        // Encode episode info in fileId for download extraction
-                        const originalFileId = sub.fileId || sub.id;
-                        sub.fileId = `${originalFileId}_seasonpack_s${targetSeason}e${targetEpisode}`;
-                        sub.id = sub.fileId;
-
-                        log.debug(() => `[SubsRo] Detected season pack: ${sub.name}`);
-                        return true;
-                    }
-
-                    // Episode match patterns
-                    const seasonEpisodePatterns = [
-                        new RegExp(`s0*${targetSeason}e0*${targetEpisode}(?![0-9])`, 'i'),
-                        new RegExp(`${targetSeason}x0*${targetEpisode}(?![0-9])`, 'i'),
-                        new RegExp(`s0*${targetSeason}[\\s._-]*x[\\s._-]*e?0*${targetEpisode}(?![0-9])`, 'i'),
-                        new RegExp(`0*${targetSeason}[\\s._-]*x[\\s._-]*e?0*${targetEpisode}(?![0-9])`, 'i'),
-                        new RegExp(`s0*${targetSeason}\\.e0*${targetEpisode}(?![0-9])`, 'i'),
-                        new RegExp(`season\\s*0*${targetSeason}.*episode\\s*0*${targetEpisode}(?![0-9])`, 'i')
-                    ];
-
-                    // Anime episode patterns (episode only, no season)
-                    const animeEpisodePatterns = [
-                        new RegExp(`(?<=\\b|\\s|\\[|\\(|-|_)e(?:p(?:isode)?)?[\\s._-]*0*${targetEpisode}(?:v\\d+)?(?=\\b|\\s|\\]|\\)|\\.|-|_|$)`, 'i'),
-                        new RegExp(`(?:^|[\\s\\[\\(\\-_.])0*${targetEpisode}(?:v\\d+)?(?=$|[\\s\\[\\]\\(\\)\\-_.])`, 'i'),
-                        new RegExp(`(?:episode|episodio|ep|cap(?:itulo)?)\\s*0*${targetEpisode}(?![0-9])`, 'i')
-                    ];
-
-                    // Check for exact episode match
-                    if (seasonEpisodePatterns.some(p => p.test(name))) {
-                        return true;
-                    }
-
-                    // For anime, also check episode-only patterns
-                    if (type === 'anime-episode' && animeEpisodePatterns.some(p => p.test(name))) {
-                        return true;
-                    }
-
-                    // Check if subtitle explicitly mentions a DIFFERENT episode - exclude it
-                    const episodeMatch = name.match(/s0*(\d+)e0*(\d+)|(\d+)x0*(\d+)/i);
-                    if (episodeMatch) {
-                        const subSeason = parseInt(episodeMatch[1] || episodeMatch[3], 10);
-                        const subEpisode = parseInt(episodeMatch[2] || episodeMatch[4], 10);
-                        if (subSeason === targetSeason && subEpisode !== targetEpisode) {
-                            return false; // Wrong episode - exclude
-                        }
-                    }
-
-                    // Keep subtitles that don't specify any episode (might be movie format or generic)
-                    // Only if this is actually a series type from the API
-                    if (sub.type === 'series') {
-                        // If it's marked as series but has no episode info, it might be a season pack
-                        // Keep it but don't mark as season pack yet (could be single file for the show)
-                        return true;
-                    }
-
-                    // Keep generic subtitles as they might still be relevant
-                    return true;
+                const baseResults = results.map(sub => ({ ...sub }));
+                const primarySeason = seasonCandidates[0] || 1;
+                results = filterEpisodeResultsForSeason(baseResults, {
+                    type,
+                    targetSeason: primarySeason,
+                    targetEpisode
                 });
+
+                if (results.length === 0 && !imdb_id && tmdb_id && seasonCandidates.length > 1) {
+                    const fallbackSeason = seasonCandidates[1];
+                    const fallbackResults = filterEpisodeResultsForSeason(
+                        baseResults.map(sub => ({ ...sub })),
+                        {
+                            type,
+                            targetSeason: fallbackSeason,
+                            targetEpisode
+                        }
+                    );
+
+                    if (fallbackResults.length > 0) {
+                        log.debug(() => `[SubsRo] Falling back from season ${primarySeason} to alternate TMDB season ${fallbackSeason}`);
+                        results = fallbackResults;
+                    }
+                }
 
                 const filteredCount = beforeCount - results.length;
                 const seasonPackCount = results.filter(s => s.is_season_pack).length;

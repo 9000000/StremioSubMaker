@@ -1,5 +1,5 @@
 const { getLanguageName } = require('./languages');
-const { version: appVersion } = require('../../package.json');
+const { version: appVersion } = require('./version');
 const { quickNavStyles, quickNavScript, renderQuickNav } = require('./quickNav');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
 

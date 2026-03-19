@@ -3,7 +3,8 @@ const { getLanguageName, languageMap, buildLanguageLookupMaps } = require('./lan
 const { allLanguages } = require('./allLanguages');
 const { deriveVideoHash } = require('./videoHash');
 const { parseStremioId } = require('./subtitle');
-const { version: appVersion, xsyncMinVersion: REQUIRED_XSYNC_VERSION } = require('../../package.json');
+const { version: appVersion } = require('./version');
+const { xsyncMinVersion: REQUIRED_XSYNC_VERSION } = require('../../package.json');
 const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = require('./quickNav');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
 const { resolveHistoryTitle } = require('../handlers/subtitles');
@@ -1704,10 +1705,10 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         t('toolbox.embedded.instructions.translationSteps.3', {}, 'Select translation settings and translation provider.'),
         t('toolbox.embedded.instructions.translationSteps.4', {}, 'Click "Translate Subtitles".')
       ],
-      download: t('toolbox.embedded.instructions.download', {}, 'You can download both extracted or translated subtitles as SRT.'),
+      download: t('toolbox.embedded.instructions.downloadDelivery', {}, 'You can download extracted originals in their delivered format (ASS/SSA passthrough or converted SRT) and translated subtitles as SRT.'),
       upload: t('toolbox.embedded.instructions.upload', {}, 'Translated subtitles are automatically uploaded to the database, matching the video hash, under the "xEmbed (Language)" entry (reload the stream on Stremio to see it).'),
       retry: t('toolbox.embedded.instructions.retry', {}, 'If translation/sync problems happen, simply retranslate the subtitle to overwrite the xEmbed database cache.'),
-      originals: t('toolbox.embedded.instructions.originals', {}, 'Extracted subtitles are saved to xEmbed as originals and show up under their source language (no separate label).'),
+      originals: t('toolbox.embedded.instructions.originalsDelivery', {}, 'Extracted subtitles are saved to xEmbed originals using your current ASS/SSA delivery setting and show up under their source language (no separate label).'),
       ocrNote: t('toolbox.embedded.instructions.ocrNote', {}, "Currently doesn't work with image-based subtitles - OCR may be implemented."),
       dontShow: t('toolbox.embedded.instructions.dontShow', {}, "Don't show this again"),
       gotIt: t('toolbox.embedded.instructions.gotIt', {}, 'Got it')
@@ -1729,7 +1730,9 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       modeLabel: t('toolbox.embedded.step1.modeLabel', {}, 'Mode'),
       modeSmart: t('toolbox.embedded.step1.modeSmart', {}, 'Smart (fast)'),
       modeComplete: t('toolbox.embedded.step1.modeComplete', {}, 'Complete (full file)'),
+      modeChunkedProgressiveOpfsDemux: t('toolbox.embedded.step1.modeChunkedProgressiveOpfsDemux', {}, 'Chunked Progressive OPFS Demux'),
       modeHelper: t('toolbox.embedded.step1.modeHelper', {}, 'In Complete mode, the whole file will be fetched for extraction.\nComplete mode is needed for MKV files.'),
+      modeExperimentalHelper: t('toolbox.embedded.step1.modeExperimentalHelper', {}, 'Dev mode exposes experimental extraction modes below. These modes are intended for live testing and large-file diagnostics.'),
       extractButton: t('toolbox.embedded.step1.extractButton', {}, 'Extract Subtitles'),
       extractBlocked: t('toolbox.embedded.step1.extractBlocked', {}, ''),
       hashMismatchInline: t(
@@ -1761,15 +1764,20 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       selectedPlaceholder: t('toolbox.embedded.step2.selectedPlaceholder', {}, 'Select a subtitle in Step 1 outputs to unlock this step.'),
       targetLabel: t('toolbox.embedded.step2.targetLabel', {}, 'Target language'),
       settingsTitle: t('toolbox.embedded.step2.settingsTitle', {}, 'Translation Settings'),
-      settingsMeta: t('toolbox.embedded.step2.settingsMeta', {}, 'Provider, batching, timestamps'),
+      settingsMeta: t('toolbox.embedded.step2.settingsMeta', {}, 'Provider, workflow, batching, context'),
       providerLabel: t('toolbox.embedded.step2.providerLabel', {}, 'Provider'),
       providerHelper: t('toolbox.embedded.step2.providerHelper', {}, 'Uses your configured model for the selected provider.'),
+      workflowLabel: t('config.translationSettings.workflow.label', {}, 'Translation Workflow'),
+      workflowHelper: t('config.translationSettings.workflow.description', {}, 'Switching between modes is recommended if you have translation sync problems.'),
+      workflowXml: t('config.translationSettings.workflow.xml', {}, 'XML Tags (Default)'),
+      workflowJson: t('config.translationSettings.workflow.json', {}, 'JSON (Structured)'),
+      workflowOriginal: t('config.translationSettings.workflow.original', {}, 'Original Timestamps (Legacy)'),
+      workflowAi: t('config.translationSettings.workflow.ai', {}, 'Send Timestamps to AI'),
       batchingLabel: t('toolbox.embedded.step2.batchingLabel', {}, 'Batching'),
       batchingMultiple: t('toolbox.embedded.step2.batchingMultiple', {}, 'Multiple batches (recommended)'),
       batchingSingle: t('toolbox.embedded.step2.batchingSingle', {}, 'Single batch (all at once)'),
-      timestampsLabel: t('toolbox.embedded.step2.timestampsLabel', {}, 'Timestamps'),
-      timestampsOriginal: t('toolbox.embedded.step2.timestampsOriginal', {}, 'Original Timestamps'),
-      timestampsSend: t('toolbox.embedded.step2.timestampsSend', {}, 'Send Timestamps to AI'),
+      batchContextLabel: t('config.advancedGemini.batchContext.label', {}, 'Enable Batch Context'),
+      batchContextHelper: t('config.advancedGemini.batchContext.description', {}, 'Include original surrounding context and previous translations when processing batches. Improves translation coherence but may break outputs and increases token usage.'),
       translationContext: t('toolbox.embedded.step2.translationContext', { label: '{label}' }, "You're translating subtitles for {label}"),
       translationContextFallback: t('toolbox.embedded.step2.translationContextFallback', {}, 'your linked stream'),
       translateButton: t('toolbox.embedded.step2.translateButton', {}, 'Translate Subtitles'),
@@ -1900,8 +1908,16 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     providerOptions,
     defaults: {
       singleBatchMode: config.singleBatchMode === true,
+      translationWorkflow: (() => {
+        const workflow = String(config.advancedSettings?.translationWorkflow || '').trim().toLowerCase();
+        if (['xml', 'json', 'original', 'ai'].includes(workflow)) return workflow;
+        return config.advancedSettings?.sendTimestampsToAI === true ? 'ai' : 'xml';
+      })(),
+      enableBatchContext: config.advancedSettings?.enableBatchContext === true,
       sendTimestampsToAI: config.advancedSettings?.sendTimestampsToAI === true,
-      translationPrompt: config.translationPrompt || ''
+      translationPrompt: config.translationPrompt || '',
+      forceSRTOutput: config.forceSRTOutput === true,
+      assPassthroughEnabled: config.forceSRTOutput !== true && config.convertAssToVtt === false
     },
     links,
     linkedTitle,
@@ -2668,6 +2684,61 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       gap: 14px;
       align-items: center;
     }
+    .translation-settings-grid {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      width: 100%;
+    }
+    .translation-settings-grid .select-stack {
+      width: min(300px, 100%);
+      align-items: center;
+      text-align: center;
+    }
+    .translation-setting-helper {
+      margin: 0;
+      max-width: 620px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .translation-toggle {
+      width: min(640px, 100%);
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      cursor: pointer;
+      box-sizing: border-box;
+    }
+    .translation-toggle input[type="checkbox"] {
+      margin: 2px 0 0;
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+    .translation-toggle-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: left;
+    }
+    .translation-toggle-copy strong {
+      color: var(--text-primary);
+      font-size: 0.95rem;
+    }
+    .translation-toggle-copy span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      font-weight: 600;
+    }
     .tracks {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -3181,7 +3252,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
               <label for="extract-mode">${escapeHtml(copy.step1.modeLabel)}</label>
               <select id="extract-mode" class="compact-select">
                 <option value="smart">${escapeHtml(copy.step1.modeSmart)}</option>
-                <option value="complete">${escapeHtml(copy.step1.modeComplete)}</option>
+                <option value="complete" selected>${escapeHtml(copy.step1.modeComplete)}</option>
               </select>
               <p class="mode-helper">${modeHelperHtml}</p>
               <button id="extract-btn" type="button" class="secondary">${escapeHtml(copy.step1.extractButton)}</button>
@@ -3243,22 +3314,32 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
             </div>
             <p class="muted" style="margin:0; text-align:center;">${escapeHtml(copy.step2.providerHelper)}</p>
 
-            <div class="flex" style="flex-direction:column; gap:12px; align-items:center; width:100%;">
-              <div style="display:flex; flex-direction:column; gap:6px; align-items:center; width:100%; max-width:300px;">
+            <div class="translation-settings-grid">
+              <div class="select-stack">
+                <label for="workflow-select" style="font-weight:600; margin:0;">${escapeHtml(copy.step2.workflowLabel)}</label>
+                <select id="workflow-select" class="compact-select" style="width:100%;">
+                  <option value="xml">${escapeHtml(copy.step2.workflowXml)}</option>
+                  <option value="json">${escapeHtml(copy.step2.workflowJson)}</option>
+                  <option value="original">${escapeHtml(copy.step2.workflowOriginal)}</option>
+                  <option value="ai">${escapeHtml(copy.step2.workflowAi)}</option>
+                </select>
+              </div>
+              <div class="select-stack">
                 <label for="single-batch-select" style="font-weight:600; margin:0;">${escapeHtml(copy.step2.batchingLabel)}</label>
                 <select id="single-batch-select" class="compact-select" style="width:100%;">
                   <option value="multi">${escapeHtml(copy.step2.batchingMultiple)}</option>
                   <option value="single">${escapeHtml(copy.step2.batchingSingle)}</option>
                 </select>
               </div>
-              <div style="display:flex; flex-direction:column; gap:6px; align-items:center; width:100%; max-width:300px;">
-                <label for="timestamps-select" style="font-weight:600; margin:0;">${escapeHtml(copy.step2.timestampsLabel)}</label>
-                <select id="timestamps-select" class="compact-select" style="width:100%;">
-                  <option value="original">${escapeHtml(copy.step2.timestampsOriginal)}</option>
-                  <option value="send">${escapeHtml(copy.step2.timestampsSend)}</option>
-                </select>
-              </div>
             </div>
+            <p class="translation-setting-helper">${escapeHtml(copy.step2.workflowHelper)}</p>
+            <label class="translation-toggle" for="batch-context-toggle">
+              <input type="checkbox" id="batch-context-toggle">
+              <div class="translation-toggle-copy">
+                <strong>${escapeHtml(copy.step2.batchContextLabel)}</strong>
+                <span>${escapeHtml(copy.step2.batchContextHelper)}</span>
+              </div>
+            </label>
           </div>
         </details>
 
@@ -3485,8 +3566,8 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       const cleaned = String(mode || '')
         .trim()
         .toLowerCase()
-        .replace(/[-_\s]*v2$/, '')      // strip legacy -v2/_v2 suffix
-        .replace(/[-_\s]+/g, '-');      // align separators for comparisons
+        .replace(/[-_\\s]*v2$/, '')      // strip legacy -v2/_v2 suffix
+        .replace(/[-_\\s]+/g, '-');      // align separators for comparisons
       if (cleaned === 'smart') return 'smart';
       if (cleaned === 'complete' || cleaned === 'full' || cleaned === 'fullfetch') return 'complete';
       return null;
@@ -3494,12 +3575,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 
     function loadExtractMode() {
       try {
-        const stored = localStorage.getItem(EXTRACT_MODE_KEY);
-        const normalized = normalizeExtractModeValue(stored);
-        if (normalized) {
-          if (normalized !== stored) persistExtractMode(normalized);
-          return normalized;
-        }
+        localStorage.removeItem(EXTRACT_MODE_KEY);
       } catch (_) {}
       return 'complete';
     }
@@ -3824,6 +3900,14 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
           return cached.resolved;
         }
 
+        // The embedded page CSP does not allow arbitrary cross-origin fetches.
+        // Skip redirect probing for foreign hosts and keep the original URL.
+        const parsed = new URL(url, window.location.href);
+        if (parsed.origin !== window.location.origin) {
+          resolvedUrlCache.set(url, { resolved: url, timestamp: Date.now() });
+          return url;
+        }
+
         // Use HEAD request with redirect: 'follow' to get final URL
         // Use a short timeout to avoid blocking UI
         const controller = new AbortController();
@@ -4060,8 +4144,9 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       translateBtn: document.getElementById('translate-btn'),
       translationContext: document.getElementById('translation-context'),
       providerSelect: document.getElementById('provider-select'),
+      workflowSelect: document.getElementById('workflow-select'),
       singleBatch: document.getElementById('single-batch-select'),
-      timestamps: document.getElementById('timestamps-select'),
+      batchContext: document.getElementById('batch-context-toggle'),
       extractedDownloads: document.getElementById('extracted-downloads'),
       translatedDownloads: document.getElementById('translated-downloads'),
       extractedEmpty: document.getElementById('extracted-empty'),
@@ -4153,8 +4238,12 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 
     state.extractMode = loadExtractMode();
     if (els.modeSelect) {
-      if (state.extractMode !== 'smart' && state.extractMode !== 'complete') {
+      const normalizedMode = normalizeExtractModeValue(state.extractMode);
+      const hasOption = normalizedMode && Array.from(els.modeSelect.options || []).some((option) => option.value === normalizedMode && !option.disabled);
+      if (!normalizedMode || !hasOption) {
         state.extractMode = 'complete';
+      } else {
+        state.extractMode = normalizedMode;
       }
       els.modeSelect.value = state.extractMode;
     }
@@ -4164,22 +4253,22 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
 
     function cleanVideoName(raw) {
       if (!raw) return '';
-      return raw.replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[._]/g, ' ').trim();
+      return raw.replace(/\\.[a-z0-9]{2,4}$/i, '').replace(/[._]/g, ' ').trim();
     }
 
     function cleanLinkedName(raw) {
       if (!raw) return '';
-      const lastSegment = String(raw).split(/[\\/]/).pop() || '';
-      const withoutExt = lastSegment.replace(/\.[^.]+$/, '');
-      const spaced = withoutExt.replace(/[_\\.]+/g, ' ').replace(/\s+/g, ' ').trim();
+      const lastSegment = String(raw).split(/[\\\\/]/).pop() || '';
+      const withoutExt = lastSegment.replace(/\\.[^.]+$/, '');
+      const spaced = withoutExt.replace(/[_\\\\.]+/g, ' ').replace(/\\s+/g, ' ').trim();
       return spaced || withoutExt || lastSegment;
     }
 
     function cleanDisplayNameClient(raw) {
       if (!raw) return '';
-      const lastSegment = String(raw).split(/[\\/]/).pop() || '';
-      const withoutExt = lastSegment.replace(/\.[^.]+$/, '');
-      const spaced = withoutExt.replace(/[_\\.]+/g, ' ').replace(/\s+/g, ' ').trim();
+      const lastSegment = String(raw).split(/[\\\\/]/).pop() || '';
+      const withoutExt = lastSegment.replace(/\\.[^.]+$/, '');
+      const spaced = withoutExt.replace(/[_\\\\.]+/g, ' ').replace(/\\s+/g, ' ').trim();
       return spaced || withoutExt || lastSegment;
     }
 
@@ -4939,7 +5028,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       const parts = [
         track.label || tr('toolbox.downloads.trackLabel', { id: track.id }, 'Track ' + track.id),
         track.language ? tr('toolbox.downloads.lang', { lang: track.language }, 'Lang: ' + track.language) : '',
-        track.codec ? tr('toolbox.downloads.codec', { codec: track.codec }, 'Codec: ' + track.codec) : ''
+        tr('toolbox.downloads.codec', { codec: getTrackCodecDisplay(track) }, 'Codec: ' + getTrackCodecDisplay(track))
       ].filter(Boolean);
       els.selectedTrackSummary.textContent = parts.join(' - ');
     }
@@ -5023,8 +5112,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       if (!hasTracks) return;
 
       state.tracks.forEach(track => {
-        const { mime } = resolveTrackData(track);
-        const { ext } = inferTrackDownloadFormat(track);
+        const delivery = getTrackDelivery(track);
         const card = document.createElement('div');
         card.className = 'track extract-card' + (state.selectedTrackId === track.id ? ' active' : '');
         const title = document.createElement('div');
@@ -5033,7 +5121,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         const meta = document.createElement('div');
         meta.className = 'track-meta';
         const langLabel = track.language || 'und';
-        const codecLabel = track.codec || 'subtitle';
+        const codecLabel = getTrackCodecDisplay(track);
         const sizeLabel = formatBytes(track.byteLength || (track.contentBytes ? track.contentBytes.length : 0));
         meta.textContent = tr('toolbox.downloads.meta', { lang: langLabel, codec: codecLabel, size: sizeLabel }, 'Lang: ' + langLabel + ' - Codec: ' + codecLabel + ' - Size: ' + sizeLabel);
         const actions = document.createElement('div');
@@ -5041,7 +5129,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         const download = document.createElement('a');
         download.className = 'button secondary';
         download.href = createBlobUrl(track);
-        download.download = (getVideoHash() || 'video') + '_' + (track.language || 'und') + '_' + track.id + '_original.' + ext;
+        download.download = (getVideoHash() || 'video') + '_' + (track.language || 'und') + '_' + track.id + '_original.' + (delivery.ext || 'srt');
         download.textContent = tr('toolbox.downloads.download', {}, 'Download');
         download.addEventListener('click', (ev) => ev.stopPropagation());
         const selectBtn = document.createElement('button');
@@ -5095,7 +5183,10 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     }
 
     function createBlobUrl(track) {
-      const { data, mime } = resolveTrackData(track);
+      const raw = resolveTrackData(track);
+      const delivery = getTrackDelivery(track);
+      const data = typeof delivery.content === 'string' ? delivery.content : raw.data;
+      const mime = delivery.mime || raw.mime;
       if (!data) return '#';
       const blob = new Blob([data], { type: mime || 'application/octet-stream' });
       return URL.createObjectURL(blob);
@@ -5105,6 +5196,124 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       const payload = content == null ? '' : content;
       const blob = new Blob([payload], { type: mime || 'text/plain' });
       return URL.createObjectURL(blob);
+    }
+
+    function buildTrackDeliveryFallback(track = {}) {
+      const raw = resolveTrackData(track);
+      const format = inferTrackDownloadFormat(track);
+      return {
+        content: typeof track.content === 'string' ? track.content : '',
+        mime: format.mime || raw.mime || 'application/octet-stream',
+        ext: format.ext || 'srt',
+        sourceFormat: normalizeSubtitleFormatHintClient(track.codec, track.mime, track.label, track.originalLabel, track.name),
+        deliveryFormat: format.ext || 'srt',
+        converted: false,
+        conversionRequested: false,
+        conversionFailed: false
+      };
+    }
+
+    function getTrackDelivery(track = {}) {
+      const fallback = buildTrackDeliveryFallback(track);
+      if (typeof track.deliveryContent !== 'string') {
+        return fallback;
+      }
+      return {
+        content: track.deliveryContent,
+        mime: track.deliveryMime || fallback.mime,
+        ext: track.deliveryExt || fallback.ext,
+        sourceFormat: track.deliverySourceFormat || fallback.sourceFormat,
+        deliveryFormat: track.deliveryFormat || track.deliveryExt || fallback.deliveryFormat,
+        converted: track.deliveryConverted === true,
+        conversionRequested: track.deliveryConversionRequested === true,
+        conversionFailed: track.deliveryConversionFailed === true
+      };
+    }
+
+    function getTrackCodecDisplay(track = {}) {
+      const delivery = getTrackDelivery(track);
+      const rawCodec = String(track.codec || delivery.sourceFormat || 'subtitle').trim();
+      const delivered = String(delivery.ext || delivery.deliveryFormat || '').trim();
+      if (delivery.converted && rawCodec && delivered && rawCodec.toLowerCase() !== delivered.toLowerCase()) {
+        return rawCodec + ' -> ' + delivered.toUpperCase();
+      }
+      if (delivered && (!rawCodec || rawCodec === 'subtitle')) {
+        return delivered.toUpperCase();
+      }
+      return rawCodec || delivered.toUpperCase() || 'subtitle';
+    }
+
+    async function prepareTrackDeliveries(tracks = []) {
+      const list = Array.isArray(tracks) ? tracks : [];
+      const fallbackTracks = list.map((track) => {
+        const delivery = buildTrackDeliveryFallback(track);
+        return {
+          ...track,
+          deliveryContent: delivery.content,
+          deliveryMime: delivery.mime,
+          deliveryExt: delivery.ext,
+          deliverySourceFormat: delivery.sourceFormat,
+          deliveryFormat: delivery.deliveryFormat,
+          deliveryConverted: false,
+          deliveryConversionRequested: false,
+          deliveryConversionFailed: false
+        };
+      });
+
+      if (!fallbackTracks.length) {
+        return fallbackTracks;
+      }
+
+      try {
+        const resp = await fetch('/api/prepare-embedded-track-delivery', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            configStr: BOOTSTRAP.configStr,
+            tracks: fallbackTracks.map((track) => ({
+              id: track.id,
+              content: typeof track.content === 'string' ? track.content : '',
+              codec: track.codec,
+              mime: track.mime,
+              label: track.label,
+              originalLabel: track.originalLabel,
+              name: track.name
+            }))
+          })
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+          throw new Error(data.error || 'Failed to prepare embedded subtitle delivery');
+        }
+
+        const preparedById = new Map(
+          (Array.isArray(data.tracks) ? data.tracks : [])
+            .filter(entry => entry && entry.id !== undefined && entry.id !== null)
+            .map(entry => [String(entry.id), entry])
+        );
+
+        return fallbackTracks.map((track) => {
+          const prepared = preparedById.get(String(track.id));
+          if (!prepared) return track;
+          return {
+            ...track,
+            deliveryContent: typeof prepared.content === 'string' ? prepared.content : track.deliveryContent,
+            deliveryMime: prepared.mime || track.deliveryMime,
+            deliveryExt: prepared.ext || track.deliveryExt,
+            deliverySourceFormat: prepared.sourceFormat || track.deliverySourceFormat,
+            deliveryFormat: prepared.deliveryFormat || prepared.ext || track.deliveryFormat,
+            deliveryConverted: prepared.converted === true,
+            deliveryConversionRequested: prepared.conversionRequested === true,
+            deliveryConversionFailed: prepared.conversionFailed === true
+          };
+        });
+      } catch (error) {
+        const fallbackMsg = BOOTSTRAP.defaults?.assPassthroughEnabled
+          ? 'Could not confirm ASS/SSA passthrough delivery. Downloads will use the extracted originals as-is.'
+          : 'Could not prepare configured subtitle delivery. Downloads will use the extracted originals as-is.';
+        logExtract((error && error.message) ? (fallbackMsg + ' ' + error.message) : fallbackMsg);
+        return fallbackTracks;
+      }
     }
 
     // Lightweight language normalizer for client-side canonicalization before save
@@ -5366,7 +5575,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
             encoding = 'base64';
           }
           const langCode = canonicalTrackLanguageCode(resolveTrackLanguage(track));
-          await fetch('/api/save-embedded-subtitle', {
+          const resp = await fetch('/api/save-embedded-subtitle', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -5377,7 +5586,15 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
               content: contentPayload,
               metadata: {
                 label: track.label,
+                originalLabel: track.originalLabel || '',
+                name: track.name || '',
+                videoId: PAGE.videoId || BOOTSTRAP.videoId || '',
+                filename: PAGE.filename || BOOTSTRAP.filename || '',
                 codec: track.codec,
+                sourceFormat: track.deliverySourceFormat || '',
+                deliveryFormat: track.deliveryFormat || '',
+                deliveryConverted: track.deliveryConverted === true,
+                deliveryConversionFailed: track.deliveryConversionFailed === true,
                 extractedAt: Date.now(),
                 source: 'extension',
                 encoding,
@@ -5386,6 +5603,14 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
               }
             })
           });
+          if (!resp.ok) {
+            let message = 'Failed to save embedded subtitle';
+            try {
+              const data = await resp.json();
+              if (data && data.error) message = data.error;
+            } catch (_) {}
+            throw new Error(message);
+          }
         } catch (e) {
           const label = window.t ? window.t('toolbox.logs.cacheSaveFailed', { id: track.id, reason: e.message }, 'Failed to save track ' + track.id + ' to cache: ' + e.message) : ('Failed to save track ' + track.id + ' to cache: ' + e.message);
           logExtract(label);
@@ -5453,19 +5678,29 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
             configStr: BOOTSTRAP.configStr,
             videoHash: getVideoHash(),
             trackId: track.id,
+            videoId: PAGE.videoId || BOOTSTRAP.videoId || '',
+            filename: PAGE.filename || BOOTSTRAP.filename || '',
             sourceLanguageCode: track.language || 'und',
             targetLanguage: targetLang,
             content: track.content,
             options: {
+              translationWorkflow: (els.workflowSelect?.value || BOOTSTRAP.defaults?.translationWorkflow || 'xml'),
               singleBatchMode: (els.singleBatch?.value || 'multi') === 'single',
-              sendTimestampsToAI: (els.timestamps?.value || 'original') === 'send'
+              enableBatchContext: !!els.batchContext?.checked,
+              sendTimestampsToAI: (els.workflowSelect?.value || BOOTSTRAP.defaults?.translationWorkflow || 'xml') === 'ai'
             },
             overrides: {
               providerName: els.providerSelect?.value || ''
             },
             metadata: {
               label: track.label,
+              originalLabel: track.originalLabel || '',
+              name: track.name || '',
+              videoId: PAGE.videoId || BOOTSTRAP.videoId || '',
+              filename: PAGE.filename || BOOTSTRAP.filename || '',
               codec: track.codec,
+              mime: track.mime || '',
+              sourceFormat: track.deliverySourceFormat || '',
               extractedAt: track.extractedAt || Date.now(),
               batchId: track.batchId || state.currentBatchId || null
             },
@@ -5512,6 +5747,113 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       if (next && typeof next.run === 'function') next.run();
     }
 
+    async function handleExtractResponseSuccess(rawTracks = []) {
+      resetExtractionState(false, { preserveMismatch: state.cacheBlocked });
+      state.selectedTargetLang = getTargetOptions()[0]?.code || null;
+      const filteredTracks = rawTracks.filter((t) => !(t && (t.binary || t.codec === 'copy' || (t.mime && String(t.mime).toLowerCase().includes('matroska')) || t.source === 'copy')));
+      const dropped = rawTracks.length - filteredTracks.length;
+      if (dropped > 0) {
+        const dropFallback = 'Omitted ' + dropped + ' binary track(s); showing text subtitles only.';
+        const dropMsg = window.t
+          ? window.t('toolbox.logs.filteredBinaryTracks', { count: dropped }, dropFallback)
+          : dropFallback;
+        logExtract(dropMsg);
+      }
+
+      const batchId = Date.now();
+      state.currentBatchId = batchId;
+      const isGeneratedLabel = (label) => {
+        if (!label) return true;
+        const lower = String(label).toLowerCase();
+        if (/^extracted[_\\s-]?sub/.test(lower)) return true;
+        if (/^extracted[_\\s-]?sub[_-]?fix/.test(lower)) return true;
+        if (/^remux[_\\s-]?sub/.test(lower)) return true;
+        if (/^track\\s+\\d+/.test(lower)) return true;
+        if (/^subtitle\\s+\\d+/.test(lower)) return true;
+        return false;
+      };
+      const isGeneratedLangHint = (value) => {
+        if (!value) return false;
+        const lower = String(value).toLowerCase();
+        if (/^extracte/.test(lower)) return true;
+        if (/^extracted[_\\s-]?sub/.test(lower)) return true;
+        if (/^remux[_\\s-]?sub/.test(lower)) return true;
+        if (/^track\\s+\\d+/.test(lower)) return true;
+        if (/^subtitle\\s+\\d+/.test(lower)) return true;
+        if (/^extracted[_\\s-]?sub[_-]?fix/.test(lower)) return true;
+        if (/(\\.srt|\\.vtt|\\.ass|\\.ssa|\\.sup)(\\b|$)/i.test(lower)) return true;
+        return false;
+      };
+
+      const normalizedTracks = filteredTracks.map((t, idx) => {
+        const contentBytes = t.contentBytes || null;
+        const contentBase64 = t.contentBase64 || '';
+        const contentValue = (typeof t.content === 'string' || t.content instanceof Uint8Array || t.content instanceof ArrayBuffer) ? t.content : '';
+        const byteLength = t.byteLength || (contentBytes ? contentBytes.length : (typeof contentValue === 'string' ? contentValue.length : 0));
+        const normalizedTrack = {
+          ...t,
+          language: isGeneratedLangHint(t.language) ? '' : t.language,
+          lang: isGeneratedLangHint(t.lang) ? '' : t.lang,
+          languageRaw: isGeneratedLangHint(t.languageRaw) ? '' : t.languageRaw,
+          languageCode: isGeneratedLangHint(t.languageCode) ? '' : t.languageCode,
+          languageIetf: isGeneratedLangHint(t.languageIetf) ? '' : t.languageIetf,
+          langCode: isGeneratedLangHint(t.langCode) ? '' : t.langCode,
+          languageTag: isGeneratedLangHint(t.languageTag) ? '' : t.languageTag,
+          langTag: isGeneratedLangHint(t.langTag) ? '' : t.langTag,
+          label: isGeneratedLabel(t.label) ? '' : t.label,
+          originalLabel: isGeneratedLabel(t.originalLabel) ? '' : t.originalLabel,
+          name: isGeneratedLabel(t.name) ? '' : t.name
+        };
+        const rawLang = resolveTrackLanguage(normalizedTrack);
+        return {
+          id: t.id || idx,
+          label: t.label || tr('toolbox.downloads.trackLabel', { id: idx + 1 }, 'Track ' + (idx + 1)),
+          language: rawLang ? rawLang.toLowerCase() : 'und',
+          languageRaw: normalizedTrack.languageRaw || '',
+          languageSource: t.languageSource || '',
+          languageCode: normalizedTrack.languageCode || '',
+          languageIetf: normalizedTrack.languageIetf || '',
+          langCode: normalizedTrack.langCode || '',
+          languageTag: normalizedTrack.languageTag || '',
+          langTag: normalizedTrack.langTag || '',
+          codec: t.codec || t.format || 'subtitle',
+          binary: false,
+          content: contentValue,
+          contentBase64,
+          contentBytes,
+          byteLength,
+          mime: t.mime || 'text/plain',
+          name: normalizedTrack.name || '',
+          originalLabel: normalizedTrack.originalLabel || '',
+          extractedAt: Date.now(),
+          batchId
+        };
+      });
+
+      state.tracks = await prepareTrackDeliveries(normalizedTracks);
+      renderTargets();
+      autoSelectDefaultTrack();
+      renderDownloads();
+      void persistOriginals(batchId);
+
+      const label = window.t ? window.t('toolbox.logs.extracted', { count: state.tracks.length }, 'Extracted ' + state.tracks.length + ' track(s).') : ('Extracted ' + state.tracks.length + ' track(s).');
+      logExtract(label);
+
+      const convertedCount = state.tracks.filter(track => track.deliveryConverted === true).length;
+      const failedCount = state.tracks.filter(track => track.deliveryConversionFailed === true).length;
+      const passthroughAssCount = state.tracks.filter(track => !track.deliveryConverted && /^(ass|ssa)$/i.test(String(track.deliveryFormat || ''))).length;
+
+      if (convertedCount > 0) {
+        logExtract('Prepared ' + convertedCount + ' extracted ASS/SSA track(s) as SRT for downloads and xEmbed delivery.');
+      } else if (BOOTSTRAP.defaults?.assPassthroughEnabled && passthroughAssCount > 0) {
+        logExtract('ASS/SSA passthrough is enabled; ' + passthroughAssCount + ' extracted track(s) will stay in native format for downloads and xEmbed delivery.');
+      }
+
+      if (failedCount > 0) {
+        logExtract('Could not convert ' + failedCount + ' extracted track(s) to SRT; keeping the original format for delivery.');
+      }
+    }
+
     // Extension messaging
     window.addEventListener('message', (event) => {
       const msg = event.data || {};
@@ -5550,93 +5892,12 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         state.lastProgressStatus = null; // Reset for next extraction
         state.extractMessageId = null;
         if (msg.success && Array.isArray(msg.tracks)) {
-          resetExtractionState(false, { preserveMismatch: state.cacheBlocked });
-          state.selectedTargetLang = getTargetOptions()[0]?.code || null;
-          const rawTracks = msg.tracks || [];
-          const filteredTracks = rawTracks.filter((t) => !(t && (t.binary || t.codec === 'copy' || (t.mime && String(t.mime).toLowerCase().includes('matroska')) || t.source === 'copy')));
-          const dropped = rawTracks.length - filteredTracks.length;
-          if (dropped > 0) {
-            const dropFallback = 'Omitted ' + dropped + ' binary track(s); showing text subtitles only.';
-            const dropMsg = window.t
-              ? window.t('toolbox.logs.filteredBinaryTracks', { count: dropped }, dropFallback)
-              : dropFallback;
-            logExtract(dropMsg);
-          }
-          const batchId = Date.now();
-          state.currentBatchId = batchId;
-          const isGeneratedLabel = (label) => {
-            if (!label) return true;
-            const lower = String(label).toLowerCase();
-            if (/^extracted[_\\s-]?sub/.test(lower)) return true;
-            if (/^extracted[_\\s-]?sub[_-]?fix/.test(lower)) return true;
-            if (/^remux[_\\s-]?sub/.test(lower)) return true;
-            if (/^track\\s+\\d+/.test(lower)) return true;
-            if (/^subtitle\\s+\\d+/.test(lower)) return true;
-            return false;
-          };
-          const isGeneratedLangHint = (value) => {
-            if (!value) return false;
-            const lower = String(value).toLowerCase();
-            // ignore common auto-generated placeholders/filenames
-            if (/^extracte/.test(lower)) return true;
-            if (/^extracted[_\\s-]?sub/.test(lower)) return true;
-            if (/^remux[_\\s-]?sub/.test(lower)) return true;
-            if (/^track\\s+\\d+/.test(lower)) return true;
-            if (/^subtitle\\s+\\d+/.test(lower)) return true;
-            if (/^extracted[_\\s-]?sub[_-]?fix/.test(lower)) return true;
-            if (/(\\.srt|\\.vtt|\\.ass|\\.ssa|\\.sup)(\\b|$)/i.test(lower)) return true;
-            return false;
-          };
-          state.tracks = filteredTracks.map((t, idx) => {
-            const contentBytes = t.contentBytes || null;
-            const contentBase64 = t.contentBase64 || '';
-            const contentValue = (typeof t.content === 'string' || t.content instanceof Uint8Array || t.content instanceof ArrayBuffer) ? t.content : '';
-            const byteLength = t.byteLength || (contentBytes ? contentBytes.length : (typeof contentValue === 'string' ? contentValue.length : 0));
-            const normalizedTrack = {
-              ...t,
-              language: isGeneratedLangHint(t.language) ? '' : t.language,
-              lang: isGeneratedLangHint(t.lang) ? '' : t.lang,
-              languageRaw: isGeneratedLangHint(t.languageRaw) ? '' : t.languageRaw,
-              languageCode: isGeneratedLangHint(t.languageCode) ? '' : t.languageCode,
-              languageIetf: isGeneratedLangHint(t.languageIetf) ? '' : t.languageIetf,
-              langCode: isGeneratedLangHint(t.langCode) ? '' : t.langCode,
-              languageTag: isGeneratedLangHint(t.languageTag) ? '' : t.languageTag,
-              langTag: isGeneratedLangHint(t.langTag) ? '' : t.langTag,
-              label: isGeneratedLabel(t.label) ? '' : t.label,
-              originalLabel: isGeneratedLabel(t.originalLabel) ? '' : t.originalLabel,
-              name: isGeneratedLabel(t.name) ? '' : t.name
-            };
-            const rawLang = resolveTrackLanguage(normalizedTrack);
-            return {
-              id: t.id || idx,
-              label: t.label || tr('toolbox.downloads.trackLabel', { id: idx + 1 }, 'Track ' + (idx + 1)),
-              language: rawLang ? rawLang.toLowerCase() : 'und',
-              languageRaw: normalizedTrack.languageRaw || '',
-              languageSource: t.languageSource || '',
-              languageCode: normalizedTrack.languageCode || '',
-              languageIetf: normalizedTrack.languageIetf || '',
-              langCode: normalizedTrack.langCode || '',
-              languageTag: normalizedTrack.languageTag || '',
-              langTag: normalizedTrack.langTag || '',
-              codec: t.codec || t.format || 'subtitle',
-              binary: false,
-              content: contentValue,
-              contentBase64,
-              contentBytes,
-              byteLength,
-              mime: t.mime || 'text/plain',
-              name: normalizedTrack.name || '',
-              originalLabel: normalizedTrack.originalLabel || '',
-              extractedAt: Date.now(),
-              batchId
-            };
+          void handleExtractResponseSuccess(msg.tracks || []).catch((error) => {
+            resetExtractionState(false, { preserveMismatch: state.cacheBlocked });
+            const message = error && error.message ? error.message : 'unknown error';
+            logExtract('Extraction succeeded but delivery preparation failed: ' + message);
+            setStep2Enabled(false, lockReasons.needExtraction);
           });
-          renderTargets();
-          autoSelectDefaultTrack();
-          renderDownloads();
-          persistOriginals(batchId);
-          const label = window.t ? window.t('toolbox.logs.extracted', { count: state.tracks.length }, 'Extracted ' + state.tracks.length + ' track(s).') : ('Extracted ' + state.tracks.length + ' track(s).');
-          logExtract(label);
         } else {
           resetExtractionState(false, { preserveMismatch: state.cacheBlocked });
           const label = window.t ? window.t('toolbox.logs.failed', { error: msg.error || 'unknown error' }, 'Extraction failed: ' + (msg.error || 'unknown error')) : ('Extraction failed: ' + (msg.error || 'unknown error'));
@@ -5720,7 +5981,8 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
         return;
       }
       setHashMismatchAlert('');
-      const mode = state.extractMode === 'complete' ? 'complete' : 'smart';
+      const mode = normalizeExtractModeValue(els.modeSelect?.value || state.extractMode) || 'complete';
+      state.extractMode = mode;
       const messageId = 'extract_' + Date.now();
       setStep2Enabled(false, lockReasons.needExtraction);
       setExtractionInFlight(true);
@@ -5775,7 +6037,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     if (els.modeSelect) {
       els.modeSelect.addEventListener('change', () => {
         const value = (els.modeSelect.value || '').toLowerCase();
-        state.extractMode = value === 'complete' ? 'complete' : 'smart';
+        state.extractMode = normalizeExtractModeValue(value) || 'complete';
         persistExtractMode(state.extractMode);
       });
     }
@@ -5826,11 +6088,15 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     renderDownloads();
     updateVideoMeta();
     setStep2Enabled(!!state.selectedTrackId, state.selectedTrackId ? null : lockReasons.needExtraction);
+    if (els.workflowSelect) {
+      const workflow = String(BOOTSTRAP.defaults.translationWorkflow || '').toLowerCase();
+      els.workflowSelect.value = ['xml', 'json', 'original', 'ai'].includes(workflow) ? workflow : 'xml';
+    }
     if (els.singleBatch) {
       els.singleBatch.value = BOOTSTRAP.defaults.singleBatchMode ? 'single' : 'multi';
     }
-    if (els.timestamps) {
-      els.timestamps.value = BOOTSTRAP.defaults.sendTimestampsToAI ? 'send' : 'original';
+    if (els.batchContext) {
+      els.batchContext.checked = BOOTSTRAP.defaults.enableBatchContext === true;
     }
 
     // Prefetch subtitles once so menu + target list share the same request
@@ -5975,6 +6241,12 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         assemblyModel: document.getElementById('assemblySpeechModel'),
         translateToggle: document.getElementById('translateOutput'),
         targetLangWrapper: document.getElementById('targetLangWrapper'),
+        translationSettings: document.getElementById('autoTranslationSettings'),
+        translationSettingsToggle: document.getElementById('autoTranslationSettingsToggle'),
+        translationProvider: document.getElementById('autoTranslationProvider'),
+        workflowSelect: document.getElementById('autoWorkflowSelect'),
+        singleBatchSelect: document.getElementById('autoSingleBatchSelect'),
+        batchContext: document.getElementById('autoBatchContext'),
         srtPreview: document.getElementById('srtPreview'),
         dlSrt: document.getElementById('downloadSrt'),
         dlRaw: document.getElementById('downloadRawTranscript'),
@@ -6952,6 +7224,81 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         return val ? [val] : [];
       }
 
+      const normalizeProviderKey = (key) => String(key || '').trim().toLowerCase();
+
+      function renderTranslationProviders() {
+        if (!els.translationProvider) return '';
+        const providerOpts = Array.isArray(BOOTSTRAP.providerOptions) ? BOOTSTRAP.providerOptions : [];
+        const desired = providerOpts
+          .map((opt) => {
+            const value = normalizeProviderKey(opt && (opt.key || opt.value || opt.name || ''));
+            if (!value) return null;
+            return {
+              value,
+              text: String(opt.label || opt.text || opt.key || opt.value || value).trim() || value
+            };
+          })
+          .filter(Boolean);
+
+        const previous = normalizeProviderKey(els.translationProvider.value || '');
+        els.translationProvider.innerHTML = '';
+
+        if (!desired.length) {
+          const optionEl = document.createElement('option');
+          optionEl.value = '';
+          optionEl.textContent = tt('toolbox.autoSubs.logs.noProviders', {}, 'No translation providers configured');
+          els.translationProvider.appendChild(optionEl);
+          els.translationProvider.disabled = true;
+          return '';
+        }
+
+        desired.forEach((opt) => {
+          const optionEl = document.createElement('option');
+          optionEl.value = opt.value;
+          optionEl.textContent = opt.text;
+          els.translationProvider.appendChild(optionEl);
+        });
+
+        const defaultValue = normalizeProviderKey(BOOTSTRAP.defaults?.provider || desired[0].value);
+        const nextValue = desired.some((opt) => opt.value === previous)
+          ? previous
+          : (desired.some((opt) => opt.value === defaultValue) ? defaultValue : desired[0].value);
+
+        els.translationProvider.value = nextValue;
+        els.translationProvider.disabled = false;
+        return nextValue;
+      }
+
+      function getTranslationSettings() {
+        const requestedWorkflow = (els.workflowSelect?.value || BOOTSTRAP.defaults?.translationWorkflow || 'xml')
+          .toString()
+          .trim()
+          .toLowerCase();
+        const translationWorkflow = ['xml', 'json', 'original', 'ai'].includes(requestedWorkflow)
+          ? requestedWorkflow
+          : 'xml';
+        const singleBatchMode = (els.singleBatchSelect?.value || (BOOTSTRAP.defaults?.singleBatchMode ? 'single' : 'multi')) === 'single';
+        const enableBatchContext = !!els.batchContext?.checked;
+        return {
+          translationProvider: normalizeProviderKey(els.translationProvider?.value || BOOTSTRAP.defaults?.provider || ''),
+          translationWorkflow,
+          singleBatchMode,
+          enableBatchContext,
+          sendTimestampsToAI: translationWorkflow === 'ai'
+        };
+      }
+
+      function setTranslationSettingsExpanded(expanded) {
+        if (!els.translationSettings) return;
+        const open = expanded === true;
+        els.translationSettings.classList.toggle('open', open);
+        if (els.translationSettingsToggle) {
+          els.translationSettingsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+          const caret = els.translationSettingsToggle.querySelector('.caret');
+          if (caret) caret.textContent = open ? '-' : '+';
+        }
+      }
+
       function hydrateTargets() {
         if (!els.targetLang) return;
         const preferred = Array.isArray(BOOTSTRAP.targetLanguages) ? BOOTSTRAP.targetLanguages : [];
@@ -7002,7 +7349,19 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         if (els.targetLangWrapper) {
           els.targetLangWrapper.style.display = enabled ? '' : 'none';
         }
+        if (els.translationSettings) {
+          els.translationSettings.style.display = enabled ? '' : 'none';
+        }
         if (els.targetLang) els.targetLang.disabled = !enabled;
+        if (els.translationProvider) {
+          const hasProviderOptions = Array.from(els.translationProvider.options || [])
+            .some((opt) => (opt.value || '').toString().trim());
+          const providerDisabled = !enabled || !hasProviderOptions;
+          els.translationProvider.disabled = providerDisabled;
+        }
+        if (els.workflowSelect) els.workflowSelect.disabled = !enabled;
+        if (els.singleBatchSelect) els.singleBatchSelect.disabled = !enabled;
+        if (els.batchContext) els.batchContext.disabled = !enabled;
         refreshStepLocks();
       }
 
@@ -7419,6 +7778,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           .toString()
           .trim()
           .toLowerCase();
+        const translationSettings = getTranslationSettings();
         const payload = {
           configStr: PAGE.configStr,
           streamUrl: stream,
@@ -7429,12 +7789,21 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           sourceLanguage: (transcript && (transcript.languageCode || transcript.language)) || overrides.sourceLanguageOverride || els.sourceLang?.value || '',
           targetLanguages: targets,
           translate: translateEnabled,
-          translationProvider: BOOTSTRAP.defaults?.provider || '',
-          translationModel: (BOOTSTRAP.defaults?.translationModel || '').trim(),
-          sendTimestampsToAI: overrides.sendTimestampsToAI ?? (BOOTSTRAP.defaults?.sendTimestampsToAI === true),
-          singleBatchMode: overrides.singleBatchMode ?? (BOOTSTRAP.defaults?.singleBatchMode === true),
+          translationProvider: overrides.translationProvider || translationSettings.translationProvider || '',
+          sendTimestampsToAI: overrides.sendTimestampsToAI ?? translationSettings.sendTimestampsToAI,
+          singleBatchMode: overrides.singleBatchMode ?? translationSettings.singleBatchMode,
+          enableBatchContext: overrides.enableBatchContext ?? translationSettings.enableBatchContext,
+          options: {
+            translationWorkflow: overrides.translationWorkflow || translationSettings.translationWorkflow,
+            singleBatchMode: overrides.singleBatchMode ?? translationSettings.singleBatchMode,
+            enableBatchContext: overrides.enableBatchContext ?? translationSettings.enableBatchContext,
+            sendTimestampsToAI: overrides.sendTimestampsToAI ?? translationSettings.sendTimestampsToAI
+          },
           translationPrompt: overrides.translationPrompt || ''
         };
+        if (overrides.translationModel) {
+          payload.translationModel = String(overrides.translationModel).trim();
+        }
         if (engine === 'assemblyai') {
           delete payload.model;
           payload.assemblySpeechModel = assemblySpeechModel;
@@ -7911,6 +8280,18 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         if (els.translateToggle) {
           els.translateToggle.checked = BOOTSTRAP.defaults?.translateToTarget !== false;
         }
+        renderTranslationProviders();
+        if (els.workflowSelect) {
+          const workflow = String(BOOTSTRAP.defaults?.translationWorkflow || '').trim().toLowerCase();
+          els.workflowSelect.value = ['xml', 'json', 'original', 'ai'].includes(workflow) ? workflow : 'xml';
+        }
+        if (els.singleBatchSelect) {
+          els.singleBatchSelect.value = BOOTSTRAP.defaults?.singleBatchMode ? 'single' : 'multi';
+        }
+        if (els.batchContext) {
+          els.batchContext.checked = BOOTSTRAP.defaults?.enableBatchContext === true;
+        }
+        setTranslationSettingsExpanded(false);
         hydrateVideoMeta({
           title: BOOTSTRAP.linkedTitle || '',
           videoId: PAGE.videoId,
@@ -7937,6 +8318,10 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         els.translateToggle?.addEventListener('change', () => {
           toggleTranslationStep();
           refreshStepLocks();
+        });
+        els.translationSettingsToggle?.addEventListener('click', () => {
+          const open = !els.translationSettings?.classList.contains('open');
+          setTranslationSettingsExpanded(open);
         });
         els.modeSelect?.addEventListener('change', toggleModeDetails);
         els.assemblyModel?.addEventListener('change', () => refreshStepLocks());
@@ -8219,8 +8604,14 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       const matchKey = Object.keys(providers).find(key => String(key).toLowerCase() === activeProvider);
       return matchKey ? (providers[matchKey]?.model || '') : '';
     })(),
+    translationWorkflow: (() => {
+      const workflow = String(config?.advancedSettings?.translationWorkflow || '').trim().toLowerCase();
+      if (['xml', 'json', 'original', 'ai'].includes(workflow)) return workflow;
+      return config?.advancedSettings?.sendTimestampsToAI === true ? 'ai' : 'xml';
+    })(),
     sendTimestampsToAI: config?.advancedSettings?.sendTimestampsToAI === true,
     singleBatchMode: config?.singleBatchMode === true,
+    enableBatchContext: config?.advancedSettings?.enableBatchContext === true,
     assemblySendFullVideo: config?.autoSubs?.sendFullVideoToAssembly === true,
     assemblySpeechModel: defaultAssemblySpeechModel
   };
@@ -8306,18 +8697,22 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       translationStepChip: t('toolbox.autoSubs.steps.stepTwoFiveChip', {}, 'Step 2.5'),
       translationStepTitle: t('toolbox.autoSubs.steps.stepTwoFiveTitle', {}, 'Translation targets'),
       translationSettingsTitle: t('toolbox.autoSubs.steps.translationSettings', {}, 'Translation settings'),
-      translationSettingsMeta: t('toolbox.autoSubs.steps.translationSettingsMeta', {}, 'Batching & timestamps'),
+      translationSettingsMeta: t('toolbox.embedded.step2.settingsMeta', {}, 'Provider, workflow, batching, context'),
       targetLabel: t('toolbox.autoSubs.steps.targetLabel', {}, 'Target language'),
       targetWorkflowHelper: t('toolbox.autoSubs.steps.targetWorkflowHelper', {}, 'Uses the same translation workflow configured for Stremio.'),
       providerLabel: t('toolbox.autoSubs.steps.providerLabel', {}, 'Translation provider'),
-      providerModelLabel: t('toolbox.autoSubs.steps.providerModelLabel', {}, 'Translation model'),
-      providerModelPlaceholder: t('toolbox.autoSubs.steps.providerModelPlaceholder', {}, 'Use provider default'),
+      providerHelper: t('toolbox.embedded.step2.providerHelper', {}, 'Uses your configured model for the selected provider.'),
+      workflowLabel: t('config.translationSettings.workflow.label', {}, 'Translation Workflow'),
+      workflowHelper: t('config.translationSettings.workflow.description', {}, 'Switching between modes is recommended if you have translation sync problems.'),
+      workflowXml: t('config.translationSettings.workflow.xml', {}, 'XML Tags (Default)'),
+      workflowJson: t('config.translationSettings.workflow.json', {}, 'JSON (Structured)'),
+      workflowOriginal: t('config.translationSettings.workflow.original', {}, 'Original Timestamps (Legacy)'),
+      workflowAi: t('config.translationSettings.workflow.ai', {}, 'Send Timestamps to AI'),
       batchingLabel: t('toolbox.autoSubs.steps.batchingLabel', {}, 'Batching'),
       batchingMultiple: t('toolbox.autoSubs.steps.batchingMultiple', {}, 'Multiple batches (recommended)'),
       batchingSingle: t('toolbox.autoSubs.steps.batchingSingle', {}, 'Single batch (all at once)'),
-      timestampsLabel: t('toolbox.autoSubs.steps.timestampsLabel', {}, 'Timestamp handling'),
-      timestampsRebuild: t('toolbox.autoSubs.steps.timestampsRebuild', {}, 'Rebuild timestamps'),
-      sendTimestamps: t('toolbox.autoSubs.steps.sendTimestamps', {}, 'Send timestamps to AI'),
+      batchContextLabel: t('config.advancedGemini.batchContext.label', {}, 'Enable Batch Context'),
+      batchContextHelper: t('config.advancedGemini.batchContext.description', {}, 'Include original surrounding context and previous translations when processing batches. Improves translation coherence but may break outputs and increases token usage. Disabled by default.'),
       runPipelineTitle: t('toolbox.autoSubs.steps.step3Title', {}, 'Run pipeline'),
       pipelineDesc: t('toolbox.autoSubs.steps.pipeline', {}, 'We\'ll stitch: fetch -> segment -> transcribe -> align -> translate (optional) -> deliver SRT.'),
       start: t('toolbox.autoSubs.actions.start', {}, 'Start auto-subtitles'),
@@ -9486,6 +9881,55 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
                 ${targetOptions}
               </select>
               <p class="muted" style="margin:8px 0 0; text-align:center;">${escapeHtml(copy.steps.targetWorkflowHelper)}</p>
+            </div>
+            <div class="translation-settings" id="autoTranslationSettings">
+              <button
+                type="button"
+                class="translation-settings-toggle"
+                id="autoTranslationSettingsToggle"
+                aria-expanded="false"
+                aria-controls="autoTranslationSettingsContent"
+              >
+                <span>
+                  <strong>${escapeHtml(copy.steps.translationSettingsTitle)}</strong>
+                  <small style="display:block; margin-top:4px;">${escapeHtml(copy.steps.translationSettingsMeta)}</small>
+                </span>
+                <span class="caret" aria-hidden="true">+</span>
+              </button>
+              <div class="translation-settings-content" id="autoTranslationSettingsContent">
+                <div class="row">
+                  <div>
+                    <label for="autoTranslationProvider">${escapeHtml(copy.steps.providerLabel)}</label>
+                    <select id="autoTranslationProvider"></select>
+                  </div>
+                  <div>
+                    <label for="autoWorkflowSelect">${escapeHtml(copy.steps.workflowLabel)}</label>
+                    <select id="autoWorkflowSelect">
+                      <option value="xml">${escapeHtml(copy.steps.workflowXml)}</option>
+                      <option value="json">${escapeHtml(copy.steps.workflowJson)}</option>
+                      <option value="original">${escapeHtml(copy.steps.workflowOriginal)}</option>
+                      <option value="ai">${escapeHtml(copy.steps.workflowAi)}</option>
+                    </select>
+                  </div>
+                </div>
+                <p class="muted" style="margin:10px 0 0; text-align:center;">${escapeHtml(copy.steps.providerHelper)}</p>
+                <p class="muted" style="margin:6px 0 0; text-align:center;">${escapeHtml(copy.steps.workflowHelper)}</p>
+                <div class="row" style="margin-top:12px;">
+                  <div>
+                    <label for="autoSingleBatchSelect">${escapeHtml(copy.steps.batchingLabel)}</label>
+                    <select id="autoSingleBatchSelect">
+                      <option value="multi">${escapeHtml(copy.steps.batchingMultiple)}</option>
+                      <option value="single">${escapeHtml(copy.steps.batchingSingle)}</option>
+                    </select>
+                  </div>
+                  <div style="display:flex; flex-direction:column; justify-content:center; align-items:center; gap:6px; text-align:center;">
+                    <label class="inline-checkbox" for="autoBatchContext" style="margin:0; justify-content:center;">
+                      <input type="checkbox" id="autoBatchContext"> ${escapeHtml(copy.steps.batchContextLabel)}
+                    </label>
+                    <small>${escapeHtml(copy.steps.batchContextHelper)}</small>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="controls" style="margin-top:12px;">
               <button class="btn" id="autoStep2Continue"><span>➡️</span> ${escapeHtml(copy.actions.continue)}</button>

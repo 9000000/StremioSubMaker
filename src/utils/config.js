@@ -838,10 +838,10 @@ function normalizeConfig(config) {
 
       // Set a flag so the UI can show a helpful message instead of the generic "session token error"
       mergedConfig.__credentialDecryptionFailed = true;
-      mergedConfig.__credentialDecryptionFailedFields = [
-        ...(usernameStillEncrypted ? ['opensubtitles.username'] : []),
-        ...(passwordStillEncrypted ? ['opensubtitles.password'] : [])
-      ];
+      const credentialFailureFields = new Set(mergedConfig.__credentialDecryptionFailedFields || []);
+      if (usernameStillEncrypted) credentialFailureFields.add('opensubtitles.username');
+      if (passwordStillEncrypted) credentialFailureFields.add('opensubtitles.password');
+      mergedConfig.__credentialDecryptionFailedFields = Array.from(credentialFailureFields);
 
       mergedConfig.subtitleProviders.opensubtitles = openSubConfig;
     }

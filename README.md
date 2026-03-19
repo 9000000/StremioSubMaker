@@ -244,7 +244,7 @@ Click the **Reset** button at the bottom of the config page.
 | Channel | Link |
 |---------|------|
 | **Issues & Bugs** | [Open an issue](https://github.com/xtremexq/StremioSubMaker/issues) |
-| **Documentation** | Check `/public/configure.html` for interactive help |
+| **Documentation** | Open `/configure` for the live interactive config/help page |
 | **Community** | [Stremio Discord](https://discord.gg/stremio) • [r/StremioAddons](https://reddit.com/r/StremioAddons) |
 
 ---

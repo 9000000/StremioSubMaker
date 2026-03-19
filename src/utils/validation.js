@@ -1,5 +1,6 @@
 const Joi = require('joi');
 const log = require('./logger');
+const { inspectStremioIdSupport, parseStremioId } = require('./subtitle');
 
 /**
  * Validation schemas for API endpoints
@@ -33,12 +34,21 @@ const looseLanguageSchema = Joi.string()
   .max(50)
   .required();
 
-// Validate video ID (Stremio format: tt0133093 or tt0133093:1:1)
+// Validate supported Stremio video IDs (IMDb, TMDB, and supported anime prefixes)
 const videoIdSchema = Joi.string()
-  .pattern(/^tt\d+(:[\d]+)?(:[\d]+)?$/)
   .min(1)
-  .max(50)
-  .required();
+  .max(100)
+  .custom((value, helpers) => {
+    const support = inspectStremioIdSupport(value);
+    if (!support.supported || !parseStremioId(value)) {
+      return helpers.error('string.stremioVideoId');
+    }
+    return value;
+  }, 'supported Stremio ID validation')
+  .required()
+  .messages({
+    'string.stremioVideoId': '\"videoId\" must be a supported Stremio video ID'
+  });
 
 // Validate subtitle content (SRT format)
 const subtitleContentSchema = Joi.string()
@@ -156,15 +166,6 @@ const translationParamsSchema = Joi.object({
 });
 
 /**
- * Sanitize and validate translation selector parameters
- */
-const translationSelectorParamsSchema = Joi.object({
-  config: configStringSchema,
-  videoId: videoIdSchema,
-  targetLang: languageCodeSchema,
-});
-
-/**
  * Sanitize and validate file translation request body
  */
 const fileTranslationBodySchema = Joi.object({
@@ -189,6 +190,5 @@ module.exports = {
   subtitleParamsSchema,
   subtitleContentParamsSchema,
   translationParamsSchema,
-  translationSelectorParamsSchema,
   fileTranslationBodySchema,
 };

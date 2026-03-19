@@ -13,6 +13,7 @@ const { toISO6391, toISO6392 } = require('../utils/languages');
 const { handleSearchError, handleDownloadError, logApiError } = require('../utils/apiErrorHandler');
 const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const { detectAndConvertEncoding } = require('../utils/encodingDetector');
+const { hasExplicitSeasonEpisodeMismatch } = require('../utils/animeSearchResolver');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const { sanitizeApiKeyForHeader } = require('../utils/security');
 const providerMetadataCache = require('../utils/providerMetadataCache');
@@ -756,6 +757,10 @@ class SubSourceService {
 
         filteredSubtitles = subtitles.filter(sub => {
           const name = (sub.name || '').toLowerCase();
+
+          if (hasExplicitSeasonEpisodeMismatch(name, targetSeason, targetEpisode)) {
+            return false;
+          }
 
           // Check for season pack patterns (season without specific episode)
           // Patterns: "season 3", "third season", "complete season 3", "s03 complete", "1-24 complete", etc.

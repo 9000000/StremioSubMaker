@@ -2,7 +2,8 @@ const { getDefaultProviderParameters, mergeProviderParameters, getEffectiveGemin
 const { getLanguageName, buildLanguageLookupMaps } = require('./languages');
 const { allLanguages } = require('./allLanguages');
 const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = require('./quickNav');
-const { version: appVersion, xsyncMinVersion: REQUIRED_XSYNC_VERSION } = require('../../package.json');
+const { version: appVersion } = require('./version');
+const { xsyncMinVersion: REQUIRED_XSYNC_VERSION } = require('../../package.json');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
 
 function safeLanguageMaps() {

@@ -30,10 +30,12 @@ const { handleCaughtError } = require('../utils/errorClassifier');
 const { isHearingImpairedSubtitle } = require('../utils/subtitleFlags');
 const { generateCacheKeys } = require('../utils/cacheKeys');
 const { deduplicateSubtitles, logDeduplicationStats } = require('../utils/subtitleDeduplication');
-const { version } = require('../../package.json');
+const { version } = require('../utils/version');
 const { isProviderHealthy, circuitBreaker } = require('../utils/httpAgents');
 const { getShared, setShared, incrementCounter, decrementCounter, getCounter, CACHE_PREFIXES, CACHE_TTLS } = require('../utils/sharedCache');
 const { getEffectiveGeminiModel } = require('../utils/config');
+const { applyExplicitFilenameSeasonHint, hasExplicitSeasonEpisodeMismatch, resolveAnimeVideoInfo } = require('../utils/animeSearchResolver');
+const { buildTmdbToImdbWikidataQuery } = require('../utils/tmdbWikidata');
 
 const fs = require('fs');
 const path = require('path');
@@ -47,6 +49,12 @@ async function getStorageAdapter() {
     storageAdapter = await StorageFactory.getStorageAdapter();
   }
   return storageAdapter;
+}
+
+function scheduleBackgroundInterval(callback, intervalMs) {
+  const timer = setInterval(callback, intervalMs);
+  timer.unref?.();
+  return timer;
 }
 
 // Initialize anime ID mapping services
@@ -302,6 +310,167 @@ function ensureInformationalSubtitleSize(srt, note = null, uiLanguage = 'en') {
   }
 }
 
+const REQUESTED_LANGUAGE_EQUIVALENTS = {
+  spa: ['spn'],
+  spn: ['spa'],
+  chi: ['zhs', 'zht', 'ze'],
+  zhs: ['chi', 'zht', 'ze'],
+  zht: ['chi', 'zhs', 'ze'],
+  ze: ['chi', 'zhs', 'zht'],
+  nor: ['nob', 'nno'],
+  nob: ['nor', 'nno'],
+  nno: ['nor', 'nob'],
+  tgl: ['fil'],
+  fil: ['tgl'],
+  prs: ['per'],
+  per: ['prs'],
+  ckb: ['kur'],
+  kur: ['ckb']
+};
+
+function expandRequestedLanguageSet(requestedLanguages = []) {
+  const normalizedRequested = [...new Set(
+    (requestedLanguages || []).map(lang => normalizeLanguageCode(lang)).filter(Boolean)
+  )];
+  const expanded = new Set(normalizedRequested);
+
+  normalizedRequested.forEach(lang => {
+    const equivalents = REQUESTED_LANGUAGE_EQUIVALENTS[lang] || [];
+    equivalents.forEach(equivalent => expanded.add(equivalent));
+  });
+
+  return expanded;
+}
+
+function filterSubtitlesByRequestedLanguages(subtitles = [], requestedLanguages = []) {
+  if (!Array.isArray(subtitles) || subtitles.length === 0) {
+    return [];
+  }
+
+  // Safety gate on provider-normalized languageCode values only.
+  // Provider-specific language mapping happens earlier inside each provider.
+  const expandedRequested = expandRequestedLanguageSet(requestedLanguages);
+  if (expandedRequested.size === 0) {
+    return subtitles;
+  }
+
+  return subtitles.filter(sub => sub?.languageCode && expandedRequested.has(sub.languageCode));
+}
+
+function getMaxSubtitlesPerLanguage(config) {
+  return Number.isFinite(config?.maxSubtitlesPerLanguage)
+    ? config.maxSubtitlesPerLanguage
+    : 8;
+}
+
+function limitSubtitlesPerLanguage(subtitles = [], config, logContext = 'Subtitles') {
+  const maxSubtitlesPerLanguage = getMaxSubtitlesPerLanguage(config);
+  const limitedByLanguage = new Map();
+
+  for (const sub of subtitles) {
+    if (!limitedByLanguage.has(sub.languageCode)) {
+      limitedByLanguage.set(sub.languageCode, []);
+    }
+    const langSubs = limitedByLanguage.get(sub.languageCode);
+    if (langSubs.length < maxSubtitlesPerLanguage) {
+      langSubs.push(sub);
+    }
+  }
+
+  const limited = Array.from(limitedByLanguage.values()).flat();
+  log.debug(() => `[${logContext}] Limited to ${maxSubtitlesPerLanguage} subtitles per language (${limited.length} total)`);
+  return limited;
+}
+
+function finalizeSubtitleResults(subtitles, requestedLanguages, config, {
+  streamFilename = '',
+  videoInfo = null,
+  logContext = 'Subtitles',
+  logTopRankedSubtitles = false
+} = {}) {
+  let processedSubtitles = filterSubtitlesByRequestedLanguages(subtitles, requestedLanguages);
+
+  if (config.excludeHearingImpairedSubtitles === true) {
+    const beforeCount = processedSubtitles.length;
+    processedSubtitles = processedSubtitles.filter(sub => !isHearingImpairedSubtitle(sub));
+    const removed = beforeCount - processedSubtitles.length;
+    if (removed > 0) {
+      log.debug(() => `[${logContext}] Excluded ${removed} hearing impaired subtitles (SDH/HI)`);
+    }
+  }
+
+  if (config.enableSeasonPacks === false) {
+    const beforeCount = processedSubtitles.length;
+    processedSubtitles = processedSubtitles.filter(sub => sub.is_season_pack !== true);
+    const removed = beforeCount - processedSubtitles.length;
+    if (removed > 0) {
+      log.debug(() => `[${logContext}] Excluded ${removed} season pack subtitles (user preference)`);
+    }
+  }
+
+  if (config.deduplicateSubtitles !== false) {
+    const { deduplicated, stats } = deduplicateSubtitles(processedSubtitles, {
+      enabled: true,
+      respectHIVariants: true,
+      respectFormats: true
+    });
+    processedSubtitles = deduplicated;
+    logDeduplicationStats(stats);
+  }
+
+  if (streamFilename) {
+    processedSubtitles = rankSubtitlesByFilename(processedSubtitles, streamFilename, videoInfo);
+    log.debug(() => `[${logContext}] Ranked ${processedSubtitles.length} subtitles by filename match + episode metadata + quality (downloads, rating, date)`);
+
+    if (logTopRankedSubtitles && processedSubtitles.length > 0) {
+      const top3 = processedSubtitles.slice(0, 3);
+      log.debug(() => [`[${logContext}] Top 3 AFTER ranking:`, top3.map(s => ({
+        name: s.name?.substring(0, 50) + (s.name?.length > 50 ? '...' : ''),
+        provider: s.provider,
+        downloads: s.downloads,
+        rating: s.rating,
+        uploadDate: s.uploadDate
+      }))]);
+    }
+  }
+
+  return limitSubtitlesPerLanguage(processedSubtitles, config, logContext);
+}
+
+function toPositiveInteger(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function applyResolvedTmdbAnimeHints(videoInfo, resolvedMeta) {
+  if (!videoInfo || !resolvedMeta || typeof resolvedMeta !== 'object') {
+    return;
+  }
+
+  const resolvedStremioSeason = toPositiveInteger(resolvedMeta.season);
+  const resolvedTvdbSeason = toPositiveInteger(resolvedMeta.seasonTvdb);
+  const resolvedTmdbSeason = toPositiveInteger(resolvedMeta.seasonTmdb);
+  const currentSeason = toPositiveInteger(videoInfo.season);
+
+  if (resolvedTvdbSeason && !videoInfo.tvdbSeason) {
+    videoInfo.tvdbSeason = resolvedTvdbSeason;
+  }
+
+  if (resolvedTmdbSeason && !videoInfo.tmdbSeason) {
+    videoInfo.tmdbSeason = resolvedTmdbSeason;
+  }
+
+  if (
+    (videoInfo.type === 'episode' || videoInfo.type === 'anime-episode') &&
+    resolvedStremioSeason &&
+    resolvedTmdbSeason &&
+    currentSeason === resolvedTmdbSeason &&
+    resolvedStremioSeason !== resolvedTmdbSeason
+  ) {
+    videoInfo.season = resolvedStremioSeason;
+  }
+}
+
 // Resolve IMDB ID when only TMDB ID is available (Stremio can send tmdb:{id})
 // MULTI-INSTANCE: Uses Redis-backed shared cache for cross-pod consistency
 async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
@@ -319,6 +488,21 @@ async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
     if (videoInfo.type === 'episode' || videoInfo.type === 'anime-episode') return 'tv';
     return 'movie';
   })();
+
+  const animeTmdbMeta = animeIdResolver.isReady?.()
+    ? animeIdResolver.resolveImdbId('tmdb', videoInfo.tmdbId, {
+      seasonHint: toPositiveInteger(videoInfo.season)
+    })
+    : null;
+
+  if (animeTmdbMeta) {
+    applyResolvedTmdbAnimeHints(videoInfo, animeTmdbMeta);
+    if (animeTmdbMeta.imdbId) {
+      videoInfo.imdbId = animeTmdbMeta.imdbId;
+      log.info(() => [`[Subtitles] Resolved TMDB ${mediaType} ${videoInfo.tmdbId} via offline anime map to IMDB ${videoInfo.imdbId}`]);
+      return videoInfo.imdbId;
+    }
+  }
 
   const cacheKey = `${CACHE_PREFIXES.TMDB_IMDB}${videoInfo.tmdbId}:${mediaType}`;
 
@@ -411,31 +595,11 @@ async function resolveImdbIdFromTmdb(videoInfo, stremioType) {
  */
 async function queryWikidataTmdbToImdb(tmdbId, mediaType) {
   try {
-    // Sanitize tmdbId: TMDB IDs must be numeric. Reject anything else to prevent SPARQL injection.
-    if (!/^\d+$/.test(String(tmdbId))) {
+    const sparqlQuery = buildTmdbToImdbWikidataQuery(tmdbId);
+    if (!sparqlQuery) {
       log.warn(() => `[Subtitles] Invalid TMDB ID format for Wikidata lookup: ${tmdbId}`);
       return null;
     }
-
-    // Wikidata properties:
-    // P4947 = TMDB movie ID
-    // P5607 = TMDB TV series ID  
-    // P345 = IMDB ID
-    // Try both properties since sometimes the mediaType inference can be wrong
-    const tmdbMovieProp = 'wdt:P4947';  // TMDB movie ID
-    const tmdbTvProp = 'wdt:P5607';     // TMDB TV series ID
-    const imdbProp = 'wdt:P345';        // IMDB ID
-
-    // Build SPARQL query that tries both movie and TV properties
-    // This handles cases where mediaType might be incorrectly inferred
-    const sparqlQuery = `
-      SELECT ?imdb WHERE {
-        { ?item ${tmdbMovieProp} "${tmdbId}". }
-        UNION
-        { ?item ${tmdbTvProp} "${tmdbId}". }
-        ?item ${imdbProp} ?imdb.
-      } LIMIT 1
-    `.trim().replace(/\s+/g, ' ');
 
     const url = `https://query.wikidata.org/sparql?query=${encodeURIComponent(sparqlQuery)}&format=json`;
 
@@ -477,6 +641,42 @@ async function ensureImdbId(videoInfo, stremioType, logContext = 'Subtitles') {
   }
 
   return videoInfo.imdbId;
+}
+
+const ID_RESOLUTION_TIMEOUT_MS = 30000; // 30s budget for all ID resolution
+
+async function resolveVideoInfoForSearch(videoInfo, stremioType, logContext = 'Subtitles', { streamFilename = '' } = {}) {
+  if (!videoInfo) return null;
+
+  try {
+    applyExplicitFilenameSeasonHint(videoInfo, streamFilename);
+
+    let resolutionTimer;
+    await Promise.race([
+      (async () => {
+        await resolveAnimeVideoInfo(videoInfo, {
+          anidbService,
+          kitsuService,
+          malService,
+          anilistService,
+          logger: log,
+          logContext
+        });
+        await ensureImdbId(videoInfo, stremioType, logContext);
+      })(),
+      new Promise((_, reject) => {
+        resolutionTimer = setTimeout(() => reject(new Error('ID resolution timeout')), ID_RESOLUTION_TIMEOUT_MS);
+      })
+    ]).finally(() => clearTimeout(resolutionTimer));
+  } catch (timeoutErr) {
+    if (timeoutErr.message === 'ID resolution timeout') {
+      log.warn(() => `[${logContext}] ID resolution timed out after ${ID_RESOLUTION_TIMEOUT_MS}ms, proceeding with ${videoInfo.imdbId ? 'partial' : 'no'} IMDB ID`);
+    } else {
+      log.error(() => `[${logContext}] Unexpected error during ID resolution: ${timeoutErr.message}`);
+    }
+  }
+
+  return videoInfo;
 }
 
 function getVideoCacheIdComponent(videoInfo) {
@@ -1383,14 +1583,14 @@ if (!cacheMetrics.totalCacheSize) {
 log.debug(() => `[Subtitle Search Cache] Initialized: max=${SUBTITLE_SEARCH_CACHE_MAX} entries, ttl=${Math.floor(SUBTITLE_SEARCH_CACHE_TTL_MS / 1000 / 60)}min, user-scoped=true`);
 
 // Log metrics every 30 minutes
-setInterval(logCacheMetrics, 1000 * 60 * 30);
+scheduleBackgroundInterval(logCacheMetrics, 1000 * 60 * 30);
 
 // Enforce cache size limit every 10 minutes (async)
-setInterval(() => {
+scheduleBackgroundInterval(() => {
   enforceCacheSizeLimit().catch(err => log.error(() => ['[Cache] Failed in scheduled size enforcement:', err.message]));
 }, 1000 * 60 * 10);
 // Cleanup bypass cache periodically (async)
-setInterval(() => {
+scheduleBackgroundInterval(() => {
   verifyBypassCacheIntegrity().catch(err => log.error(() => ['[Bypass Cache] Scheduled cleanup failed:', err.message]));
 }, 1000 * 60 * 30);
 
@@ -1445,6 +1645,68 @@ async function deduplicateSearch(key, fn) {
   } finally {
     inFlightSearches.delete(key);
   }
+}
+
+async function collectProviderSearchResults(searchTasks, skippedProviders = [], {
+  logContext = 'Subtitles',
+  orchestrationTimeoutMs = 0
+} = {}) {
+  let providerResults = [];
+
+  if (orchestrationTimeoutMs > 0 && searchTasks.length > 0) {
+    const collectedResults = [];
+    let resolvedCount = 0;
+    let timeoutFired = false;
+
+    const wrappedPromises = searchTasks.map(task =>
+      task.promise.then(result => {
+        if (!timeoutFired) {
+          collectedResults.push(result);
+        }
+        resolvedCount++;
+        return result;
+      })
+    );
+
+    const timeoutPromise = new Promise(resolve => {
+      setTimeout(() => {
+        timeoutFired = true;
+        resolve('timeout');
+      }, orchestrationTimeoutMs);
+    });
+
+    const allCompletedPromise = Promise.all(wrappedPromises).then(() => 'completed');
+    const winner = await Promise.race([allCompletedPromise, timeoutPromise]);
+
+    if (winner === 'timeout') {
+      providerResults = [...collectedResults];
+      const pending = searchTasks.length - resolvedCount;
+      if (pending > 0) {
+        log.warn(() => `[${logContext}] Provider search timeout after ${orchestrationTimeoutMs}ms - returning ${resolvedCount}/${searchTasks.length} provider results (${pending} still pending)`);
+      }
+    } else {
+      providerResults = collectedResults;
+    }
+  } else if (searchTasks.length > 0) {
+    providerResults = await Promise.all(searchTasks.map(task => task.promise));
+  }
+
+  let subtitles = [];
+  for (const result of providerResults) {
+    if (result.error) {
+      log.warn(() => [`[${logContext}] ${result.provider} search failed:`, result.error.message]);
+    } else {
+      log.debug(() => `[${logContext}] Found ${result.results.length} subtitles from ${result.provider}`);
+      subtitles = [...subtitles, ...result.results];
+    }
+  }
+
+  if (skippedProviders.length > 0) {
+    const skippedNames = skippedProviders.map(s => s.provider).join(', ');
+    log.info(() => `[${logContext}] Skipped ${skippedProviders.length} unhealthy provider(s): ${skippedNames}`);
+  }
+
+  return subtitles;
 }
 
 /**
@@ -2011,8 +2273,10 @@ function rankSubtitlesByFilename(subtitles, streamFilename, videoInfo = null) {
         new RegExp(`(?:^|[\\s\\[\\(\\-_])\\d+\\s*[-~]\\s*0*${targetEpisode}(?=$|[\\s\\]\\)\\-_.])`, 'i'),
       ];
 
-      const hasCorrectEpisode = seasonEpisodePatterns.some(pattern => pattern.test(name)) ||
-        (videoInfo.type === 'anime-episode' && animeEpisodePatterns.some(p => p.test(name)));
+      const hasCorrectEpisode = !hasExplicitSeasonEpisodeMismatch(name, targetSeason, targetEpisode) && (
+        seasonEpisodePatterns.some(pattern => pattern.test(name)) ||
+        (videoInfo.type === 'anime-episode' && animeEpisodePatterns.some(p => p.test(name)))
+      );
 
       if (hasCorrectEpisode) {
         // BONUS: Subtitle name explicitly mentions correct episode
@@ -2195,113 +2459,9 @@ function createSubtitleHandler(config) {
       }
 
       log.debug(() => `[Subtitles] Video info: ${JSON.stringify(videoInfo)}`);
+      const streamFilename = (extra?.filename || '').toString().trim();
 
-      // Handle anime content and TMDB→IMDB resolution with a global timeout cap
-      // This prevents the pre-resolution step from taking unbounded time before providers start
-      const ID_RESOLUTION_TIMEOUT_MS = 30000; // 30s budget for all ID resolution
-      try {
-        let resolutionTimer;
-        await Promise.race([
-          (async () => {
-            // Handle anime content - try to map anime ID to IMDB ID
-            if (videoInfo.isAnime && videoInfo.animeId) {
-              log.debug(() => `[Subtitles] Anime content detected (${videoInfo.animeIdType}), attempting to map to IMDB ID`);
-
-              // Step 1: Try offline static mapping (instant, O(1) Map lookup, no API calls)
-              const offlineResult = animeIdResolver.resolveImdbId(videoInfo.animeIdType, videoInfo.animeId);
-              if (offlineResult?.imdbId || offlineResult?.tmdbId) {
-                if (offlineResult.imdbId) {
-                  videoInfo.imdbId = offlineResult.imdbId;
-                }
-                // Also store TMDB ID from offline mapping if we don't already have one
-                if (offlineResult.tmdbId && !videoInfo.tmdbId) {
-                  videoInfo.tmdbId = String(offlineResult.tmdbId);
-                }
-                if (
-                  videoInfo.type === 'anime-episode' &&
-                  !videoInfo.season &&
-                  Number.isFinite(Number(offlineResult.season)) &&
-                  Number(offlineResult.season) > 0 &&
-                  process.env.ANIME_SEASON_HINT_ENABLED === 'true'
-                ) {
-                  videoInfo.season = Number(offlineResult.season);
-                }
-                const resolvedSummary = [
-                  offlineResult.imdbId || null,
-                  offlineResult.tmdbId ? `tmdb:${offlineResult.tmdbId}` : null
-                ].filter(Boolean).join(' | ');
-                log.info(() => `[Subtitles] Offline mapped ${videoInfo.animeIdType} ${videoInfo.animeId} → ${resolvedSummary}`);
-              } else {
-                // Step 2: Fallback to live API services (for entries not in the static list)
-                log.debug(() => `[Subtitles] No offline mapping for ${videoInfo.animeIdType} ${videoInfo.animeId}, falling back to live API`);
-
-                if (videoInfo.animeIdType === 'anidb') {
-                  try {
-                    const imdbId = await anidbService.getImdbId(videoInfo.anidbId);
-                    if (imdbId) {
-                      log.info(() => `[Subtitles] Live-mapped AniDB ${videoInfo.anidbId} → ${imdbId}`);
-                      videoInfo.imdbId = imdbId;
-                    } else {
-                      log.warn(() => `[Subtitles] Could not find IMDB mapping for AniDB ${videoInfo.anidbId}, subtitles may be limited`);
-                    }
-                  } catch (error) {
-                    log.error(() => [`[Subtitles] Error mapping AniDB to IMDB: ${error.message}`, error]);
-                  }
-                } else if (videoInfo.animeIdType === 'kitsu') {
-                  try {
-                    const imdbId = await kitsuService.getImdbId(videoInfo.animeId);
-                    if (imdbId) {
-                      log.info(() => `[Subtitles] Live-mapped Kitsu ${videoInfo.animeId} → ${imdbId}`);
-                      videoInfo.imdbId = imdbId;
-                    } else {
-                      log.warn(() => `[Subtitles] Could not find IMDB mapping for Kitsu ${videoInfo.animeId}, subtitles may be limited`);
-                    }
-                  } catch (error) {
-                    log.error(() => [`[Subtitles] Error mapping Kitsu to IMDB: ${error.message}`, error]);
-                  }
-                } else if (videoInfo.animeIdType === 'mal') {
-                  try {
-                    const imdbId = await malService.getImdbId(videoInfo.animeId);
-                    if (imdbId) {
-                      log.info(() => `[Subtitles] Live-mapped MAL ${videoInfo.animeId} → ${imdbId}`);
-                      videoInfo.imdbId = imdbId;
-                    } else {
-                      log.warn(() => `[Subtitles] Could not find IMDB mapping for MAL ${videoInfo.animeId}, subtitles may be limited`);
-                    }
-                  } catch (error) {
-                    log.error(() => [`[Subtitles] Error mapping MAL to IMDB: ${error.message}`, error]);
-                  }
-                } else if (videoInfo.animeIdType === 'anilist') {
-                  try {
-                    const imdbId = await anilistService.getImdbId(videoInfo.animeId, malService);
-                    if (imdbId) {
-                      log.info(() => `[Subtitles] Live-mapped AniList ${videoInfo.animeId} → ${imdbId}`);
-                      videoInfo.imdbId = imdbId;
-                    } else {
-                      log.warn(() => `[Subtitles] Could not find IMDB mapping for AniList ${videoInfo.animeId}, subtitles may be limited`);
-                    }
-                  } catch (error) {
-                    log.error(() => [`[Subtitles] Error mapping AniList to IMDB: ${error.message}`, error]);
-                  }
-                } else {
-                  log.debug(() => `[Subtitles] Unknown anime ID type: ${videoInfo.animeIdType}, will search by anime metadata`);
-                }
-              }
-            }
-
-            await ensureImdbId(videoInfo, type, 'Subtitles');
-          })(),
-          new Promise((_, reject) => {
-            resolutionTimer = setTimeout(() => reject(new Error('ID resolution timeout')), ID_RESOLUTION_TIMEOUT_MS);
-          })
-        ]).finally(() => clearTimeout(resolutionTimer));
-      } catch (timeoutErr) {
-        if (timeoutErr.message === 'ID resolution timeout') {
-          log.warn(() => `[Subtitles] ID resolution timed out after ${ID_RESOLUTION_TIMEOUT_MS}ms, proceeding with ${videoInfo.imdbId ? 'partial' : 'no'} IMDB ID`);
-        } else {
-          log.error(() => `[Subtitles] Unexpected error during ID resolution: ${timeoutErr.message}`);
-        }
-      }
+      await resolveVideoInfoForSearch(videoInfo, type, 'Subtitles', { streamFilename });
 
       // Check if this is a session token error - if so, return error entry immediately
       if (config.__sessionTokenError === true) {
@@ -2354,7 +2514,6 @@ function createSubtitleHandler(config) {
       }
 
       // Extract stream filename for matching
-      const streamFilename = (extra?.filename || '').toString().trim();
       if (streamFilename) {
         log.debug(() => `[Subtitles] Stream filename for matching: ${streamFilename}`);
       }
@@ -2435,6 +2594,8 @@ function createSubtitleHandler(config) {
       const searchParams = {
         imdb_id: videoInfo.imdbId,
         tmdb_id: videoInfo.tmdbId || null, // Pass TMDB ID for providers that support native TMDB search (WyzieSubs, SubsRo)
+        tmdbSeason: videoInfo.tmdbSeason || null,
+        tvdbSeason: videoInfo.tvdbSeason || null,
         animeId: videoInfo.animeId || null, // Pass anime ID for providers that support native anime IDs (e.g., SCS with kitsu:1234)
         animeIdType: videoInfo.animeIdType || null, // Platform name (kitsu, anidb, mal, anilist)
         type: videoInfo.type,
@@ -2489,6 +2650,7 @@ function createSubtitleHandler(config) {
         if (config.subtitleProviders?.opensubtitles?.enabled) {
           const implementationType = config.subtitleProviders.opensubtitles.implementationType || 'v3';
           const providerLabel = `OpenSubtitles (${implementationType})`;
+          const providerCircuitKey = implementationType === 'v3' ? 'opensubtitlesV3' : 'opensubtitlesAuth';
 
           // Check circuit breaker health before making request
           const providerKey = implementationType === 'v3' ? 'opensubtitles_v3' : 'opensubtitles_auth';
@@ -2511,14 +2673,14 @@ function createSubtitleHandler(config) {
               opensubtitles.searchSubtitles(searchParams)
                 .then(results => {
                   // Record success for circuit breaker
-                  circuitBreaker.recordSuccess(implementationType === 'v3' ? 'opensubtitlesV3' : 'opensubtitlesV3');
+                  circuitBreaker.recordSuccess(providerCircuitKey);
                   return { provider: providerLabel, results };
                 })
                 .catch(error => {
                   // Record failure for circuit breaker if it's a connection error
                   const code = error?.code || '';
                   if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET') {
-                    circuitBreaker.recordFailure(implementationType === 'v3' ? 'opensubtitlesV3' : 'opensubtitlesV3', error);
+                    circuitBreaker.recordFailure(providerCircuitKey, error);
                   }
                   try {
                     const msg = String(error?.message || '').toLowerCase();
@@ -2684,76 +2846,11 @@ function createSubtitleHandler(config) {
           log.debug(() => '[Subtitles] Subs.ro provider is disabled');
         }
 
-        // Execute all searches in parallel with early timeout
-        // After orchestrationTimeoutMs, return whatever results are available
-        // This prevents slow/unresponsive providers from blocking the entire response
-        let providerResults = [];
-
-        // Orchestration timeout follows the user's configured subtitle timeout exactly.
         const orchestrationTimeoutMs = (config.subtitleProviderTimeout || 12) * 1000;
-
-        if (orchestrationTimeoutMs > 0 && searchTasks.length > 0) {
-          // Create a collector for results as they arrive
-          const collectedResults = [];
-          let resolvedCount = 0;
-          let timeoutFired = false;
-
-          // Wrap each promise to collect results as they complete
-          const wrappedPromises = searchTasks.map(task =>
-            task.promise.then(result => {
-              if (!timeoutFired) {
-                collectedResults.push(result);
-              }
-              resolvedCount++;
-              return result;
-            })
-          );
-
-          // Race between: all promises completing OR the overall orchestration timeout.
-          const timeoutPromise = new Promise(resolve => {
-            setTimeout(() => {
-              timeoutFired = true;
-              resolve('timeout');
-            }, orchestrationTimeoutMs);
-          });
-
-          const allSettledPromise = Promise.all(wrappedPromises).then(() => 'completed');
-          const winner = await Promise.race([allSettledPromise, timeoutPromise]);
-
-          if (winner === 'timeout') {
-            // Timeout fired - use whatever results we have so far
-            providerResults = [...collectedResults];
-            const pending = searchTasks.length - resolvedCount;
-            if (pending > 0) {
-              log.warn(() => `[Subtitles] Provider search timeout after ${orchestrationTimeoutMs}ms - returning ${resolvedCount}/${searchTasks.length} provider results (${pending} still pending)`);
-            }
-          } else {
-            // All completed before timeout
-            providerResults = collectedResults;
-          }
-        } else if (searchTasks.length > 0) {
-          // Timeout disabled - wait for all providers
-          providerResults = await Promise.all(searchTasks.map(task => task.promise));
-        }
-
-        // Collect and log results from all providers
-        let subtitles = [];
-        for (const result of providerResults) {
-          if (result.error) {
-            log.warn(() => [`[Subtitles] ${result.provider} search failed:`, result.error.message]);
-          } else {
-            log.debug(() => `[Subtitles] Found ${result.results.length} subtitles from ${result.provider}`);
-            subtitles = [...subtitles, ...result.results];
-          }
-        }
-
-        // Log any providers that were skipped due to circuit breaker (saves waiting for timeout!)
-        if (skippedProviders.length > 0) {
-          const skippedNames = skippedProviders.map(s => s.provider).join(', ');
-          log.info(() => `[Subtitles] Skipped ${skippedProviders.length} unhealthy provider(s): ${skippedNames}`);
-        }
-
-        return subtitles;
+        return collectProviderSearchResults(searchTasks, skippedProviders, {
+          logContext: 'Subtitles',
+          orchestrationTimeoutMs
+        });
       });
 
       // Future providers can be added here
@@ -2796,88 +2893,12 @@ function createSubtitleHandler(config) {
 
       // Filter results to only allowed languages (including equivalents)
       // When no languages are configured (just fetch mode), accept all subtitles
-      let filteredFoundSubtitles = allLanguages.length > 0
-        ? foundSubtitles.filter(sub => sub.languageCode && expandedLangs.has(sub.languageCode))
-        : foundSubtitles;
-
-      // Optional: exclude SDH/HI (hearing impaired) subtitles from results
-      if (config.excludeHearingImpairedSubtitles === true) {
-        const beforeCount = filteredFoundSubtitles.length;
-        filteredFoundSubtitles = filteredFoundSubtitles.filter(sub => !isHearingImpairedSubtitle(sub));
-        const removed = beforeCount - filteredFoundSubtitles.length;
-        if (removed > 0) {
-          log.debug(() => `[Subtitles] Excluded ${removed} hearing impaired subtitles (SDH/HI)`);
-        }
-      }
-
-      // Optional: exclude season pack subtitles from results
-      // Season packs contain multiple episodes and require extraction - some users prefer episode-specific subs
-      // Default: enabled (backwards compatible) - only filter when explicitly disabled
-      if (config.enableSeasonPacks === false) {
-        const beforeCount = filteredFoundSubtitles.length;
-        filteredFoundSubtitles = filteredFoundSubtitles.filter(sub => sub.is_season_pack !== true);
-        const removed = beforeCount - filteredFoundSubtitles.length;
-        if (removed > 0) {
-          log.debug(() => `[Subtitles] Excluded ${removed} season pack subtitles (user preference)`);
-        }
-      }
-
-      // Deduplicate subtitles from multiple providers
-      // This removes exact duplicates (same release name) while preserving:
-      // - Different languages (never dedupe across languages)
-      // - HI vs non-HI variants (kept separate)
-      // - Different formats (SRT vs ASS kept separate)
-      // - Season packs vs episode-specific (kept separate)
-      if (config.deduplicateSubtitles !== false) {
-        const { deduplicated, stats } = deduplicateSubtitles(filteredFoundSubtitles, {
-          enabled: true,
-          respectHIVariants: true,
-          respectFormats: true
-        });
-        filteredFoundSubtitles = deduplicated;
-        logDeduplicationStats(stats);
-      }
-
-      // Rank subtitles by filename match + quality metrics before creating response lists
-      // This ensures the best matches appear first in Stremio UI
-      if (streamFilename) {
-        filteredFoundSubtitles = rankSubtitlesByFilename(filteredFoundSubtitles, streamFilename, videoInfo);
-        log.debug(() => `[Subtitles] Ranked ${filteredFoundSubtitles.length} subtitles by filename match + episode metadata + quality (downloads, rating, date)`);
-
-        // Debug: Log top 3 ranked subtitles for verification
-        if (filteredFoundSubtitles.length > 0) {
-          const top3 = filteredFoundSubtitles.slice(0, 3);
-          log.debug(() => ['[Subtitles] Top 3 AFTER ranking:', top3.map(s => ({
-            name: s.name?.substring(0, 50) + (s.name?.length > 50 ? '...' : ''),
-            provider: s.provider,
-            downloads: s.downloads,
-            rating: s.rating,
-            uploadDate: s.uploadDate
-          }))]);
-        }
-      }
-
-      // Limit to top N subtitles per language (applied AFTER ranking all sources)
-      // This prevents UI slowdown while ensuring best-quality subtitles are shown
-      const MAX_SUBS_PER_LANGUAGE = Number.isFinite(config?.maxSubtitlesPerLanguage)
-        ? config.maxSubtitlesPerLanguage
-        : 8; // Default reduced from 12 to 8 for better performance
-      const limitedByLanguage = new Map(); // language -> subtitle array
-
-
-      for (const sub of filteredFoundSubtitles) {
-        if (!limitedByLanguage.has(sub.languageCode)) {
-          limitedByLanguage.set(sub.languageCode, []);
-        }
-        const langSubs = limitedByLanguage.get(sub.languageCode);
-        if (langSubs.length < MAX_SUBS_PER_LANGUAGE) {
-          langSubs.push(sub);
-        }
-      }
-
-      // Flatten back to array, preserving ranked order within each language
-      filteredFoundSubtitles = Array.from(limitedByLanguage.values()).flat();
-      log.debug(() => `[Subtitles] Limited to ${MAX_SUBS_PER_LANGUAGE} subtitles per language (${filteredFoundSubtitles.length} total)`);
+      let filteredFoundSubtitles = finalizeSubtitleResults(foundSubtitles, allLanguages, config, {
+        streamFilename,
+        videoInfo,
+        logContext: 'Subtitles',
+        logTopRankedSubtitles: true
+      });
 
       // Determine URL behavior based on urlExtensionTest config (dev mode testing)
       // 'srt' = default (.srt), 'sub' = Option A (.sub), 'none' = Option B (no extension),
@@ -3000,6 +3021,8 @@ function createSubtitleHandler(config) {
         const translateQueryParts = [];
         if (id) translateQueryParts.push(`videoId=${encodeURIComponent(id)}`);
         if (streamFilename) translateQueryParts.push(`filename=${encodeURIComponent(streamFilename)}`);
+        if (hasRealStremioHash) translateQueryParts.push(`videoHash=${encodeURIComponent(extra.videoHash)}`);
+        if (validVideoSize) translateQueryParts.push(`videoSize=${encodeURIComponent(String(validVideoSize))}`);
         const translateQuery = translateQueryParts.length ? `?${translateQueryParts.join('&')}` : '';
 
 
@@ -5276,257 +5299,8 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
   }
 }
 
-/**
- * Get available subtitles for translation selector
- * @param {string} videoId - Stremio video ID
- * @param {Object} config - Addon configuration
- * @returns {Promise<Array>} - Array of available subtitles
- */
-async function getAvailableSubtitlesForTranslation(videoId, config) {
-  try {
-    log.debug(() => ['[Translation Selector] Getting subtitles for:', videoId]);
-
-    const videoInfo = parseStremioId(videoId);
-    if (!videoInfo) {
-      throw new Error('Invalid video ID');
-    }
-
-    await ensureImdbId(videoInfo, null, 'Translation Selector');
-
-    // Get ONLY source languages for translation selector
-    // Users will configure one source language, and selector shows only those subtitles
-    const sourceLanguages = config.sourceLanguages;
-
-    // Normalize BCP-47 regional variants to ISO-639-2 for providers
-    const normalizedSourceLanguages = [...new Set(
-      sourceLanguages.map(lang => normalizeLanguageCode(lang)).filter(Boolean)
-    )];
-
-    // Build search parameters for source language subtitles only
-    const searchParams = {
-      imdb_id: videoInfo.imdbId,
-      type: videoInfo.type,
-      season: videoInfo.season,
-      episode: videoInfo.episode,
-      languages: normalizedSourceLanguages,
-      excludeHearingImpairedSubtitles: config.excludeHearingImpairedSubtitles === true,
-      // Provider timeout from config (subtract 2s buffer for orchestration overhead)
-      providerTimeout: Math.max(6, ((config.subtitleProviderTimeout || 12) - 2)) * 1000
-    };
-
-    // Create user-scoped deduplication key based on video info, source languages, and user config
-    const userHash = (config && typeof config.__configHash === 'string' && config.__configHash.length > 0)
-      ? config.__configHash
-      : 'default';
-    const cacheIdComponent = getVideoCacheIdComponent(videoInfo);
-    const dedupKey = `translation-search:${cacheIdComponent}:${videoInfo.type}:${videoInfo.season || ''}:${videoInfo.episode || ''}:${normalizedSourceLanguages.join(',')}:${userHash}`;
-
-    // Collect subtitles from all enabled providers with deduplication
-    const subtitles = await deduplicateSearch(dedupKey, async () => {
-      // Parallelize all provider searches using Promise.all for better performance
-      const searchPromises = [];
-      const skippedProviders = []; // Track providers skipped due to circuit breaker
-
-      // Check if OpenSubtitles provider is enabled
-      if (config.subtitleProviders?.opensubtitles?.enabled) {
-        const implementationType = config.subtitleProviders.opensubtitles.implementationType || 'v3';
-        const providerKey = implementationType === 'v3' ? 'opensubtitles_v3' : 'opensubtitles_auth';
-        const health = isProviderHealthy(providerKey);
-
-        if (!health.healthy) {
-          skippedProviders.push({ provider: `OpenSubtitles (${implementationType})`, reason: health.reason });
-        } else {
-          let opensubtitles;
-          if (implementationType === 'v3') {
-            opensubtitles = new OpenSubtitlesV3Service();
-          } else {
-            opensubtitles = new OpenSubtitlesService(config.subtitleProviders.opensubtitles);
-          }
-
-          searchPromises.push(
-            opensubtitles.searchSubtitles(searchParams)
-              .then(results => {
-                circuitBreaker.recordSuccess(implementationType === 'v3' ? 'opensubtitlesV3' : 'opensubtitlesV3');
-                return { provider: `OpenSubtitles (${implementationType})`, results };
-              })
-              .catch(error => {
-                const code = error?.code || '';
-                if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET') {
-                  circuitBreaker.recordFailure(implementationType === 'v3' ? 'opensubtitlesV3' : 'opensubtitlesV3', error);
-                }
-                return { provider: `OpenSubtitles (${implementationType})`, results: [], error };
-              })
-          );
-        }
-      }
-
-      // Check if SubDL provider is enabled
-      if (config.subtitleProviders?.subdl?.enabled) {
-        const health = isProviderHealthy('subdl');
-        if (!health.healthy) {
-          skippedProviders.push({ provider: 'SubDL', reason: health.reason });
-        } else {
-          const subdl = new SubDLService(config.subtitleProviders.subdl.apiKey);
-          searchPromises.push(
-            subdl.searchSubtitles(searchParams)
-              .then(results => {
-                circuitBreaker.recordSuccess('subdl');
-                return { provider: 'SubDL', results };
-              })
-              .catch(error => {
-                const code = error?.code || '';
-                if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET') {
-                  circuitBreaker.recordFailure('subdl', error);
-                }
-                return { provider: 'SubDL', results: [], error };
-              })
-          );
-        }
-      }
-
-      // Check if SubSource provider is enabled
-      if (config.subtitleProviders?.subsource?.enabled) {
-        const health = isProviderHealthy('subsource');
-        if (!health.healthy) {
-          skippedProviders.push({ provider: 'SubSource', reason: health.reason });
-        } else {
-          const subsource = new SubSourceService(config.subtitleProviders.subsource.apiKey);
-          searchPromises.push(
-            subsource.searchSubtitles(searchParams)
-              .then(results => {
-                circuitBreaker.recordSuccess('subsource');
-                return { provider: 'SubSource', results };
-              })
-              .catch(error => {
-                const code = error?.code || '';
-                if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET') {
-                  circuitBreaker.recordFailure('subsource', error);
-                }
-                return { provider: 'SubSource', results: [], error };
-              })
-          );
-        }
-      }
-
-      // Check if SCS provider is enabled
-      if (config.subtitleProviders?.scs?.enabled) {
-        const health = isProviderHealthy('scs');
-        if (!health.healthy) {
-          skippedProviders.push({ provider: 'StremioCommunitySubtitles', reason: health.reason });
-        } else {
-          const scs = new StremioCommunitySubtitlesService();
-          searchPromises.push(
-            scs.searchSubtitles(searchParams)
-              .then(results => {
-                circuitBreaker.recordSuccess('scs');
-                return { provider: 'StremioCommunitySubtitles', results };
-              })
-              .catch(error => {
-                const code = error?.code || '';
-                if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'EPROTO') {
-                  circuitBreaker.recordFailure('scs', error);
-                }
-                return { provider: 'StremioCommunitySubtitles', results: [], error };
-              })
-          );
-        }
-      }
-
-      // Check if Wyzie Subs provider is enabled
-      if (config.subtitleProviders?.wyzie?.enabled) {
-        const health = isProviderHealthy('wyzie');
-        if (!health.healthy) {
-          skippedProviders.push({ provider: 'WyzieSubs', reason: health.reason });
-        } else {
-          const wyzie = new WyzieSubsService();
-          // Pass sources config so Wyzie only queries user-selected sources
-          const wyzieParams = { ...searchParams, sources: config.subtitleProviders.wyzie.sources };
-          searchPromises.push(
-            wyzie.searchSubtitles(wyzieParams)
-              .then(results => {
-                circuitBreaker.recordSuccess('wyzie');
-                return { provider: 'WyzieSubs', results };
-              })
-              .catch(error => {
-                const code = error?.code || '';
-                if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET') {
-                  circuitBreaker.recordFailure('wyzie', error);
-                }
-                return { provider: 'WyzieSubs', results: [], error };
-              })
-          );
-        }
-      }
-
-      // Check if Subs.ro provider is enabled
-      if (config.subtitleProviders?.subsro?.enabled) {
-        const health = isProviderHealthy('subsro');
-        if (!health.healthy) {
-          skippedProviders.push({ provider: 'SubsRo', reason: health.reason });
-        } else {
-          const subsro = new SubsRoService(config.subtitleProviders.subsro.apiKey);
-          searchPromises.push(
-            subsro.searchSubtitles(searchParams)
-              .then(results => {
-                circuitBreaker.recordSuccess('subsro');
-                return { provider: 'SubsRo', results };
-              })
-              .catch(error => {
-                const code = error?.code || '';
-                if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET') {
-                  circuitBreaker.recordFailure('subsro', error);
-                }
-                return { provider: 'SubsRo', results: [], error };
-              })
-          );
-        }
-      }
-
-      // Execute all searches in parallel
-      const providerResults = await Promise.all(searchPromises);
-
-      // Collect results from all providers
-      let subs = [];
-      for (const result of providerResults) {
-        if (result.error) {
-          log.error(() => [`[Translation Selector] ${result.provider} search failed:`, result.error.message]);
-        } else {
-          subs = [...subs, ...result.results];
-        }
-      }
-
-      // Log any providers that were skipped due to circuit breaker
-      if (skippedProviders.length > 0) {
-        const skippedNames = skippedProviders.map(s => s.provider).join(', ');
-        log.info(() => `[Translation Selector] Skipped ${skippedProviders.length} unhealthy provider(s): ${skippedNames}`);
-      }
-
-      // Future providers can be added here
-
-      log.debug(() => `[Translation Selector] Found ${subs.length} subtitles total`);
-      return subs;
-    });
-
-    if (config && config.excludeHearingImpairedSubtitles === true && Array.isArray(subtitles)) {
-      const beforeCount = subtitles.length;
-      const filtered = subtitles.filter(sub => !isHearingImpairedSubtitle(sub));
-      const removed = beforeCount - filtered.length;
-      if (removed > 0) {
-        log.debug(() => `[Translation Selector] Excluded ${removed} hearing impaired subtitles (SDH/HI)`);
-      }
-      return filtered;
-    }
-
-    return subtitles;
-
-  } catch (error) {
-    log.error(() => ['[Translation Selector] Error:', error.message]);
-    return [];
-  }
-}
-
 // Clean up expired disk cache entries periodically (only needed for non-permanent caches)
-setInterval(() => {
+scheduleBackgroundInterval(() => {
   (async () => {
     try {
       if (!fs.existsSync(CACHE_DIR)) {
@@ -5563,7 +5337,7 @@ setInterval(() => {
   })();
 }, 1000 * 60 * 60); // Every hour (less frequent for disk operations)
 
-setInterval(() => {
+scheduleBackgroundInterval(() => {
   verifyBypassCacheIntegrity().catch(() => { });
 }, 1000 * 60 * 60);
 
@@ -5574,7 +5348,6 @@ module.exports = {
   createSubtitleHandler,
   handleSubtitleDownload,
   handleTranslation,
-  getAvailableSubtitlesForTranslation,
   createLoadingSubtitle, // Export for loading message in translation endpoint
   createSessionTokenErrorSubtitle, // Export for session token error subtitle
   createOpenSubtitlesAuthErrorSubtitle, // Export for OpenSubtitles auth error subtitle
@@ -6289,7 +6062,6 @@ module.exports = {
   createSubtitleHandler,
   handleSubtitleDownload,
   handleTranslation,
-  getAvailableSubtitlesForTranslation,
   createLoadingSubtitle,
   createSessionTokenErrorSubtitle,
   createCredentialDecryptionErrorSubtitle,
@@ -6298,6 +6070,7 @@ module.exports = {
   createOpenSubtitlesQuotaExceededSubtitle,
   createProviderDownloadErrorSubtitle,
   createInvalidSubtitleMessage,
+  filterSubtitlesByRequestedLanguages,
   maybeConvertToSRT,
   createOpenSubtitlesV3RateLimitSubtitle,
   createOpenSubtitlesV3ServiceUnavailableSubtitle,

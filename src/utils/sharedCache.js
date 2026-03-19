@@ -415,9 +415,93 @@ async function getRotationCounter(counterId) {
 // DISTRIBUTED LOCK (for rate limiting across pods)
 // ============================================================================
 
-// Generate a unique lock owner ID for this process instance
-// Used to identify who owns a lock for safe refresh operations
+// Generate a unique lock owner ID for this process instance.
+// Used to identify who owns a lock for safe refresh operations.
 const LOCK_OWNER_ID = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+const LOCAL_FALLBACK_LOCKS_KEY = '__submakerSharedCacheLocalFallbackLocks';
+
+function getLocalFallbackLocks() {
+    if (!globalThis[LOCAL_FALLBACK_LOCKS_KEY]) {
+        globalThis[LOCAL_FALLBACK_LOCKS_KEY] = new Map();
+    }
+    return globalThis[LOCAL_FALLBACK_LOCKS_KEY];
+}
+
+function readLocalFallbackLock(lockKey) {
+    const locks = getLocalFallbackLocks();
+    const existing = locks.get(lockKey);
+    if (!existing) {
+        return null;
+    }
+
+    if (existing.expiresAt <= Date.now()) {
+        locks.delete(lockKey);
+        return null;
+    }
+
+    return existing;
+}
+
+function tryAcquireLocalFallbackLock(lockKey, ttlMs, ownerId = LOCK_OWNER_ID) {
+    const locks = getLocalFallbackLocks();
+    const existing = readLocalFallbackLock(lockKey);
+    if (existing) {
+        return { acquired: false, ownerId: null };
+    }
+
+    locks.set(lockKey, {
+        ownerId,
+        expiresAt: Date.now() + ttlMs
+    });
+
+    log.debug(() => `[SharedCache] Acquired local fallback lock ${lockKey} (TTL: ${ttlMs}ms)`);
+    return { acquired: true, ownerId };
+}
+
+function refreshLocalFallbackLock(lockKey, ttlMs, ownerId) {
+    const existing = readLocalFallbackLock(lockKey);
+    if (existing && existing.ownerId !== ownerId) {
+        return false;
+    }
+
+    const locks = getLocalFallbackLocks();
+    locks.set(lockKey, {
+        ownerId,
+        expiresAt: Date.now() + ttlMs
+    });
+    log.debug(() => `[SharedCache] Refreshed local fallback lock ${lockKey} (TTL: ${ttlMs}ms)`);
+    return true;
+}
+
+function getLocalFallbackLockTTL(lockKey) {
+    const existing = readLocalFallbackLock(lockKey);
+    if (!existing) {
+        return 0;
+    }
+
+    return Math.max(0, existing.expiresAt - Date.now());
+}
+
+async function executeRedisLockOperation(lockKey, operationName, fn) {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            return await fn();
+        } catch (error) {
+            lastError = error;
+            if (attempt === 3) {
+                break;
+            }
+
+            const delayMs = 25 * attempt;
+            log.debug(() => `[SharedCache] Redis lock ${operationName} retry ${attempt}/3 for ${lockKey} in ${delayMs}ms: ${error.message}`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+    }
+
+    throw lastError;
+}
 
 /**
  * Try to acquire a distributed lock with owner identification
@@ -433,9 +517,9 @@ async function tryAcquireLock(lockKey, ttlMs = 5000) {
         const StorageAdapter = getStorageAdapterClass();
 
         // If Redis client is missing (using memory adapter or cache disabled),
-        // we can't lock across pods. Return TRUE to degrade gracefully to per-instance locking.
+        // fall back to a process-local lock so same-pod requests still serialize.
         if (!adapter.client) {
-            return { acquired: true, ownerId: LOCK_OWNER_ID };
+            return tryAcquireLocalFallbackLock(lockKey, ttlMs, LOCK_OWNER_ID);
         }
 
         const fullKey = adapter._getKey(`lock:${lockKey}`, StorageAdapter.CACHE_TYPES.SESSION);
@@ -445,7 +529,9 @@ async function tryAcquireLock(lockKey, ttlMs = 5000) {
         // PX = Expiry in milliseconds
         // Use unique owner ID as value for safe refresh later
         // Returns 'OK' if key was set, null if key already existed
-        const result = await adapter.client.set(fullKey, LOCK_OWNER_ID, 'PX', ttlMs, 'NX');
+        const result = await executeRedisLockOperation(lockKey, 'acquire', () =>
+            adapter.client.set(fullKey, LOCK_OWNER_ID, 'PX', ttlMs, 'NX')
+        );
 
         const acquired = result === 'OK';
 
@@ -455,10 +541,11 @@ async function tryAcquireLock(lockKey, ttlMs = 5000) {
 
         return { acquired, ownerId: acquired ? LOCK_OWNER_ID : null };
     } catch (error) {
-        // If Redis errors, allow execution to proceed (fail open) rather than blocking all logins indefinitely
-        // This means rate limits might be exceeded during Redis outages, but better than total downtime.
+        // If Redis errors, degrade to a process-local lock rather than unconditional fail-open.
+        // This preserves same-pod serialization during outages while accepting that cross-pod
+        // coordination is unavailable until Redis recovers.
         handleCaughtError(error, `[SharedCache] acquireLock failed for ${lockKey}`, log);
-        return { acquired: true, ownerId: LOCK_OWNER_ID }; // Fail open
+        return tryAcquireLocalFallbackLock(lockKey, ttlMs, LOCK_OWNER_ID);
     }
 }
 
@@ -477,7 +564,7 @@ async function refreshLock(lockKey, ttlMs, ownerId) {
         const StorageAdapter = getStorageAdapterClass();
 
         if (!adapter.client) {
-            return true; // No Redis, no distributed lock
+            return refreshLocalFallbackLock(lockKey, ttlMs, ownerId);
         }
 
         if (!ownerId) {
@@ -500,7 +587,9 @@ async function refreshLock(lockKey, ttlMs, ownerId) {
             end
         `;
 
-        const result = await adapter.client.eval(luaScript, 1, fullKey, ownerId, ttlMs);
+        const result = await executeRedisLockOperation(lockKey, 'refresh', () =>
+            adapter.client.eval(luaScript, 1, fullKey, ownerId, ttlMs)
+        );
 
         if (result === 1) {
             log.debug(() => `[SharedCache] Refreshed lock ${lockKey} (TTL: ${ttlMs}ms)`);
@@ -510,7 +599,8 @@ async function refreshLock(lockKey, ttlMs, ownerId) {
             return false;
         }
     } catch (error) {
-        return handleCaughtError(error, `[SharedCache] refreshLock failed for ${lockKey}`, log, { fallbackValue: false });
+        handleCaughtError(error, `[SharedCache] refreshLock failed for ${lockKey}`, log, { fallbackValue: false });
+        return refreshLocalFallbackLock(lockKey, ttlMs, ownerId);
     }
 }
 
@@ -527,13 +617,15 @@ async function getLockTTL(lockKey) {
         const StorageAdapter = getStorageAdapterClass();
 
         if (!adapter.client) {
-            return -1; // No Redis - signal to caller that distributed locking is unavailable
+            return getLocalFallbackLockTTL(lockKey);
         }
 
         const fullKey = adapter._getKey(`lock:${lockKey}`, StorageAdapter.CACHE_TYPES.SESSION);
 
         // PTTL returns TTL in milliseconds, -2 if key doesn't exist, -1 if no TTL
-        const ttl = await adapter.client.pttl(fullKey);
+        const ttl = await executeRedisLockOperation(lockKey, 'ttl', () =>
+            adapter.client.pttl(fullKey)
+        );
 
         if (ttl < 0) {
             return 0; // Key doesn't exist or has no TTL
@@ -541,7 +633,8 @@ async function getLockTTL(lockKey) {
 
         return ttl;
     } catch (error) {
-        return handleCaughtError(error, `[SharedCache] getLockTTL failed for ${lockKey}`, log, { fallbackValue: -1 });
+        handleCaughtError(error, `[SharedCache] getLockTTL failed for ${lockKey}`, log, { fallbackValue: -1 });
+        return getLocalFallbackLockTTL(lockKey);
     }
 }
 

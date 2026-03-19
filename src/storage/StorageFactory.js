@@ -4,6 +4,12 @@ const FilesystemStorageAdapter = require('./FilesystemStorageAdapter');
 const RedisStorageAdapter = require('./RedisStorageAdapter');
 const { getRedisPassword } = require('../utils/redisHelper');
 
+function scheduleBackgroundInterval(callback, intervalMs) {
+  const timer = setInterval(callback, intervalMs);
+  timer.unref?.();
+  return timer;
+}
+
 /**
  * Storage Factory
  *
@@ -110,7 +116,7 @@ class StorageFactory {
    */
   static _scheduleCleanup(adapter) {
     // Cleanup bypass cache every 30 minutes
-    setInterval(async () => {
+    scheduleBackgroundInterval(async () => {
       try {
         await adapter.cleanup(StorageAdapter.CACHE_TYPES.BYPASS);
       } catch (error) {
@@ -119,7 +125,7 @@ class StorageFactory {
     }, 30 * 60 * 1000);
 
     // Cleanup partial cache every hour
-    setInterval(async () => {
+    scheduleBackgroundInterval(async () => {
       try {
         await adapter.cleanup(StorageAdapter.CACHE_TYPES.PARTIAL);
       } catch (error) {
@@ -128,7 +134,7 @@ class StorageFactory {
     }, 60 * 60 * 1000);
 
     // Cleanup translation cache every 10 minutes (for size enforcement)
-    setInterval(async () => {
+    scheduleBackgroundInterval(async () => {
       try {
         await adapter.cleanup(StorageAdapter.CACHE_TYPES.TRANSLATION);
       } catch (error) {
@@ -137,7 +143,7 @@ class StorageFactory {
     }, 10 * 60 * 1000);
 
     // Cleanup sync cache every hour
-    setInterval(async () => {
+    scheduleBackgroundInterval(async () => {
       try {
         await adapter.cleanup(StorageAdapter.CACHE_TYPES.SYNC);
       } catch (error) {
@@ -146,7 +152,7 @@ class StorageFactory {
     }, 60 * 60 * 1000);
 
     // Cleanup auto-sub cache every hour
-    setInterval(async () => {
+    scheduleBackgroundInterval(async () => {
       try {
         await adapter.cleanup(StorageAdapter.CACHE_TYPES.AUTOSUB);
       } catch (error) {
@@ -155,7 +161,7 @@ class StorageFactory {
     }, 60 * 60 * 1000);
 
     // Cleanup embedded cache every hour
-    setInterval(async () => {
+    scheduleBackgroundInterval(async () => {
       try {
         await adapter.cleanup(StorageAdapter.CACHE_TYPES.EMBEDDED);
       } catch (error) {
@@ -164,7 +170,7 @@ class StorageFactory {
     }, 60 * 60 * 1000);
 
     // Cleanup provider metadata cache every 6 hours (7-day TTL, low churn)
-    setInterval(async () => {
+    scheduleBackgroundInterval(async () => {
       try {
         await adapter.cleanup(StorageAdapter.CACHE_TYPES.PROVIDER_METADATA);
       } catch (error) {

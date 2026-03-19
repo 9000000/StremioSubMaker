@@ -52,6 +52,134 @@ function toDeepLApiCode(normalizedCode, { forTarget = false } = {}) {
   return normalizedCode;
 }
 
+function normalizeCompoundLanguageCode(code) {
+  if (!code || !code.includes('-')) return code;
+
+  const parts = code.split('-').filter(Boolean);
+  if (parts.length > 1 && /^[a-z]{3}$/.test(parts[0])) {
+    const iso1 = toISO6391(parts[0]);
+    if (iso1) {
+      parts[0] = String(iso1).toLowerCase();
+    }
+  }
+
+  const subtags = parts.slice(1);
+  if (parts[0] === 'zh') {
+    if (subtags.some((tag) => tag === 'hant' || tag === 'tw' || tag === 'hk' || tag === 'mo')) {
+      return 'zh-hant';
+    }
+    if (subtags.some((tag) => tag === 'hans' || tag === 'cn' || tag === 'sg')) {
+      return 'zh-hans';
+    }
+  }
+
+  return parts.join('-');
+}
+
+function buildCandidateSequence(normalized) {
+  const candidates = [];
+  const pushCandidate = (value) => {
+    const lowered = String(value || '').trim().toLowerCase();
+    if (lowered && !candidates.includes(lowered)) {
+      candidates.push(lowered);
+    }
+  };
+
+  pushCandidate(normalized);
+
+  if (!normalized || !normalized.includes('-')) {
+    return candidates;
+  }
+
+  const parts = normalized.split('-').filter(Boolean);
+  const base = parts[0];
+  const subtags = parts.slice(1);
+
+  if (base === 'zh') {
+    if (subtags.some((tag) => tag === 'hant' || tag === 'tw' || tag === 'hk' || tag === 'mo')) {
+      pushCandidate('zh-hant');
+    } else if (subtags.some((tag) => tag === 'hans' || tag === 'cn' || tag === 'sg')) {
+      pushCandidate('zh-hans');
+    }
+  }
+
+  if (base === 'en') {
+    if (subtags.includes('gb') || subtags.includes('uk')) {
+      pushCandidate('en-gb');
+    }
+    if (subtags.includes('us')) {
+      pushCandidate('en-us');
+    }
+  }
+
+  if (base === 'pt') {
+    if (subtags.includes('br')) {
+      pushCandidate('pt-br');
+    }
+    if (subtags.includes('pt')) {
+      pushCandidate('pt-pt');
+    }
+  }
+
+  if (base === 'es' && subtags.includes('419')) {
+    pushCandidate('es-419');
+  }
+
+  const baseCandidate = /^[a-z]{3}$/.test(base) ? (toISO6391(base) || base) : base;
+  pushCandidate(baseCandidate);
+
+  return candidates;
+}
+
+function toDeepLCodeCandidate(candidate, { forTarget = false } = {}) {
+  if (!candidate) return null;
+
+  let normalized = String(candidate).trim().toLowerCase();
+  const compact = normalized.replace(/-/g, '');
+  if (LANGUAGE_VARIANTS[compact]) {
+    normalized = LANGUAGE_VARIANTS[compact];
+  }
+
+  switch (normalized) {
+    case 'en':
+      normalized = forTarget ? 'EN-US' : 'EN';
+      break;
+    case 'pt':
+      normalized = forTarget ? 'PT-PT' : 'PT';
+      break;
+    case 'zh':
+      normalized = forTarget ? 'ZH-HANS' : 'ZH';
+      break;
+    case 'no':
+      normalized = 'NB';
+      break;
+    default:
+      normalized = normalized.toUpperCase();
+  }
+
+  if (!forTarget) {
+    if (normalized === 'EN-US' || normalized === 'EN-GB') normalized = 'EN';
+    if (normalized === 'ES-419') normalized = 'ES';
+    if (normalized === 'ZH-HANS' || normalized === 'ZH-HANT') normalized = 'ZH';
+  }
+
+  return normalized;
+}
+
+function validateDeepLCodeCandidate(normalizedCode, { forTarget = false } = {}) {
+  if (!normalizedCode) return null;
+
+  const betaKey = normalizedCode.replace(/-/g, '').toUpperCase();
+  const isBeta = BETA_LANGUAGES.has(betaKey);
+  const allowedSet = forTarget ? SUPPORTED_TARGET_LANGS : SUPPORTED_SOURCE_LANGS;
+
+  if (!allowedSet.has(normalizedCode) && !isBeta) {
+    return null;
+  }
+
+  return { code: normalizedCode, isBeta };
+}
+
 function normalizeLanguage(code, { forTarget = false } = {}) {
   if (!code) return { code: null, isBeta: false };
 
@@ -77,51 +205,23 @@ function normalizeLanguage(code, { forTarget = false } = {}) {
   if (normalized === 'pob' || normalized === 'ptbr') normalized = 'pt-br';
   if (normalized === 'spn') normalized = 'es-419';
 
+  normalized = normalizeCompoundLanguageCode(normalized);
+
   // Convert ISO-639-2 to ISO-639-1 when possible
   if (/^[a-z]{3}$/.test(normalized)) {
     const iso1 = toISO6391(normalized);
     if (iso1) normalized = iso1;
   }
 
-  // Apply variant shortcuts (e.g., zh-hans, en-us)
-  const compact = normalized.replace(/-/g, '');
-  if (LANGUAGE_VARIANTS[compact]) {
-    normalized = LANGUAGE_VARIANTS[compact];
+  for (const candidate of buildCandidateSequence(normalized)) {
+    const resolved = toDeepLCodeCandidate(candidate, { forTarget });
+    const validated = validateDeepLCodeCandidate(resolved, { forTarget });
+    if (validated) {
+      return validated;
+    }
   }
 
-  // Regional defaults
-  switch (normalized) {
-    case 'en':
-      normalized = forTarget ? 'EN-US' : 'EN';
-      break;
-    case 'pt':
-      normalized = forTarget ? 'PT-PT' : 'PT';
-      break;
-    case 'zh':
-      normalized = forTarget ? 'ZH-HANS' : 'ZH';
-      break;
-    case 'no':
-      normalized = 'NB';
-      break;
-    default:
-      normalized = normalized.toUpperCase();
-  }
-
-  if (!forTarget) {
-    if (normalized === 'EN-US' || normalized === 'EN-GB') normalized = 'EN';
-    if (normalized === 'ES-419') normalized = 'ES';
-    if (normalized === 'ZH-HANS' || normalized === 'ZH-HANT') normalized = 'ZH';
-  }
-
-  const betaKey = normalized.replace(/-/g, '').toUpperCase();
-  const isBeta = BETA_LANGUAGES.has(betaKey);
-  const allowedSet = forTarget ? SUPPORTED_TARGET_LANGS : SUPPORTED_SOURCE_LANGS;
-
-  if (!allowedSet.has(normalized) && !isBeta) {
-    throw new Error(`Language '${code}' is not supported by DeepL for ${forTarget ? 'target' : 'source'} translations`);
-  }
-
-  return { code: normalized, isBeta };
+  throw new Error(`Language '${code}' is not supported by DeepL for ${forTarget ? 'target' : 'source'} translations`);
 }
 
 class DeepLProvider {
@@ -145,6 +245,14 @@ class DeepLProvider {
     } else {
       this.baseUrl = 'https://api.deepl.com';
     }
+  }
+
+  normalizeLanguage(code, { forTarget = false } = {}) {
+    return normalizeLanguage(code, { forTarget }).code;
+  }
+
+  normalizeLanguageDetails(code, { forTarget = false } = {}) {
+    return normalizeLanguage(code, { forTarget });
   }
 
   buildUserPrompt(subtitleContent, targetLanguage, customPrompt = null) {
@@ -318,5 +426,12 @@ class DeepLProvider {
     ];
   }
 }
+
+DeepLProvider.normalizeLanguage = function normalizeLanguageStatic(code, options = {}) {
+  return normalizeLanguage(code, options).code;
+};
+
+DeepLProvider.normalizeLanguageDetails = normalizeLanguage;
+DeepLProvider.toDeepLApiCode = toDeepLApiCode;
 
 module.exports = DeepLProvider;

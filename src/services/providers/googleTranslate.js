@@ -13,9 +13,100 @@ const MAX_CHARS_PER_REQUEST = 6000;
 // Exponential backoff base delay (ms) and cap for retries
 const BACKOFF_BASE_MS = 4000;
 const BACKOFF_MAX_MS = 8000;
+const GOOGLE_LANGUAGE_ALIASES = {
+  pob: 'pt-BR',
+  ptbr: 'pt-BR',
+  ptpt: 'pt-PT',
+  spn: 'es-419',
+  es419: 'es-419',
+  enus: 'en-US',
+  engb: 'en-GB',
+  zhs: 'zh-CN',
+  zht: 'zh-TW',
+  zhcn: 'zh-CN',
+  zhtw: 'zh-TW',
+  zhhans: 'zh-CN',
+  zhhant: 'zh-TW'
+};
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function formatGoogleLanguageTag(base, subtag = '') {
+  const normalizedBase = String(base || '').trim().toLowerCase();
+  const normalizedSubtag = String(subtag || '').trim();
+  if (!normalizedBase) return '';
+  if (!normalizedSubtag) return normalizedBase;
+  if (/^\d{3}$/.test(normalizedSubtag)) return `${normalizedBase}-${normalizedSubtag}`;
+  if (/^[a-z]{2}$/i.test(normalizedSubtag)) return `${normalizedBase}-${normalizedSubtag.toUpperCase()}`;
+  if (/^[a-z]{4}$/i.test(normalizedSubtag)) {
+    return `${normalizedBase}-${normalizedSubtag.charAt(0).toUpperCase()}${normalizedSubtag.slice(1).toLowerCase()}`;
+  }
+  return `${normalizedBase}-${normalizedSubtag}`;
+}
+
+function normalizeGoogleLanguageCode(value) {
+  if (!value) return null;
+
+  let normalized = String(value || '').trim();
+  if (!normalized) return null;
+
+  normalized = normalized.replace(/_/g, '-');
+  if (normalized.toLowerCase().endsWith('-tr')) {
+    normalized = normalized.slice(0, -3);
+  }
+
+  let lower = normalized.toLowerCase();
+  if (lower === 'iw') lower = 'he';
+
+  const fromName = findISO6391ByName(normalized) || findISO6391ByName(lower);
+  if (fromName) {
+    lower = String(fromName).trim().toLowerCase().replace(/_/g, '-');
+  }
+
+  const compact = lower.replace(/-/g, '');
+  if (GOOGLE_LANGUAGE_ALIASES[compact]) {
+    return GOOGLE_LANGUAGE_ALIASES[compact];
+  }
+
+  const parts = lower.split('-').filter(Boolean);
+  let base = parts[0] || '';
+  const subtag = parts[1] || '';
+
+  if (/^[a-z]{3}$/.test(base)) {
+    const iso1 = toISO6391(base);
+    if (iso1) {
+      base = String(iso1).trim().toLowerCase();
+    }
+  }
+
+  if (base === 'zh') {
+    const subtags = parts.slice(1);
+    if (subtags.some((tag) => tag === 'hant' || tag === 'tw' || tag === 'hk' || tag === 'mo')) {
+      return 'zh-TW';
+    }
+    if (subtags.some((tag) => tag === 'hans' || tag === 'cn' || tag === 'sg')) {
+      return 'zh-CN';
+    }
+  }
+
+  if (parts.length >= 2) {
+    return formatGoogleLanguageTag(base, subtag);
+  }
+
+  if (/^[a-z]{3}$/.test(lower)) {
+    const iso1 = toISO6391(lower);
+    if (iso1) {
+      return formatGoogleLanguageTag(iso1);
+    }
+  }
+
+  if (/^[a-z]{2}$/i.test(lower)) {
+    return lower;
+  }
+
+  return lower;
 }
 
 /**
@@ -47,25 +138,7 @@ class GoogleTranslateProvider {
   }
 
   normalizeLanguage(targetLanguage) {
-    if (!targetLanguage) return null;
-    const raw = String(targetLanguage || '').trim();
-    const lower = raw.toLowerCase();
-
-    // Already ISO-639-1
-    if (/^[a-z]{2}(-[a-z]{2})?$/i.test(raw)) {
-      return raw;
-    }
-
-    // ISO-639-2 -> ISO-639-1
-    const iso1 = toISO6391(raw);
-    if (iso1) return iso1;
-
-    // Human readable name -> ISO-639-1
-    const fromName = findISO6391ByName(raw);
-    if (fromName) return fromName;
-
-    // Fallback to lowercased original
-    return lower;
+    return normalizeGoogleLanguageCode(targetLanguage);
   }
 
   stripContext(subtitleContent) {

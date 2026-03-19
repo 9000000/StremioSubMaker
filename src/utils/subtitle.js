@@ -572,8 +572,20 @@ function inspectStremioIdSupport(id) {
   const parts = raw.split(':');
   const rawPrefix = String(parts[0] || '').toLowerCase();
   const canonicalPrefix = ANIME_PREFIX_ALIASES[rawPrefix] || rawPrefix;
+  const parsed = parseStremioId(raw);
 
   if (rawPrefix === 'tmdb') {
+    if (!parsed) {
+      return {
+        raw,
+        rawPrefix,
+        canonicalPrefix,
+        supported: false,
+        reasonCode: 'malformed_tmdb',
+        reason: 'malformed TMDB Stremio ID'
+      };
+    }
+
     return {
       raw,
       rawPrefix,
@@ -585,6 +597,17 @@ function inspectStremioIdSupport(id) {
   }
 
   if (parts[0] && SUPPORTED_ANIME_PREFIXES.has(rawPrefix)) {
+    if (!parsed) {
+      return {
+        raw,
+        rawPrefix,
+        canonicalPrefix,
+        supported: false,
+        reasonCode: 'malformed_anime',
+        reason: `malformed ${canonicalPrefix} Stremio ID`
+      };
+    }
+
     return {
       raw,
       rawPrefix,
@@ -645,8 +668,8 @@ function parseStremioId(id, stremioType) {
 
   // Handle TMDB IDs (movie or TV/episode)
   if (prefix === 'tmdb') {
-    const tmdbId = parts[1];
-    if (!tmdbId) return null;
+    const tmdbId = String(parts[1] || '').trim();
+    if (!/^\d+$/.test(tmdbId)) return null;
 
     // Derive media type from Stremio meta type when available
     const tmdbMediaType = stremioType === 'series' ? 'tv'
@@ -698,7 +721,7 @@ function parseStremioId(id, stremioType) {
     const canonicalAnimePrefix = ANIME_PREFIX_ALIASES[prefix] || prefix;
     const animeIdType = canonicalAnimePrefix;
     const animeRawId = String(parts[1] || '').trim();
-    if (!animeRawId) return null;
+    if (!/^\d+$/.test(animeRawId)) return null;
 
     if (parts.length === 2) {
       // Anime movie or series (format: platform:id)

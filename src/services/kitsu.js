@@ -1,6 +1,7 @@
 const axios = require('axios');
 const log = require('../utils/logger');
 const { getShared, setShared, CACHE_PREFIXES, CACHE_TTLS } = require('../utils/sharedCache');
+const { buildTmdbToImdbWikidataQuery } = require('../utils/tmdbWikidata');
 const { StorageAdapter } = require('../storage');
 
 /**
@@ -328,29 +329,11 @@ class KitsuService {
    */
   async queryWikidataTmdbToImdb(tmdbId, mediaType) {
     try {
-      // Sanitize tmdbId: TMDB IDs must be numeric. Reject anything else to prevent SPARQL injection.
-      if (!/^\d+$/.test(String(tmdbId))) {
+      const sparqlQuery = buildTmdbToImdbWikidataQuery(tmdbId);
+      if (!sparqlQuery) {
         log.warn(() => `[Kitsu] Invalid TMDB ID format for Wikidata lookup: ${tmdbId}`);
         return null;
       }
-
-      // Wikidata properties:
-      // P4947 = TMDB movie ID
-      // P5607 = TMDB TV series ID  
-      // P345 = IMDB ID
-      const tmdbMovieProp = 'wdt:P4947';
-      const tmdbTvProp = 'wdt:P5607';
-      const imdbProp = 'wdt:P345';
-
-      // SPARQL query that tries both movie and TV properties
-      const sparqlQuery = `
-        SELECT ?imdb WHERE {
-          { ?item ${tmdbMovieProp} "${tmdbId}". }
-          UNION
-          { ?item ${tmdbTvProp} "${tmdbId}". }
-          ?item ${imdbProp} ?imdb.
-        } LIMIT 1
-      `.trim().replace(/\s+/g, ' ');
 
       const url = `https://query.wikidata.org/sparql?query=${encodeURIComponent(sparqlQuery)}&format=json`;
 

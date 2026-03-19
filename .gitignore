@@ -54,6 +54,10 @@ build/
 nul
 .sidedocs/
 .codex-tmp/
+tmp/
+.tmp/
+tmp
+.tmp
 temp/
 .temp/
 temp
@@ -64,3 +68,6 @@ scripts/
 .tests/
 tests/
 tests
+!tests/
+tests/*
+!tests/anime-search-resolution.test.js

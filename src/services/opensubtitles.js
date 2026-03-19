@@ -8,6 +8,7 @@ const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const { detectAndConvertEncoding } = require('../utils/encodingDetector');
 const { version } = require('../utils/version');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
+const { hasExplicitSeasonEpisodeMismatch } = require('../utils/animeSearchResolver');
 const log = require('../utils/logger');
 const { isTrueishFlag } = require('../utils/subtitleFlags');
 const { detectArchiveType, extractSubtitleFromArchive, isArchive, createEpisodeNotFoundSubtitle, createZipTooLargeSubtitle, convertSubtitleToVtt } = require('../utils/archiveExtractor');
@@ -1131,6 +1132,8 @@ class OpenSubtitlesService {
       subtitles = subtitles.filter(sub => {
         const name = String(sub.name || '').toLowerCase();
 
+        if (hasExplicitSeasonEpisodeMismatch(name, targetSeason, targetEpisode)) return false;
+
         // Season pack patterns
         const seasonPackPatterns = [
           new RegExp(`(?:complete|full|entire)?\\s*(?:season|s)\\s*0*${targetSeason}(?:\\s+(?:complete|full|pack))?(?!.*e0*\\\d)`, 'i'),
@@ -1175,14 +1178,6 @@ class OpenSubtitlesService {
           new RegExp(`season\\s*0*${targetSeason}.*episode\\s*0*${targetEpisode}(?![0-9])`, 'i')
         ];
         if (seasonEpisodePatterns.some(p => p.test(name))) return true;
-
-        // If it explicitly references a different episode, exclude
-        const m = name.match(/s0*(\d+)e0*(\d+)|(\d+)x0*(\d+)/i);
-        if (m) {
-          const subSeason = parseInt(m[1] || m[3], 10);
-          const subEpisode = parseInt(m[2] || m[4], 10);
-          if (subSeason === targetSeason && subEpisode !== targetEpisode) return false;
-        }
 
         return true; // keep ambiguous
       });
@@ -1630,4 +1625,3 @@ module.exports = OpenSubtitlesService;
 module.exports.OpenSubtitlesService = OpenSubtitlesService;
 module.exports.getCachedToken = getCachedToken;
 module.exports.getCredentialsCacheKey = getCredentialsCacheKey;
-

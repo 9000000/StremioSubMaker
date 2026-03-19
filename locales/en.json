@@ -78,7 +78,6 @@
         "translateFileError": "Translation failed: {reason}",
         "subtitleNotFound": "Subtitle not found",
         "errorSubtitleUnavailable": "Error subtitle unavailable",
-        "subtitleSelectorFailed": "Failed to load subtitle selector",
         "translationInProgress": "Translation already in progress; waiting on primary request.",
         "translationInvalidContent": "Translation returned invalid content",
         "translationFailed": "Translation failed: {reason}",
@@ -136,12 +135,6 @@
       },
       "sync": {
         "saveSuccess": "Synced subtitle saved successfully"
-      },
-      "selector": {
-        "title": "Select Subtitle to Translate",
-        "heading": "Translate to {target}",
-        "subheader": "Select a {sources} subtitle to translate",
-        "empty": "No {sources} subtitles available"
       }
     },
     "apiErrors": {
@@ -309,9 +302,11 @@
             "4": "Click \"Translate Subtitles\"."
           },
           "download": "You can download both extracted or translated subtitles as SRT.",
+          "downloadDelivery": "You can download extracted originals in their delivered format (ASS/SSA passthrough or converted SRT) and translated subtitles as SRT.",
           "upload": "Translated subtitles are automatically uploaded to the database, matching the video hash, under the \"xEmbed (Language)\" entry (reload the stream on Stremio to see it).",
           "retry": "If translation/sync problems happen, simply retranslate the subtitle to overwrite the xEmbed database cache.",
           "originals": "Extracted subtitles are saved to xEmbed as originals and show up under their source language (no separate label).",
+          "originalsDelivery": "Extracted subtitles are saved to xEmbed originals using your current ASS/SSA delivery setting and show up under their source language (no separate label).",
           "ocrNote": "Currently doesn't work with image-based subtitles - OCR may be implemented.",
           "dontShow": "Don't show this again",
           "gotIt": "Got it"
@@ -1445,7 +1440,7 @@
         "title": "Dev"
       },
       "reset": {
-        "hint": "Any problems? Reset settings to default \u2192",
+        "hint": "Any problems? Reset settings to default →",
         "cta": "Reset"
       }
     },

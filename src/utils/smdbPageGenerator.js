@@ -8,7 +8,7 @@ const { deriveVideoHash } = require('./videoHash');
 const { parseStremioId } = require('./subtitle');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
 const { quickNavStyles, quickNavScript, renderQuickNav } = require('./quickNav');
-const { version: appVersion } = require('../../package.json');
+const { version: appVersion } = require('./version');
 
 function escapeHtml(value) {
   if (value === null || value === undefined) return '';

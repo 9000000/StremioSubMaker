@@ -350,8 +350,8 @@ function redactString(str) {
     // This helps identify which key is being used without exposing the full value
 
     // Pattern 1: Long alphanumeric strings (likely API keys) - show first 4 and last 4 chars
-    // Examples: "3RHZ9E7RfT8c8hu1MKeZVnYpvqmqNh17" -> "3RHZ...Nh17"
-    //           "sk_91b064e5fed15240c1b655eb7ce..." -> "sk_9...7ce..."
+    // Examples: "ABCD1234EFGH5678IJKL9012MNOP3456" -> "ABCD...3456"
+    //           "sk_example_long_token_value_here" -> "sk_e...here"
     str = str.replace(/\b([a-zA-Z0-9_-]{4})[a-zA-Z0-9_-]{8,}([a-zA-Z0-9_-]{4})\b/g, '$1...[REDACTED]...$2');
 
     // Pattern 2: JWT tokens (three base64 segments separated by dots)

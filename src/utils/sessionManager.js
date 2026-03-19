@@ -10,7 +10,7 @@ const log = require('./logger');
 const { shutdownLogger } = require('./logger');
 const sentry = require('./sentry');
 const { handleCaughtError } = require('./errorClassifier');
-const { encryptUserConfig, decryptUserConfig, getDecryptionWarnings } = require('./encryption');
+const { encryptUserConfig, decryptUserConfig, normalizeSensitiveInputsForStorage, getDecryptionWarnings } = require('./encryption');
 const { redactToken } = require('./security');
 const { getRedisPassword } = require('./redisHelper');
 const { MAX_SESSION_BRIEF_BATCH, SESSION_BRIEF_LOOKUP_CONCURRENCY, normalizeSessionBriefTokens } = require('./sessionBriefBatch');
@@ -45,6 +45,8 @@ const INTERNAL_FLAGS = [
     '_encrypted',           // Added by encryptUserConfig()
     '__decryptionWarning',  // Added by decryptUserConfig() on partial decrypt failure
     '__decryptionWarningFields',
+    '__nestedEncryptionRecovered',
+    '__nestedEncryptionRecoveredFields',
     '__credentialDecryptionFailed',  // Added by normalizeConfig() when credentials look encrypted
     '__credentialDecryptionFailedFields',
     '__credentialWarningEntry',      // Added by subtitles handler for UI warning
@@ -899,14 +901,15 @@ class SessionManager extends EventEmitter {
      * @returns {string} Session token
      */
     async createSession(config) {
+        const normalizedConfig = normalizeSensitiveInputsForStorage(stripInternalFlags(cloneConfig(config)));
         const token = this.generateToken();
 
         const tokenFingerprint = computeTokenFingerprint(token);
 
         // Compute fingerprint on the raw config and stamp metadata into the
         // payload before encrypting so we can detect cross-session leaks.
-        const fingerprint = computeConfigFingerprint(config);
-        const configWithMetadata = embedSessionMetadata(config, token, fingerprint);
+        const fingerprint = computeConfigFingerprint(normalizedConfig);
+        const configWithMetadata = embedSessionMetadata(normalizedConfig, token, fingerprint);
         const encryptedConfig = encryptUserConfig(configWithMetadata);
         const integrity = computeIntegrityHash(token, fingerprint);
 
@@ -926,7 +929,7 @@ class SessionManager extends EventEmitter {
         };
 
         this.cache.set(token, sessionData);
-        const configForCache = cloneConfig(config);
+        const configForCache = cloneConfig(normalizedConfig);
         configForCache.__historyUserHash = sessionData.historyUserHash;
         this.decryptedCache.set(token, configForCache);
         this.dirty = true;
@@ -995,6 +998,14 @@ class SessionManager extends EventEmitter {
         }
 
         let sessionData = this.cache.get(token);
+        let needsPersist = false;
+        const persistReasons = new Set();
+        const markNeedsPersist = (reason) => {
+            needsPersist = true;
+            if (reason) {
+                persistReasons.add(reason);
+            }
+        };
 
         // If not in cache, try loading from storage (Redis/filesystem)
         if (!sessionData) {
@@ -1009,14 +1020,13 @@ class SessionManager extends EventEmitter {
         }
 
         const tokenValidation = ensureTokenMetadata(sessionData, token);
-        let needsPersist = false;
         if (tokenValidation.status === 'missing_token') {
             log.warn(() => `[SessionManager] Missing token metadata for ${redactToken(token)} - deleting session (cannot safely backfill)`);
             this.deleteSession(token);
             return null;
         } else if (tokenValidation.status === 'missing_fingerprint') {
             sessionData.tokenFingerprint = tokenValidation.expectedTokenFingerprint || computeTokenFingerprint(token);
-            needsPersist = true;
+            markNeedsPersist('token fingerprint backfill');
             log.warn(() => `[SessionManager] Backfilled missing token fingerprint for ${redactToken(token)}`);
         } else if (tokenValidation.status !== 'ok') {
             log.warn(() => `[SessionManager] Token validation failed (${tokenValidation.status}) for ${redactToken(token)} - deleting session`);
@@ -1033,10 +1043,10 @@ class SessionManager extends EventEmitter {
 
         if (!sessionData.historyUserHash) {
             sessionData.historyUserHash = computeHistoryUserHash(token);
-            needsPersist = true;
+            markNeedsPersist('history identity backfill');
         }
         if (normalizeSessionLifecycleMetadata(sessionData)) {
-            needsPersist = true;
+            markNeedsPersist('lifecycle metadata normalization');
         }
 
         // Update last accessed time
@@ -1052,27 +1062,36 @@ class SessionManager extends EventEmitter {
         // Debounce TTL refresh to reduce Redis writes - only refresh if last refresh was > 5 minutes ago
         // This reduces Redis writes by ~99% for active users while maintaining sliding window behavior
         const lastTtlRefresh = sessionData._lastTtlRefresh || 0;
-        const shouldRefreshTtl = needsPersist || (now - lastTtlRefresh > TTL_REFRESH_DEBOUNCE_MS);
+        let accessPersistenceScheduled = false;
+        const scheduleAccessPersistence = () => {
+            const shouldRefreshTtl = needsPersist || (now - lastTtlRefresh > TTL_REFRESH_DEBOUNCE_MS);
+            if (!shouldRefreshTtl || accessPersistenceScheduled) {
+                return;
+            }
 
-        if (shouldRefreshTtl) {
+            accessPersistenceScheduled = true;
             sessionData._lastTtlRefresh = now;
-            // Persist touch to refresh persistent TTL and backfill metadata when needed
-            // Track this async operation so shutdown can wait for it to complete
+
+            // Persist touch to refresh persistent TTL and any access-time healing/backfills.
+            // This must run after the full read/repair pipeline so cache-hit recoveries are
+            // written back immediately instead of surviving until the next restart.
             this._trackPersistence(Promise.resolve().then(async () => {
                 const adapter = await getStorageAdapter();
                 const ttlSeconds = this._calculateTtlSeconds();
                 await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
                 if (needsPersist) {
-                    log.debug(() => `[SessionManager] Persisted metadata backfill for ${redactToken(token)} on access`);
+                    const reasons = Array.from(persistReasons);
+                    log.debug(() => `[SessionManager] Persisted session access changes for ${redactToken(token)}${reasons.length ? ` (${reasons.join(', ')})` : ''}`);
                 }
             }).catch(err => {
-                log.error(() => ['[SessionManager] Failed to refresh session TTL on access:', err?.message || String(err)]);
+                log.error(() => ['[SessionManager] Failed to persist session access changes:', err?.message || String(err)]);
             }));
-        }
+        };
 
         // Use cached decrypted config when available to avoid redundant decrypt/log spam on page changes
         const cachedDecrypted = this.decryptedCache.get(token);
         if (cachedDecrypted) {
+            scheduleAccessPersistence();
             const cloned = cloneConfig(cachedDecrypted);
             cloned.__historyUserHash = sessionData.historyUserHash;
             return cloned;
@@ -1081,8 +1100,12 @@ class SessionManager extends EventEmitter {
         // Decrypt sensitive fields in config before returning
         let decryptedConfig = null;
         let metadata = {};
+        let nestedEncryptionRecovered = false;
+        let nestedRecoveredFields = [];
         try {
             const rawDecrypted = decryptUserConfig(sessionData.config);
+            nestedEncryptionRecovered = rawDecrypted?.__nestedEncryptionRecovered === true;
+            nestedRecoveredFields = rawDecrypted?.__nestedEncryptionRecoveredFields || [];
             const result = stripSessionMetadata(rawDecrypted);
             decryptedConfig = result.config;
             metadata = result.metadata || {};
@@ -1105,6 +1128,15 @@ class SessionManager extends EventEmitter {
         }
 
         const fingerprint = computeConfigFingerprint(decryptedConfig);
+        const sessionPayloadNormalizedOnRead = nestedEncryptionRecovered || payloadValidation.unencryptedConfig;
+
+        if (nestedEncryptionRecovered) {
+            sessionData.fingerprint = fingerprint;
+            sessionData.integrity = computeIntegrityHash(token, fingerprint);
+            sessionData.config = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, fingerprint));
+            markNeedsPersist('nested encryption heal');
+            log.warn(() => `[SessionManager] Healed nested encryption for ${redactToken(token)} - fields: ${nestedRecoveredFields.join(', ') || 'unknown'}. Session will be re-saved in normalized form.`);
+        }
 
         // Check if decryption had warnings (indicates encryption key mismatch between server instances)
         // If so, skip fingerprint validation since the fingerprint was computed from decrypted config
@@ -1122,29 +1154,31 @@ class SessionManager extends EventEmitter {
         // (e.g., new fields added, encrypted values differ after decrypt cycle). Token validation
         // is sufficient to detect cross-session contamination. Fingerprint mismatches are now
         // logged at debug level for diagnostics only - sessions are NOT deleted.
-        if (!hasDecryptionWarnings && metadata.fingerprint && metadata.fingerprint !== fingerprint) {
+        if (!hasDecryptionWarnings && !sessionPayloadNormalizedOnRead && metadata.fingerprint && metadata.fingerprint !== fingerprint) {
             log.debug(() => `[SessionManager] Fingerprint mismatch (metadata) for ${redactToken(token)} - stored=${metadata.fingerprint}, computed=${fingerprint}. Session preserved (fingerprint validation disabled).`);
             // Don't delete - continue with session
         }
-        if (!hasDecryptionWarnings && sessionData.fingerprint && fingerprint !== sessionData.fingerprint) {
+        if (!hasDecryptionWarnings && !sessionPayloadNormalizedOnRead && sessionData.fingerprint && fingerprint !== sessionData.fingerprint) {
             log.debug(() => `[SessionManager] Fingerprint mismatch (stored) for ${redactToken(token)} - stored=${sessionData.fingerprint}, computed=${fingerprint}. Session preserved (fingerprint validation disabled).`);
             // Don't delete - continue with session
         }
         if (!sessionData.fingerprint) {
             sessionData.fingerprint = fingerprint;
-            needsPersist = true;
+            markNeedsPersist('config fingerprint backfill');
         }
         if (!sessionData.integrity) {
             sessionData.integrity = computeIntegrityHash(token, sessionData.fingerprint);
-            needsPersist = true;
+            markNeedsPersist('integrity backfill');
         }
 
         // Upgrade legacy payloads that lack encryption marker by re-wrapping and encrypting
         if (payloadValidation.unencryptedConfig) {
             try {
-                const upgradedConfig = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, sessionData.fingerprint));
+                sessionData.fingerprint = fingerprint;
+                sessionData.integrity = computeIntegrityHash(token, fingerprint);
+                const upgradedConfig = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, fingerprint));
                 sessionData.config = upgradedConfig;
-                needsPersist = true;
+                markNeedsPersist('legacy payload upgrade');
                 log.warn(() => `[SessionManager] Upgraded legacy unencrypted session payload for ${redactToken(token)}`);
             } catch (upgradeErr) {
                 log.error(() => ['[SessionManager] Failed to upgrade legacy session payload:', upgradeErr?.message || String(upgradeErr)]);
@@ -1199,6 +1233,7 @@ class SessionManager extends EventEmitter {
 
         decryptedConfig.__historyUserHash = sessionData.historyUserHash;
         this.decryptedCache.set(token, cloneConfig(decryptedConfig));
+        scheduleAccessPersistence();
 
         return cloneConfig(decryptedConfig);
     }
@@ -1247,6 +1282,7 @@ class SessionManager extends EventEmitter {
     async updateSession(token, config) {
         if (!token) return false;
 
+        const normalizedConfig = normalizeSensitiveInputsForStorage(stripInternalFlags(cloneConfig(config)));
         let sessionData = this.cache.get(token);
 
         // If not in cache, try loading from storage (Redis/filesystem)
@@ -1290,8 +1326,8 @@ class SessionManager extends EventEmitter {
 
         // Encrypt sensitive fields in config before storing, stamping metadata to
         // detect cross-session contamination even when wrapper objects look valid.
-        const fingerprint = computeConfigFingerprint(config);
-        const configWithMetadata = embedSessionMetadata(config, token, fingerprint);
+        const fingerprint = computeConfigFingerprint(normalizedConfig);
+        const configWithMetadata = embedSessionMetadata(normalizedConfig, token, fingerprint);
         const encryptedConfig = encryptUserConfig(configWithMetadata);
         const integrity = computeIntegrityHash(token, fingerprint);
         const tokenFingerprint = computeTokenFingerprint(token);
@@ -1310,7 +1346,7 @@ class SessionManager extends EventEmitter {
         normalizeSessionLifecycleMetadata(sessionData);
 
         this.cache.set(token, sessionData);
-        const configForCache = cloneConfig(config);
+        const configForCache = cloneConfig(normalizedConfig);
         configForCache.__historyUserHash = sessionData.historyUserHash;
         this.decryptedCache.set(token, configForCache);
         this.dirty = true;
@@ -1644,7 +1680,10 @@ class SessionManager extends EventEmitter {
 
             // Decrypt and return config
             try {
-                const { config: decryptedConfig, metadata } = stripSessionMetadata(decryptUserConfig(stored.config));
+                const rawDecrypted = decryptUserConfig(stored.config);
+                const nestedEncryptionRecovered = rawDecrypted?.__nestedEncryptionRecovered === true;
+                const nestedRecoveredFields = rawDecrypted?.__nestedEncryptionRecoveredFields || [];
+                const { config: decryptedConfig, metadata } = stripSessionMetadata(rawDecrypted);
 
                 if (!decryptedConfig) {
                     log.warn(() => `[SessionManager] loadSessionFromStorage: decrypted config was empty for token ${redactToken(token)} - keeping session for retry`);
@@ -1654,6 +1693,15 @@ class SessionManager extends EventEmitter {
                 }
 
                 const fingerprint = computeConfigFingerprint(decryptedConfig);
+                const sessionPayloadNormalizedOnRead = nestedEncryptionRecovered || payloadValidation.unencryptedConfig;
+
+                if (nestedEncryptionRecovered) {
+                    stored.fingerprint = fingerprint;
+                    stored.integrity = computeIntegrityHash(token, fingerprint);
+                    stored.config = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, fingerprint));
+                    needsPersist = true;
+                    log.warn(() => `[SessionManager] loadSessionFromStorage: healed nested encryption for ${redactToken(token)} - fields: ${nestedRecoveredFields.join(', ') || 'unknown'}. Session will be re-saved in normalized form.`);
+                }
 
                 // Check if decryption had warnings (indicates encryption key mismatch between server instances)
                 // If so, skip fingerprint validation since the fingerprint was computed from decrypted config
@@ -1679,11 +1727,11 @@ class SessionManager extends EventEmitter {
                 // (e.g., new fields added, encrypted values differ after decrypt cycle). Token validation
                 // is sufficient to detect cross-session contamination. Fingerprint mismatches are now
                 // logged at debug level for diagnostics only - sessions are NOT deleted.
-                if (!hasDecryptionWarnings && metadata?.fingerprint && metadata.fingerprint !== fingerprint) {
+                if (!hasDecryptionWarnings && !sessionPayloadNormalizedOnRead && metadata?.fingerprint && metadata.fingerprint !== fingerprint) {
                     log.debug(() => `[SessionManager] Fingerprint mismatch (metadata) on storage load for ${redactToken(token)} - stored=${metadata.fingerprint}, computed=${fingerprint}. Session preserved (fingerprint validation disabled).`);
                     // Don't delete - continue with session
                 }
-                if (!hasDecryptionWarnings && stored.fingerprint && fingerprint !== stored.fingerprint) {
+                if (!hasDecryptionWarnings && !sessionPayloadNormalizedOnRead && stored.fingerprint && fingerprint !== stored.fingerprint) {
                     log.debug(() => `[SessionManager] Fingerprint mismatch (stored) on storage load for ${redactToken(token)} - stored=${stored.fingerprint}, computed=${fingerprint}. Session preserved (fingerprint validation disabled).`);
                     // Don't delete - continue with session
                 }
@@ -1711,7 +1759,9 @@ class SessionManager extends EventEmitter {
                 // Upgrade legacy sessions that lacked encryption markers by re-encrypting with embedded metadata
                 if (payloadValidation.unencryptedConfig) {
                     try {
-                        const upgradedConfig = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, stored.fingerprint));
+                        stored.fingerprint = fingerprint;
+                        stored.integrity = computeIntegrityHash(token, fingerprint);
+                        const upgradedConfig = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, fingerprint));
                         stored.config = upgradedConfig;
                         needsPersist = true;
                         log.warn(() => `[SessionManager] loadSessionFromStorage: upgrading unencrypted session payload for ${redactToken(token)}`);

@@ -35,6 +35,7 @@ const axios = require('axios');
 let CacheableLookup = require('cacheable-lookup');
 CacheableLookup = (CacheableLookup && (CacheableLookup.default || CacheableLookup.CacheableLookup)) || CacheableLookup;
 const log = require('./logger');
+const { scsHttpsAgent } = require('./scsHttpAgent');
 
 /**
  * HTTP Agent with connection pooling
@@ -69,6 +70,7 @@ const dnsCache = new CacheableLookup({
   errorTtl: 0,     // don't cache failed lookups
   cache: new Map() // in-memory cache
 });
+const dnsLookup = dnsCache.lookup.bind(dnsCache);
 
 log.debug(() => '[HTTP Agents] Connection pooling initialized: maxSockets=100, maxFreeSockets=20, keepAlive=true');
 
@@ -76,48 +78,63 @@ log.debug(() => '[HTTP Agents] Connection pooling initialized: maxSockets=100, m
 // PROVIDER ENDPOINTS - URLs to warm up and keep alive
 // ============================================================================
 const PROVIDER_ENDPOINTS = {
+  opensubtitlesAuth: {
+    url: 'https://api.opensubtitles.com/',
+    name: 'OpenSubtitles Auth',
+    warmUpPath: 'api/v1', // Warm the authenticated REST API host without hitting /login
+    pingPath: 'api/v1',
+    warmUpEnabled: true,
+    keepAliveEnabled: true
+  },
   // Subtitle providers - warm these up at startup for instant first requests
   opensubtitlesV3: {
     url: 'https://opensubtitles-v3.strem.io/',
     name: 'OpenSubtitles V3',
     warmUpPath: 'subtitles/series/tt0944947:1:1.json', // GoT S1E1 - always exists
     pingPath: null, // HEAD to base URL
-    critical: true // Core provider - always ping
+    warmUpEnabled: true,
+    keepAliveEnabled: true
   },
   subdl: {
     url: 'https://api.subdl.com/',
     name: 'SubDL',
     warmUpPath: null, // API requires key, just warm TLS
     pingPath: null, // HEAD to base URL
-    critical: true // Ping to detect outages
+    warmUpEnabled: true,
+    keepAliveEnabled: true
   },
   subsource: {
     url: 'https://api.subsource.net/',
     name: 'SubSource',
     warmUpPath: null, // API requires key, just warm TLS
     pingPath: null, // HEAD to base URL
-    critical: true // Ping to detect outages
+    warmUpEnabled: true,
+    keepAliveEnabled: true
   },
   wyzie: {
     url: 'https://sub.wyzie.ru/',
     name: 'Wyzie Subs',
     warmUpPath: 'status', // Free status endpoint
     pingPath: 'status',
-    critical: true // Ping to detect outages
+    warmUpEnabled: true,
+    keepAliveEnabled: true
   },
   scs: {
     url: 'https://stremio-community-subtitles.top/',
     name: 'Stremio Community Subtitles',
     warmUpPath: null, // Just warm TLS
     pingPath: null, // HEAD to base URL
-    critical: true // Ping to detect outages (this provider is often down)
+    httpsAgent: scsHttpsAgent,
+    warmUpEnabled: true,
+    keepAliveEnabled: true
   },
   subsro: {
     url: 'https://api.subs.ro/',
     name: 'Subs.ro',
     warmUpPath: null, // API requires key
     pingPath: null, // HEAD to base URL
-    critical: false // Less common provider, don't need aggressive pinging
+    warmUpEnabled: true,
+    keepAliveEnabled: true
   },
   // Download domains - also warm these up
   subdlDownload: {
@@ -125,9 +142,34 @@ const PROVIDER_ENDPOINTS = {
     name: 'SubDL Download',
     warmUpPath: null,
     pingPath: null,
-    critical: false // Download domain, no aggressive pinging needed
+    warmUpEnabled: true,
+    keepAliveEnabled: true
   }
 };
+
+function getConnectionTargetEntries(mode) {
+  const flagName = mode === 'keepAlive' ? 'keepAliveEnabled' : 'warmUpEnabled';
+  return Object.entries(PROVIDER_ENDPOINTS).filter(([, provider]) => provider[flagName] !== false);
+}
+
+function getConnectionTargetKeys(mode) {
+  return getConnectionTargetEntries(mode).map(([key]) => key);
+}
+
+function buildProbeRequest(provider, mode) {
+  const isKeepAlive = mode === 'keepAlive';
+  const path = isKeepAlive ? provider.pingPath : provider.warmUpPath;
+  const method = isKeepAlive
+    ? (provider.pingMethod || 'head')
+    : (provider.warmUpMethod || (provider.warmUpPath ? 'get' : 'head'));
+
+  return {
+    method,
+    url: path ? `${provider.url}${path}` : provider.url,
+    httpAgent: provider.httpAgent || httpAgent,
+    httpsAgent: provider.httpsAgent || httpsAgent
+  };
+}
 
 // ============================================================================
 // CIRCUIT BREAKER - Track provider health to skip failing endpoints
@@ -251,7 +293,7 @@ const circuitBreaker = {
  */
 const PROVIDER_KEY_MAP = {
   'opensubtitles_v3': 'opensubtitlesV3',
-  'opensubtitles_auth': 'opensubtitlesV3', // Auth uses same API
+  'opensubtitles_auth': 'opensubtitlesAuth',
   'subdl': 'subdl',
   'subsource': 'subsource',
   'wyzie': 'wyzie',
@@ -301,27 +343,25 @@ function isProviderHealthy(providerName) {
  * This saves 150-500ms on the first request to each provider
  */
 async function warmUpConnections() {
-  log.info(() => '[HTTP Agents] Warming up connections to subtitle providers...');
+  const warmUpTargets = getConnectionTargetEntries('warmUp');
+  log.info(() => `[HTTP Agents] Warming up connections to subtitle providers (${warmUpTargets.length} targets)...`);
+  log.debug(() => `[HTTP Agents] Warm-up targets: ${warmUpTargets.map(([, provider]) => provider.name).join(', ')}`);
 
   const warmUpStart = Date.now();
   const results = [];
 
   // Warm up all providers in parallel
-  const warmUpPromises = Object.entries(PROVIDER_ENDPOINTS).map(async ([key, provider]) => {
+  const warmUpPromises = warmUpTargets.map(async ([key, provider]) => {
     const startTime = Date.now();
     try {
-      const url = provider.warmUpPath
-        ? `${provider.url}${provider.warmUpPath}`
-        : provider.url;
+      const probeRequest = buildProbeRequest(provider, 'warmUp');
 
-      // Use HEAD request for minimal overhead, fall back to GET for endpoints that require it
-      const method = provider.warmUpPath ? 'get' : 'head';
-
+      // IMPORTANT: Do not use dnsLookup for raw warm-up probes.
+      // On some networks, fanning out many parallel hosts through cacheable-lookup
+      // stalls these startup probes to the full timeout window. Provider clients
+      // still use dnsLookup on real traffic; the probes only need fast handshakes.
       await axios({
-        method,
-        url,
-        httpAgent,
-        httpsAgent,
+        ...probeRequest,
         timeout: 8000, // 8 second timeout for warm-up
         validateStatus: () => true, // Accept any status (we just want the TLS handshake)
         maxRedirects: 3
@@ -372,28 +412,24 @@ function startKeepAlivePings() {
     return;
   }
 
-  log.info(() => `[HTTP Agents] Starting keep-alive pings every ${KEEP_ALIVE_INTERVAL_MS / 1000}s`);
+  const keepAliveTargets = getConnectionTargetEntries('keepAlive');
+  log.info(() => `[HTTP Agents] Starting keep-alive pings every ${KEEP_ALIVE_INTERVAL_MS / 1000}s for ${keepAliveTargets.length} targets`);
+  log.debug(() => `[HTTP Agents] Keep-alive targets: ${keepAliveTargets.map(([, provider]) => provider.name).join(', ')}`);
 
   keepAliveInterval = setInterval(async () => {
-    // Only ping critical providers and providers without open circuits
-    const providersToPing = Object.entries(PROVIDER_ENDPOINTS)
-      .filter(([key, provider]) => provider.critical || provider.pingPath)
+    const providersToPing = getConnectionTargetEntries('keepAlive')
       .filter(([key]) => !circuitBreaker.isOpen(key));
 
     if (providersToPing.length === 0) {
-      log.debug(() => '[HTTP Agents] No providers to ping (all circuits open or no critical providers)');
+      log.debug(() => '[HTTP Agents] No providers to ping (all tracked circuits are open)');
       return;
     }
 
     const pingPromises = providersToPing.map(async ([key, provider]) => {
       try {
-        const url = provider.pingPath
-          ? `${provider.url}${provider.pingPath}`
-          : provider.url;
-
-        await axios.head(url, {
-          httpAgent,
-          httpsAgent,
+        const probeRequest = buildProbeRequest(provider, 'keepAlive');
+        await axios({
+          ...probeRequest,
           timeout: 5000,
           validateStatus: () => true
         });
@@ -455,11 +491,12 @@ module.exports = {
   httpAgent,
   httpsAgent,
   // Expose lookup so callers can pass it in request options
-  dnsLookup: dnsCache.lookup.bind(dnsCache),
+  dnsLookup,
   // Connection warming and keep-alive
   warmUpConnections,
   startKeepAlivePings,
   stopKeepAlivePings,
+  getConnectionTargetKeys,
   // Circuit breaker access
   circuitBreaker,
   isProviderHealthy, // Check if provider is healthy before making requests

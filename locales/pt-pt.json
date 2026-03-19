@@ -78,7 +78,6 @@
         "translateFileError": "A tradução falhou: {reason}",
         "subtitleNotFound": "Legenda não encontrada",
         "errorSubtitleUnavailable": "Legenda de erro indisponível",
-        "subtitleSelectorFailed": "Falhou ao carregar seletor de legendas",
         "translationInProgress": "Tradução já em curso; aguardando pedido primário.",
         "translationInvalidContent": "A tradução devolveu conteúdo inválido",
         "translationFailed": "A tradução falhou: {reason}",
@@ -136,12 +135,6 @@
       },
       "sync": {
         "saveSuccess": "Legenda sincronizada guardada com sucesso"
-      },
-      "selector": {
-        "title": "Selecione a Legenda para Traduzir",
-        "heading": "Traduzir para {target}",
-        "subheader": "Selecione uma legenda {sources} para traduzir",
-        "empty": "Nenhuma legenda {sources} disponível"
       }
     },
     "apiErrors": {
@@ -309,9 +302,11 @@
             "4": "Clique em \"Traduzir Legendas\"."
           },
           "download": "Pode transferir tanto as legendas extraídas como as traduzidas em formato SRT.",
+          "downloadDelivery": "Pode transferir os originais extraídos no formato entregue (pass-through ASS/SSA ou SRT convertido) e as legendas traduzidas em SRT.",
           "upload": "As legendas traduzidas são automaticamente enviadas para a base de dados, correspondendo ao hash do vídeo, sob a entrada \"xEmbed (Idioma)\" (recarregue a transmissão no Stremio para a ver).",
           "retry": "Se acontecerem problemas de tradução/sincronização, simplesmente retraduza a legenda para sobrescrever a cache da base de dados xEmbed.",
           "originals": "As legendas extraídas são guardadas no xEmbed como originais e aparecem sob o seu idioma de origem (sem etiqueta separada).",
+          "originalsDelivery": "As legendas extraídas são guardadas no xEmbed como originais usando a sua configuração atual de entrega ASS/SSA e aparecem sob o seu idioma de origem (sem etiqueta separada).",
           "ocrNote": "Atualmente não funciona com legendas baseadas em imagem - OCR pode ser implementado.",
           "dontShow": "Não mostrar isto novamente",
           "gotIt": "Percebi"
@@ -1445,7 +1440,7 @@
         "title": "Dev"
       },
       "reset": {
-        "hint": "Algum problema? Repor definições para padrão \u2192",
+        "hint": "Algum problema? Repor definições para padrão →",
         "cta": "Repor"
       }
     },

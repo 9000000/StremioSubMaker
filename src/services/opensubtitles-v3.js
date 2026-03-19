@@ -5,6 +5,7 @@ const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const { detectAndConvertEncoding } = require('../utils/encodingDetector');
 const { version } = require('../utils/version');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
+const { hasExplicitSeasonEpisodeMismatch } = require('../utils/animeSearchResolver');
 const log = require('../utils/logger');
 const { isTrueishFlag, inferHearingImpairedFromName } = require('../utils/subtitleFlags');
 const { detectArchiveType, extractSubtitleFromArchive, isArchive, createZipTooLargeSubtitle, convertSubtitleToVtt } = require('../utils/archiveExtractor');
@@ -143,6 +144,10 @@ class OpenSubtitlesV3Service {
         episodeFilteredSubtitles = episodeFilteredSubtitles.filter(sub => {
           const nameLower = sub.name.toLowerCase();
 
+          if (hasExplicitSeasonEpisodeMismatch(nameLower, effectiveSeason, episode)) {
+            return false;
+          }
+
           // Season pack patterns (keep as fallback, mark for identification)
           const seasonPackPatterns = [
             new RegExp(`(?:complete|full|entire)?\\s*(?:season|s)\\s*0*${effectiveSeason}(?:\\s+(?:complete|full|pack))?(?!.*e0*\\d)`, 'i'),
@@ -208,19 +213,6 @@ class OpenSubtitlesV3Service {
           if (seasonEpisodePatterns.some(pattern => pattern.test(nameLower)) ||
             (type === 'anime-episode' && animeEpisodePatterns.some(p => p.test(nameLower)))) {
             return true;
-          }
-
-          // Check if subtitle has a DIFFERENT episode number (wrong episode)
-          // Extract season/episode from subtitle name
-          const episodeMatch = nameLower.match(/s0*(\d+)e0*(\d+)|(\d+)x0*(\d+)/i);
-          if (episodeMatch) {
-            const subSeason = parseInt(episodeMatch[1] || episodeMatch[3]);
-            const subEpisode = parseInt(episodeMatch[2] || episodeMatch[4]);
-
-            // If it explicitly mentions a different episode, filter it out
-            if (subSeason === effectiveSeason && subEpisode !== episode) {
-              return false; // Wrong episode - exclude
-            }
           }
 
           // No episode info found in name - keep it (might be generic subtitle)

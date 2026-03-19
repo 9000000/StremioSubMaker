@@ -49,6 +49,7 @@ const axios = require('axios');
 const { toISO6391 } = require('../utils/languages');
 const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const { detectAndConvertEncoding } = require('../utils/encodingDetector');
+const { getSeasonHintCandidates } = require('../utils/animeSearchResolver');
 const { convertSubtitleToVtt } = require('../utils/archiveExtractor');
 const log = require('../utils/logger');
 const { version } = require('../utils/version');
@@ -185,13 +186,10 @@ class WyzieSubsService {
             const queryParams = new URLSearchParams();
             queryParams.set('id', searchId);
 
-            // Add season/episode for series
-            // NOTE: Wyzie requires both season AND episode if either is provided
-            if ((type === 'episode' || type === 'anime-episode') && episode) {
-                const effectiveSeason = season || 1;
-                queryParams.set('season', effectiveSeason);
-                queryParams.set('episode', episode);
-            }
+            const isEpisodeSearch = (type === 'episode' || type === 'anime-episode') && episode;
+            const seasonCandidates = isEpisodeSearch
+                ? getSeasonHintCandidates(params, { fallback: 1 })
+                : [];
 
             // Convert requested languages to ISO 639-1 for Wyzie
             // IMPORTANT: Wyzie validates languages with regex /^[a-z]{2}$/ - must be exactly 2 letters
@@ -253,26 +251,52 @@ class WyzieSubsService {
             // not by filename. Passing a full filename would cause zero matches.
             // We omit this parameter to get all results and let ranking handle matching.
 
-            const url = `/search?${queryParams.toString()}`;
-            log.debug(() => `[WyzieSubs] Searching: ${url}`);
-
             // Use configured timeout from user settings if provided, otherwise use client default (15s)
             const { providerTimeout } = params;
             const requestConfig = providerTimeout ? { timeout: providerTimeout } : {};
 
-            const fetchStartTime = Date.now();
-            const response = await this.client.get(url, requestConfig);
-            const fetchDuration = Date.now() - fetchStartTime;
+            const runSeasonSearch = async (seasonHint = null) => {
+                const seasonQuery = new URLSearchParams(queryParams);
+                if (isEpisodeSearch) {
+                    seasonQuery.set('season', seasonHint || 1);
+                    seasonQuery.set('episode', episode);
+                }
 
-            // Log timing for performance debugging
-            log.debug(() => `[WyzieSubs] API response received in ${fetchDuration}ms`);
+                const url = `/search?${seasonQuery.toString()}`;
+                log.debug(() => `[WyzieSubs] Searching: ${url}`);
 
-            if (!response.data || !Array.isArray(response.data) || response.data.length === 0) {
+                const fetchStartTime = Date.now();
+                const response = await this.client.get(url, requestConfig);
+                const fetchDuration = Date.now() - fetchStartTime;
+
+                log.debug(() => `[WyzieSubs] API response received in ${fetchDuration}ms`);
+
+                const results = Array.isArray(response?.data) ? response.data : [];
+                return { url, seasonHint, results, fetchDuration };
+            };
+
+            let searchResult;
+            if (isEpisodeSearch && !imdb_id && tmdb_id && seasonCandidates.length > 1) {
+                searchResult = await runSeasonSearch(seasonCandidates[0]);
+                if (searchResult.results.length === 0) {
+                    const fallbackResult = await runSeasonSearch(seasonCandidates[1]);
+                    if (fallbackResult.results.length > 0) {
+                        log.debug(() => `[WyzieSubs] Falling back from season ${seasonCandidates[0]} to alternate TMDB season ${seasonCandidates[1]}`);
+                        searchResult = fallbackResult;
+                    }
+                }
+            } else if (isEpisodeSearch) {
+                searchResult = await runSeasonSearch(seasonCandidates[0] || 1);
+            } else {
+                searchResult = await runSeasonSearch();
+            }
+
+            if (!searchResult.results.length) {
                 log.debug(() => `[WyzieSubs] No subtitles found (total: ${Date.now() - searchStartTime}ms)`);
                 return [];
             }
 
-            log.debug(() => `[WyzieSubs] Found ${response.data.length} subtitle(s) in ${fetchDuration}ms`);
+            log.debug(() => `[WyzieSubs] Found ${searchResult.results.length} subtitle(s) in ${searchResult.fetchDuration}ms`);
 
             // Track language stats for debugging
             const langStats = new Map();
@@ -280,7 +304,7 @@ class WyzieSubsService {
 
             // First, filter out hearing impaired subtitles if requested (client-side filtering)
             // We do this BEFORE mapping to avoid processing subtitles we'll discard
-            let filteredData = response.data;
+            let filteredData = searchResult.results;
             if (excludeHearingImpairedSubtitles === true) {
                 const beforeCount = filteredData.length;
                 filteredData = filteredData.filter(sub => sub.isHearingImpaired !== true);
