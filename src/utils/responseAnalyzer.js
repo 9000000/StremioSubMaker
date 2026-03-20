@@ -163,6 +163,7 @@ function analyzeResponseContent(buffer) {
  */
 function createInvalidResponseSubtitle(providerName, analysis, responseSize = 0) {
     const sizeInfo = responseSize > 0 ? ` (${responseSize} bytes)` : '';
+    const isSubDL = String(providerName || '').trim().toLowerCase() === 'subdl';
 
     let mainMessage = `${providerName} download failed: ${analysis.hint}${sizeInfo}`;
     let suggestion = analysis.isRetryable
@@ -172,10 +173,20 @@ function createInvalidResponseSubtitle(providerName, analysis, responseSize = 0)
     // Customize message for specific error types
     switch (analysis.type) {
         case 'html_cloudflare':
-            suggestion = 'The provider is blocking requests. Try again later or use a different provider.';
+            if (isSubDL) {
+                mainMessage = 'Cloudflare is blocking this SubDL download on their side.';
+                suggestion = 'Please try another subtitle or try again later.';
+            } else {
+                suggestion = 'The provider is blocking requests. Try again later or use a different provider.';
+            }
             break;
         case 'html_captcha':
-            suggestion = 'The provider requires CAPTCHA verification. Try a different provider.';
+            if (isSubDL) {
+                mainMessage = 'Cloudflare is blocking this SubDL download on their side.';
+                suggestion = 'Please try another subtitle or try again later.';
+            } else {
+                suggestion = 'The provider requires CAPTCHA verification. Try a different provider.';
+            }
             break;
         case 'html_429':
             suggestion = 'Too many requests. Wait a few minutes and try again.';

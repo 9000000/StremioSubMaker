@@ -62,7 +62,7 @@ const syncCache = require('./src/utils/syncCache');
 const autoSubCache = require('./src/utils/autoSubCache');
 const { warmUpConnections, startKeepAlivePings, stopKeepAlivePings, getPoolStats } = require('./src/utils/httpAgents');
 const embeddedCache = require('./src/utils/embeddedCache');
-const { prepareEmbeddedSubtitleDelivery } = require('./src/utils/embeddedSubtitleDelivery');
+const { detectEmbeddedSubtitleFormat, prepareEmbeddedSubtitleDelivery } = require('./src/utils/embeddedSubtitleDelivery');
 const { buildEmbeddedHistoryContext, normalizeEmbeddedHistoryValue } = require('./src/utils/embeddedHistoryContext');
 const { generateSubtitleSyncPage } = require('./src/utils/syncPageGenerator');
 const { generateSubToolboxPage, generateEmbeddedSubtitlePage, generateAutoSubtitlePage } = require('./src/utils/toolboxPageGenerator');
@@ -886,7 +886,12 @@ const stremioCommunityPrefetchTracker = new LRUCache({
 });
 
 /**
- * Detect if a request is from Stremio Community or its player (libmpv)
+ * Detect if a request is from Stremio Community.
+ *
+ * IMPORTANT: Do not classify generic libmpv requests as Stremio Community.
+ * Native Stremio Android/Android TV clients also use libmpv, and putting them
+ * on the Stremio Community cooldown path can delay the first real subtitle load
+ * during playback startup.
  * @param {Object} req - Express request object
  * @returns {boolean} - True if request is from Stremio Community
  */
@@ -899,12 +904,10 @@ function isStremioCommunityRequest(req) {
     // Detect Stremio Community by:
     // - Origin containing "zarg" (web version: https://stremio.zarg.me)
     // - User-agent containing "stremioshell" (desktop app wrapper)
-    // - User-agent containing "libmpv" (the player that does prefetching, no origin)
     const isZargOrigin = origin.includes('zarg');
     const isStremioShell = userAgent.includes('stremioshell');
-    const isLibmpv = userAgent.includes('libmpv') && (!origin || origin === 'null' || origin === 'none');
 
-    return isZargOrigin || isStremioShell || isLibmpv;
+    return isZargOrigin || isStremioShell;
 }
 
 /**
@@ -7013,8 +7016,30 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId', async (req, res) =
             return res.status(404).send(t('server.errors.translatedEmbeddedMissing', {}, 'Translated embedded subtitle not found'));
         }
 
+        const metadata = match.metadata || {};
         const strictSrtHeaders = String(config.androidSubtitleCompatMode || 'off').toLowerCase() === 'aggressive';
-        if (strictSrtHeaders) {
+        const prepared = prepareEmbeddedSubtitleDelivery({
+            content: match.content,
+            codec: metadata.codec,
+            mime: metadata.mime,
+            label: metadata.label,
+            originalLabel: metadata.originalLabel,
+            name: metadata.name,
+            sourceFormat: metadata.storedFormat || metadata.sourceFormat,
+            metadata
+        }, config, { logPrefix: '[xEmbed Download]' });
+
+        if (prepared.conversionFailed) {
+            log.warn(() => `[xEmbed Download] Requested SRT delivery but conversion fell back to ${prepared.sourceFormat || 'original'} for ${safeVideoHash}_${safeLang}_${safeTrackId}`);
+        }
+
+        if (prepared.deliveryFormat === 'vtt') {
+            res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_xembed.vtt"`);
+        } else if (prepared.deliveryFormat === 'ass' || prepared.deliveryFormat === 'ssa') {
+            res.setHeader('Content-Type', 'text/x-ssa; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_xembed.${prepared.ext}"`);
+        } else if (strictSrtHeaders) {
             res.setHeader('Content-Type', 'application/x-subrip; charset=utf-8');
             res.setHeader('Content-Disposition', `inline; filename="${safeVideoHash}_${safeLang}_xembed.srt"`);
         } else {
@@ -7022,7 +7047,7 @@ app.get('/addon/:config/xembedded/:videoHash/:lang/:trackId', async (req, res) =
             res.setHeader('Content-Disposition', `attachment; filename="${safeVideoHash}_${safeLang}_xembed.srt"`);
         }
         setSubtitleCacheHeaders(res, 'final');
-        res.send(maybeConvertToSRT(match.content, config));
+        res.send(prepared.content);
     } catch (error) {
         const t = res.locals?.t || getTranslatorFromRequest(req, res);
         if (respondStorageUnavailable(res, error, '[xEmbed Download]', t)) return;
@@ -7657,11 +7682,13 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
             null
         );
 
+        const storedFormat = detectEmbeddedSubtitleFormat({ content: translatedContent });
         const saveMeta = {
             ...(mergedMetadata || {}),
             provider: providerName,
             model: model || requestedModel || getEffectiveGeminiModel(workingConfig),
             translatedAt: Date.now(),
+            storedFormat,
             translationWorkflow,
             singleBatchMode,
             enableBatchContext,

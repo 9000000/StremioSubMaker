@@ -46,6 +46,53 @@ function buildRateLimitUserMessage(serviceLabel, translate) {
   );
 }
 
+function getResponseTextPreview(error, maxChars = 2048) {
+  const data = error?.response?.data;
+  if (data == null) return '';
+
+  try {
+    if (Buffer.isBuffer(data)) {
+      return data.toString('utf8', 0, Math.min(maxChars, data.length));
+    }
+    if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(data)) {
+      return Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+        .toString('utf8', 0, Math.min(maxChars, data.byteLength));
+    }
+    if (data instanceof ArrayBuffer) {
+      return Buffer.from(data).toString('utf8', 0, Math.min(maxChars, data.byteLength));
+    }
+    return String(data).slice(0, maxChars);
+  } catch (_) {
+    return '';
+  }
+}
+
+function looksLikeCloudflareChallenge(error) {
+  const status = error?.response?.status;
+  if (status !== 403 && status !== 503) {
+    return false;
+  }
+
+  const headers = error?.response?.headers || {};
+  if (String(headers['cf-mitigated'] || '').toLowerCase() === 'challenge') {
+    return true;
+  }
+
+  const preview = getResponseTextPreview(error).toLowerCase();
+  if (!preview) {
+    return false;
+  }
+
+  return (
+    preview.includes('cloudflare') ||
+    preview.includes('cf-ray') ||
+    preview.includes('just a moment') ||
+    preview.includes('attention required') ||
+    preview.includes('enable javascript and cookies to continue') ||
+    preview.includes('/cdn-cgi/challenge-platform/')
+  );
+}
+
 /**
  * Parse and classify an API error
  * @param {Error} error - The error object from axios or other API call
@@ -115,6 +162,16 @@ function parseApiError(error, serviceName = 'API', options = {}) {
       parsed.type = 'database_error';
       parsed.isRetryable = true;
       parsed.userMessage = translate('apiErrors.databaseUnavailable', {}, 'Subtitle server database temporarily unavailable. Trying next subtitle...');
+    }
+    // Cloudflare/WAF challenge pages are upstream blocks, not bad credentials
+    else if (looksLikeCloudflareChallenge(error)) {
+      parsed.type = 'cloudflare_block';
+      parsed.isRetryable = true;
+      parsed.userMessage = translate(
+        'apiErrors.cloudflareBlocked',
+        { service: serviceLabel },
+        `${serviceLabel} is blocking this download on their side. Please try again later.`
+      );
     }
     // Authentication errors (401, 403)
     else if (parsed.statusCode === 401 || parsed.statusCode === 403) {

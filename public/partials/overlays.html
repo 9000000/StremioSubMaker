@@ -10,43 +10,54 @@
 
     <!-- Main Instructions Modal -->
     <div class="modal-overlay" id="instructionsModal">
-        <div class="modal">
-            <div class="modal-header">
-                <h2 data-i18n="config.overlays.instructions.title">How to Use SubMaker</h2>
-                <div class="modal-close" id="closeInstructionsBtn">&times;</div>
+        <div class="modal instructions-modal">
+            <div class="modal-header instructions-modal-header">
+                <div class="instructions-hero-copy">
+                    <div class="instructions-eyebrow" data-i18n="config.overlays.instructions.eyebrow">SubMaker guide</div>
+                    <h2 data-i18n="config.overlays.instructions.title">How SubMaker works in Stremio</h2>
+                </div>
+                <button type="button" class="modal-close" id="closeInstructionsBtn"
+                    title="Close instructions" aria-label="Close instructions"
+                    data-i18n="config.overlays.instructions.closeAria"
+                    data-i18n-attr="title,aria-label">&times;</button>
             </div>
-            <div class="modal-content">
-                <h3 data-i18n="config.overlays.instructions.usageTitle">Usage Instructions:</h3>
-                <ol>
-                    <li data-i18n="config.overlays.instructions.step1" data-i18n-attr="innerHTML">Add desired API keys to <strong>"Subtitles Sources"</strong> section.</li>
-                    <li data-i18n="config.overlays.instructions.step2" data-i18n-attr="innerHTML">Add a Gemini API Key to <strong>AI section</strong>.</li>
-                    <li data-i18n="config.overlays.instructions.step3" data-i18n-attr="innerHTML">Select <strong>source languages</strong>.</li>
-                    <li data-i18n="config.overlays.instructions.step4" data-i18n-attr="innerHTML">Select <strong>target languages</strong>.</li>
-                    <li data-i18n="config.overlays.instructions.step5" data-i18n-attr="innerHTML"><strong>Install on Stremio</strong>.</li>
-                </ol>
+            <div class="modal-content instructions-modal-content">
+                <section class="instructions-panel instructions-panel-primary">
+                    <h3 data-i18n="config.overlays.instructions.usageTitle">Basic setup</h3>
+                    <ol class="instructions-step-list">
+                        <li data-i18n="config.overlays.instructions.step1" data-i18n-attr="innerHTML">Enable the subtitle sources you want in <strong>Subtitles Sources</strong>.</li>
+                        <li data-i18n="config.overlays.instructions.step2" data-i18n-attr="innerHTML">Add your <strong>Gemini API key</strong> in the AI section.</li>
+                        <li data-i18n="config.overlays.instructions.step3" data-i18n-attr="innerHTML">Select <strong>source languages</strong>. One source language is usually best.</li>
+                        <li data-i18n="config.overlays.instructions.step4" data-i18n-attr="innerHTML">Select <strong>target languages</strong> for the <strong>"Make [Language]"</strong> lists.</li>
+                        <li data-i18n="config.overlays.instructions.step5" data-i18n-attr="innerHTML"><strong>Install in Stremio</strong> and open any video's subtitles list.</li>
+                    </ol>
+                </section>
 
-                <h3 data-i18n="config.overlays.instructions.stremioTitle">Stremio will:</h3>
-                <p data-i18n="config.overlays.instructions.stremioBody" data-i18n-attr="innerHTML">1. Fetch all Source and Target languages subtitles from sources.<br>
-                2. Create <strong>"Make [Target Language]"</strong> buttons within the subtitles list.<br>
-                3. All "Make" translation lists are in the same order of the Source language list.</p>
+                <div class="instructions-grid">
+                    <article class="instructions-card">
+                        <h3 data-i18n="config.overlays.instructions.stremioTitle">What SubMaker adds in Stremio</h3>
+                        <p data-i18n="config.overlays.instructions.stremioBody" data-i18n-attr="innerHTML">1. Fetches and shows subtitles in your selected source and target languages from the enabled subtitle providers.<br>2. Creates <strong>"Make [Target Language]"</strong> lists inside Stremio's subtitle picker.<br>3. Each <strong>"Make"</strong> list keeps the same order as the selected source-language list.</p>
+                    </article>
 
-                <h3 data-i18n="config.overlays.instructions.whenTitle">When you click a subtitle:</h3>
-                <p data-i18n="config.overlays.instructions.whenBody" data-i18n-attr="innerHTML">When a subtitle is clicked within the "Make" translation lists, it'll start translation.<br>
-                After 20-30 seconds, reload the same subtitle entry.<br>
-                It'll load <strong>translated</strong>!</p>
-                <div class="highlight-box" style="margin-top: 0.75rem; text-align: left;" data-i18n="config.overlays.instructions.quickTip" data-i18n-attr="innerHTML">
-                    <strong>Quick Tip:</strong> If a translation looks off, broken, or out of sync, quickly triple-click that subtitle in the list to force a fresh re-translation.
+                    <article class="instructions-card">
+                        <h3 data-i18n="config.overlays.instructions.whenTitle">When you use a "Make" subtitle entry</h3>
+                        <p data-i18n="config.overlays.instructions.whenBody" data-i18n-attr="innerHTML">Click a subtitle inside a <strong>"Make"</strong> list and SubMaker starts translating from the matching source subtitle.<br>After about 20-30 seconds, reload that same subtitle entry to see the translated version.</p>
+                    </article>
                 </div>
 
-                <p style="margin-top: 0.75rem;" data-i18n="config.overlays.instructions.ps" data-i18n-attr="innerHTML">
-                <b>PS:</b>
-                Partial translation is delivered in batches so you can start watching almost instantly.<br>
-                Complete translation may take from <strong>30 seconds-5 minutes</strong> depending on movie/episode length.</p>
+                <div class="instructions-grid instructions-grid-secondary">
+                    <article class="instructions-callout instructions-callout-info">
+                        <h3 data-i18n="config.overlays.instructions.quickTipTitle">Recovery tip</h3>
+                        <p data-i18n="config.overlays.instructions.quickTipBody" data-i18n-attr="innerHTML">If a translation looks broken, wrong, or out of sync while the source subtitle is fine, triple-click that same subtitle entry to force a fresh re-translation, or change translation settings.</p>
+                        <p class="instructions-footnote instructions-footnote-muted" data-i18n="config.overlays.instructions.ps" data-i18n-attr="innerHTML">Partial translation arrives in batches so you can start watching quickly. Full translation can still take <strong>30 seconds to 5 minutes</strong>, depending on the length of the movie or episode.</p>
+                    </article>
 
-                <div class="highlight-box">
-                    <p data-i18n="config.overlays.instructions.onlyOneSource" data-i18n-attr="innerHTML"><em>*Only 1 source language recommended:*</em></p>
-                    <p style="color: var(--text-secondary); font-weight: normal; margin-top: 0.5rem;" data-i18n="config.overlays.instructions.onlyOneSourceBody" data-i18n-attr="innerHTML">When the "Make" translation lists are created, they load the subtitles list in the same order of the source language.<br>That means you can test the source language subtitles for the correct sync and only then select the same one on the translation list instead of translating unsync'd subtitles.</p>
-                </div>	
+                    <article class="instructions-callout instructions-callout-warm">
+                        <h3 data-i18n="config.overlays.instructions.onlyOneSourceTitle">Only 1 source language is recommended</h3>
+                        <p data-i18n="config.overlays.instructions.onlyOneSourceBody" data-i18n-attr="innerHTML">Because the <strong>"Make"</strong> lists follow the same order as the source-language subtitles, you can test the source subtitles for sync first, then choose the matching entry in the translation list instead of translating a source subtitle that is already out of sync.</p>
+                        <p class="instructions-footnote" data-i18n="config.overlays.instructions.syncTipBody" data-i18n-attr="innerHTML"><strong>Sync tip:</strong> Check the middle and end of the source subtitles before translating, because sync drift often shows up there first.</p>
+                    </article>
+                </div>
             </div>
             <div class="modal-footer">
                 <label class="modal-checkbox">

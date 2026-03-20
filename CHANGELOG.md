@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.79
+
+**Improvements:**
+
+- **Reworked SubMaker instructions in both Quick Setup and Configure:** Step 4 in Quick Setup now includes a dedicated `SubMaker instructions` link with its own nested popup layered above the wizard, explaining how `Make [Target Language]` lists work, why a single source language is usually best, and when to reload a subtitle after starting translation. The main Configure instructions modal was also rewritten around the same source-order/sync guidance and restyled with a theme-aware hero/card layout for light, dark, and blackhole themes. All supported UI locales were updated with the new copy.
+
+**Bug Fixes:**
+
+- **Fixed SCS subtitle IDs failing validation and downloads when the upstream API returned human-readable `sub.id` values:** live Stremio Community Subtitles responses expose label-like IDs with spaces, colons, or brackets that are not valid SubMaker route params and are also not the real download key. SubMaker now derives its stored `scs_...` `fileId` from the opaque token embedded in `sub.url`, wraps any unsafe upstream identifier into a route-safe base64url payload when needed, keeps legacy `comm_*` downloads working, and falls back to a future sanitized `sub.id` if SCS later normalizes that field upstream. That fixes the current validation failures without relaxing the general `fileId` contract and stays compatible with both current and future SCS payload shapes.
+
+- **Fixed SubDL Cloudflare download blocks being misreported as API-key errors:** SubDL download failures that came back as Cloudflare challenge/block pages could previously fall through the generic `403` auth path and show users the wrong `SubDL API key error` guidance, even though the failure was on SubDL's download side. SubMaker now classifies those responses separately, shows a single `0 -> 4h` user-facing subtitle that says Cloudflare is blocking the SubDL download and to try another subtitle or later, and reuses the same copy for HTML challenge pages that arrive as invalid download bodies. SubDL ZIP downloads also now use a dedicated clean download client instead of inheriting JSON API headers from the search API client.
+
+- **Fixed translated xEmbed embedded subtitles being served with forced `.srt` semantics even when the cached translation was preserved as ASS/SSA:** addon-path embedded translations could reassemble and persist native ASS/SSA payloads, but the translated `/xembedded/...` download route still treated them like plain SRT downloads. Translated xEmbed deliveries now use the same shared format-aware delivery path as embedded originals, preserving or converting ASS/SSA/VTT according to the active subtitle output settings and returning matching MIME types and filename extensions. The embedded translation cache now also records the actual stored translated format so future readers do not have to guess from stale source metadata.
+
+- **Fixed Quick Setup language selection drifting from the main Configure language flow:** Quick Setup Step 4 no longer treats English as a permanently fixed source language. It now shows the current source language plus a `change` link that exits into the main `Source Languages` card with the wizard state preserved, and the wizard now persists/restores real `sourceLanguages` instead of hardcoding `eng`. Translate/Learn mode in Quick Setup now also uses the full `/api/languages/translation` target list with the shared extended-languages toggle and combined target+learn limit logic, restoring English and the regional/translation-capable languages that were missing there. Added regression coverage and finished the locale wiring for the new controls.
+
+- **Hardened the Quick Setup restore path and instructions modal accessibility:** Quick Setup now clamps restored `sourceLanguages`, fetch selections, and combined target/learn selections back to the same server-driven limits enforced in the main Configure flow, so older or hand-edited configs cannot reopen with invalid over-limit language state and get re-saved unchanged. The nested Quick Setup instructions popup now traps `Tab` focus correctly, and the main Configure instructions popup close control is now a real keyboard-focusable button with localized accessibility copy.
+
 ## SubMaker v1.4.78
 
 **Bug Fixes:**

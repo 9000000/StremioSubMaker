@@ -155,7 +155,7 @@ function validateDecodedForLanguage(decoded, langHint) {
   // Only validate for scripts where chardet commonly misdetects
   // Check if decoded text contains characters from the expected Unicode block
   const scriptChecks = {
-    // Arabic script: U+0600–U+06FF
+    // Arabic script: U+0600-U+06FF
     ar: /[\u0600-\u06FF]/,
     ara: /[\u0600-\u06FF]/,
     arabic: /[\u0600-\u06FF]/,
@@ -167,16 +167,16 @@ function validateDecodedForLanguage(decoded, langHint) {
     ur: /[\u0600-\u06FF]/,
     urd: /[\u0600-\u06FF]/,
     urdu: /[\u0600-\u06FF]/,
-    // Hebrew script: U+0590–U+05FF
+    // Hebrew script: U+0590-U+05FF
     he: /[\u0590-\u05FF]/,
     heb: /[\u0590-\u05FF]/,
     hebrew: /[\u0590-\u05FF]/,
-    // Greek script: U+0370–U+03FF
+    // Greek script: U+0370-U+03FF
     el: /[\u0370-\u03FF]/,
     ell: /[\u0370-\u03FF]/,
     gre: /[\u0370-\u03FF]/,
     greek: /[\u0370-\u03FF]/,
-    // Cyrillic script: U+0400–U+04FF
+    // Cyrillic script: U+0400-U+04FF
     ru: /[\u0400-\u04FF]/,
     rus: /[\u0400-\u04FF]/,
     russian: /[\u0400-\u04FF]/,
@@ -189,7 +189,7 @@ function validateDecodedForLanguage(decoded, langHint) {
     sr: /[\u0400-\u04FF]/,
     srp: /[\u0400-\u04FF]/,
     serbian: /[\u0400-\u04FF]/,
-    // Thai script: U+0E00–U+0E7F
+    // Thai script: U+0E00-U+0E7F
     th: /[\u0E00-\u0E7F]/,
     tha: /[\u0E00-\u0E7F]/,
     thai: /[\u0E00-\u0E7F]/,
@@ -202,7 +202,7 @@ function validateDecodedForLanguage(decoded, langHint) {
   const textOnly = decoded
     .replace(/\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d{3}/g, '')
     .replace(/^\d+\s*$/gm, '')
-    .replace(/[a-zA-Z0-9\s\r\n.,!?;:'"()\-–—…\[\]{}/<>\\|@#$%^&*+=~`_]/g, '')
+    .replace(/[a-zA-Z0-9\s\r\n.,!?;:'"()\-\u2013\u2014\u2026\[\]{}\/<>\\|@#$%^&*+=~`_]/g, '')
     .trim();
 
   // If there's meaningful non-ASCII text, check if it contains expected script characters
@@ -227,7 +227,7 @@ function detectAndConvertEncoding(content, source = 'Unknown', languageHint = nu
     if (typeof content === 'string') {
       // Check for common encoding corruption patterns
       // If we see replacement characters or other issues, try to re-encode
-      if (content.includes('\uFFFD') || content.includes('�')) {
+      if (content.includes('\uFFFD')) {
         log.warn(() => `[${source}] Detected replacement characters in string, may indicate encoding issues`);
       }
       return content;
@@ -307,7 +307,7 @@ function detectAndConvertEncoding(content, source = 'Unknown', languageHint = nu
       // byte ranges overlap. When we know the language, we can override bad detections.
       const hintEncodings = resolveLanguageEncodings(languageHint);
       if (hintEncodings && encoding !== 'utf-8') {
-        // chardet detected a non-UTF-8 encoding — check if it's plausible for the language
+        // chardet detected a non-UTF-8 encoding - check if it's plausible for the language
         const isDetectedPlausible = hintEncodings.includes(encoding);
 
         if (!isDetectedPlausible) {
@@ -330,7 +330,7 @@ function detectAndConvertEncoding(content, source = 'Unknown', languageHint = nu
               continue;
             }
           }
-          // None of the hinted encodings worked well — fall through to chardet's detection
+          // None of the hinted encodings worked well - fall through to chardet's detection
           log.debug(() => `[${source}] Language-hinted encodings didn't produce valid content, using chardet's ${detected}`);
         }
       }

@@ -96,6 +96,8 @@ async function makeRequestWithRetry(requestFn, context) {
 const SCS_API_URL = 'https://stremio-community-subtitles.top';
 const SCS_FALLBACK_TOKEN = 'yNejf3661w9R1Agdh7ARxE8MzhSVpL2TzMn5jueHFzw'; // Default community token
 const USER_AGENT = `SubMaker v${version}`;
+const SAFE_SCS_IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]+$/;
+const ENCODED_IDENTIFIER_PREFIX = 'idb64_';
 
 // ============================================================================
 // SCS TIMEOUT CONFIGURATION
@@ -105,6 +107,109 @@ const USER_AGENT = `SubMaker v${version}`;
 // Default timeout used when none specified.
 // ============================================================================
 const SCS_DEFAULT_TIMEOUT_MS = 15000;
+
+/**
+ * Extract the real SCS download identifier from a subtitle URL.
+ * Live SCS responses expose a human-readable `id`, but downloads are keyed by
+ * the opaque token embedded in `sub.url`.
+ * @param {string} downloadUrl
+ * @returns {string|null}
+ */
+function extractDownloadIdentifier(downloadUrl) {
+    if (!downloadUrl || typeof downloadUrl !== 'string') {
+        return null;
+    }
+
+    const matchIdentifier = (value) => {
+        const match = value.match(/\/download\/([^/]+)\.(?:vtt|srt|ass|ssa|sub)(?:[?#]|$)/i);
+        if (!match || !match[1]) {
+            return null;
+        }
+
+        try {
+            return decodeURIComponent(match[1]);
+        } catch (_) {
+            return match[1];
+        }
+    };
+
+    try {
+        const parsed = new URL(downloadUrl, SCS_API_URL);
+        return matchIdentifier(parsed.pathname);
+    } catch (_) {
+        return matchIdentifier(downloadUrl);
+    }
+}
+
+/**
+ * Normalize SCS file IDs for the download endpoint.
+ * Legacy SubMaker builds stored `comm_*` identifiers while live SCS responses
+ * now use the opaque download token directly.
+ * @param {string} fileId
+ * @returns {string}
+ */
+function normalizeDownloadIdentifier(fileId) {
+    const raw = String(fileId || '').trim();
+    if (!raw) {
+        throw new Error(`Invalid SCS file ID format: ${fileId}`);
+    }
+
+    if (raw.startsWith(ENCODED_IDENTIFIER_PREFIX)) {
+        const encoded = raw.slice(ENCODED_IDENTIFIER_PREFIX.length);
+        if (!encoded) {
+            throw new Error(`Invalid SCS encoded file ID format: ${fileId}`);
+        }
+
+        try {
+            return Buffer.from(encoded, 'base64url').toString('utf8');
+        } catch (_) {
+            throw new Error(`Invalid SCS encoded file ID format: ${fileId}`);
+        }
+    }
+
+    return raw.startsWith('comm_') ? raw.slice(5) : raw;
+}
+
+/**
+ * Resolve the actual SCS identifier exposed by the upstream API.
+ * Prefer the live opaque download token extracted from `sub.url`, but fall back
+ * to `sub.id` if SCS starts exposing the real identifier there directly.
+ * @param {{ id?: string, url?: string }} sub
+ * @returns {string|null}
+ */
+function resolveSearchResultIdentifier(sub) {
+    const urlIdentifier = extractDownloadIdentifier(sub?.url);
+    if (urlIdentifier) {
+        return urlIdentifier;
+    }
+
+    const candidateId = String(sub?.id || '').trim();
+    if (candidateId) {
+        return candidateId;
+    }
+
+    return null;
+}
+
+/**
+ * Convert an upstream SCS identifier into a route-safe SubMaker fileId payload.
+ * Safe identifiers pass through unchanged; unsafe ones are base64url-encoded
+ * so the generic fileId validation contract can stay strict.
+ * @param {string} identifier
+ * @returns {string|null}
+ */
+function toRouteSafeIdentifier(identifier) {
+    const raw = String(identifier || '').trim();
+    if (!raw) {
+        return null;
+    }
+
+    if (SAFE_SCS_IDENTIFIER_PATTERN.test(raw)) {
+        return raw;
+    }
+
+    return `${ENCODED_IDENTIFIER_PREFIX}${Buffer.from(raw, 'utf8').toString('base64url')}`;
+}
 
 // Circuit breaker pattern for SCS service resilience
 // Prevents repeated failed requests when service is down (SSL errors, Cloudflare blocks, etc.)
@@ -454,6 +559,13 @@ class StremioCommunitySubtitlesService {
             const results = response.data.subtitles.map((sub, index) => {
                 // Normalize language code: SCS uses ISO 639-2/T, SubMaker uses ISO 639-2/B
                 const normalizedLang = normalizeLanguageCode(sub.lang);
+                const upstreamIdentifier = resolveSearchResultIdentifier(sub);
+                const downloadIdentifier = toRouteSafeIdentifier(upstreamIdentifier);
+
+                if (!downloadIdentifier) {
+                    log.warn(() => `[SCS] Skipping subtitle with unusable identifier (id=${sub.id || 'unknown'}): ${sub.url || 'missing'}`);
+                    return null;
+                }
 
                 // Track for stats
                 const key = sub.lang === normalizedLang ? sub.lang : `${sub.lang}→${normalizedLang}`;
@@ -487,7 +599,7 @@ class StremioCommunitySubtitlesService {
                 const hashMatchPriority = hashMatch ? index : 100 + index;
 
                 return {
-                    id: `scs_${sub.id}`, // Prefix to identify provider
+                    id: `scs_${downloadIdentifier}`, // Prefix to identify provider
                     language: sub.lang,
                     languageCode: normalizedLang, // Normalized to ISO 639-2/B for SubMaker filtering
                     name: hashMatch ? `[SCS] Hash Match` : `[SCS] Community Subtitle`, // Indicate hash match in name
@@ -498,13 +610,13 @@ class StremioCommunitySubtitlesService {
                     score: hashMatch ? 200000 : 0, // Hash matches get max score for ranking
                     provider: 'stremio-community-subtitles',
                     is_season_pack: false, // SCS handles matching internally
-                    fileId: `scs_${sub.id}`, // Ensure fileId is set for download handling
+                    fileId: `scs_${downloadIdentifier}`, // Use the real download token from sub.url
                     // Hash match metadata
                     hashMatch: hashMatch,
                     hashMatchPriority: hashMatchPriority,
                     _scsHasRealHash: hasRealHash // Internal flag for ranking logic
                 };
-            });
+            }).filter(Boolean);
 
             // Log hash match stats
             const hashMatchCount = results.filter(r => r.hashMatch).length;
@@ -530,7 +642,7 @@ class StremioCommunitySubtitlesService {
 
     /**
      * Download subtitle content
-     * @param {string} fileId - The file ID (e.g. comm_XXXX)
+     * @param {string} fileId - The download identifier (legacy comm_* or live token)
      */
     async downloadSubtitle(fileId, options = {}) {
         // Use user's configured timeout directly - respect their choice
@@ -543,16 +655,11 @@ class StremioCommunitySubtitlesService {
         }
 
         try {
-            // fileId should be "comm_XXXX" (scs_ prefix removed by handler)
-            if (!fileId.startsWith('comm_')) {
-                throw new Error(`Invalid SCS file ID format: ${fileId}`);
-            }
-
-            const identifier = fileId.replace('comm_', '');
+            const identifier = normalizeDownloadIdentifier(fileId);
 
             // Construct download URL: /{token}/download/{identifier}.vtt
             // SCS expects .vtt or .ass extension in the download URL
-            const url = `/${this.manifestToken}/download/${identifier}.vtt`;
+            const url = `/${this.manifestToken}/download/${encodeURIComponent(identifier)}.vtt`;
 
             log.debug(() => `[SCS] Downloading from: ${url} (timeout: ${timeout}ms)`);
 

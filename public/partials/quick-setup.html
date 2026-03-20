@@ -277,10 +277,6 @@
                                 <span class="qs-check-icon">✓</span>
                                 <span><span data-i18n="config.quickSetup.step3.defaultModel">Model:</span> <strong id="qsQuickSetupDefaultModelValue" data-i18n="config.quickSetup.step3.defaultModelValue">Default Gemini model</strong></span>
                             </div>
-                            <div class="qs-ai-default-item">
-                                <span class="qs-check-icon">✓</span>
-                                <span><span data-i18n="config.quickSetup.step3.defaultFallback">Google Translate fallback:</span> <strong data-i18n="config.quickSetup.step3.defaultFallbackValue">Enabled</strong></span>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -294,10 +290,22 @@
                         <p class="qs-step-subtitle" id="qsLangSubtitle" data-i18n="config.quickSetup.step4.subtitleTranslate">What language do you want your subtitles in?</p>
                     </div>
 
+                    <div class="qs-step-link-row" id="qsInstructionsLinkWrap">
+                        <button type="button" class="qs-step-link" id="qsOpenInstructionsBtn" data-i18n="config.quickSetup.instructions.link">
+                            SubMaker Instructions
+                        </button>
+                    </div>
+
                     <!-- Source language info (translation mode) -->
                     <div class="qs-source-lang-info" id="qsSourceLangInfo">
                         <span class="qs-check-icon">✓</span>
-                        <span data-i18n="config.quickSetup.step4.sourceLangInfo" data-i18n-attr="innerHTML">Source language: <strong>English</strong> (fixed)</span>
+                        <span class="qs-source-lang-copy">
+                            <span id="qsSourceLangLabel" data-i18n="config.quickSetup.step4.sourceLangLabel">Source language:</span>
+                            <strong id="qsSourceLangValue">English</strong>
+                            <span>(</span>
+                            <button type="button" class="qs-inline-link" id="qsSourceLangChange" data-i18n="config.quickSetup.step4.sourceLangChange">change</button>
+                            <span>)</span>
+                        </span>
                     </div>
 
                     <!-- Language search -->
@@ -309,6 +317,14 @@
 
                     <!-- Selected languages chips -->
                     <div class="qs-selected-langs" id="qsSelectedLangs"></div>
+
+                    <div class="qs-extended-toggle" id="qsExtendedLanguagesWrap" style="display: none;">
+                        <label class="qs-extended-toggle-label">
+                            <input type="checkbox" id="qsExtendedLanguagesToggle">
+                            <span data-i18n="config.languageCards.extendedToggle">Extended languages list</span>
+                            <span class="qs-extended-toggle-hint" data-i18n="config.languageCards.extendedHint">Adds ~100 rare, ancient, and regional languages (AI translation only)</span>
+                        </label>
+                    </div>
 
                     <!-- Language grid -->
                     <div class="qs-lang-grid" id="qsLangGrid">
@@ -415,6 +431,14 @@
                     <!-- Selected learn languages chips -->
                     <div class="qs-selected-langs" id="qsSelectedLearnLangs"></div>
 
+                    <div class="qs-extended-toggle" id="qsExtendedLanguagesWrapLearn">
+                        <label class="qs-extended-toggle-label">
+                            <input type="checkbox" id="qsExtendedLanguagesToggleLearn">
+                            <span data-i18n="config.languageCards.extendedToggle">Extended languages list</span>
+                            <span class="qs-extended-toggle-hint" data-i18n="config.languageCards.extendedHint">Adds ~100 rare, ancient, and regional languages (AI translation only)</span>
+                        </label>
+                    </div>
+
                     <!-- Learn language grid -->
                     <div class="qs-lang-grid" id="qsLearnLangGrid">
                         <div class="qs-lang-loading" data-i18n="config.quickSetup.step4.loading">Loading languages...</div>
@@ -474,6 +498,47 @@
             <button type="button" class="qs-btn qs-btn-primary" id="qsNextBtn" data-i18n="config.quickSetup.next">
                 Next →
             </button>
+        </div>
+    </div>
+
+    <div class="qs-modal-layer" id="qsInstructionsModal" aria-hidden="true">
+        <div class="qs-modal-backdrop" id="qsInstructionsBackdrop"></div>
+        <div class="qs-modal-card" role="dialog" aria-modal="true" aria-labelledby="qsInstructionsTitle">
+            <div class="qs-modal-card-header">
+                <div class="qs-modal-card-heading">
+                    <div class="qs-modal-eyebrow" data-i18n="config.quickSetup.instructions.eyebrow">Quick Setup guide</div>
+                    <h3 class="qs-modal-title" id="qsInstructionsTitle" data-i18n="config.quickSetup.instructions.title">What SubMaker does</h3>
+                </div>
+                <button type="button" class="qs-modal-close" id="qsCloseInstructionsBtn"
+                    title="Close instructions" aria-label="Close instructions"
+                    data-i18n-title="config.quickSetup.instructions.closeAria"
+                    data-i18n-aria-label="config.quickSetup.instructions.closeAria">&times;</button>
+            </div>
+            <div class="qs-modal-card-body">
+                <div class="qs-info-card qs-info-card-primary">
+                    <ol class="qs-instructions-list">
+                        <li data-i18n="config.quickSetup.instructions.item1" data-i18n-attr="innerHTML">Fetches and shows all <strong>Source</strong> and <strong>Target</strong> language subtitles from subtitle sources.</li>
+                        <li data-i18n="config.quickSetup.instructions.item2" data-i18n-attr="innerHTML">Creates <strong>"Make [Target Language]"</strong> translation lists inside Stremio's subtitles list.</li>
+                        <li data-i18n="config.quickSetup.instructions.item3" data-i18n-attr="innerHTML"><strong>All "Make" translation lists keep the same order as the selected Source language subtitles list.</strong></li>
+                    </ol>
+                </div>
+
+                <div class="qs-info-card">
+                    <h4 data-i18n="config.quickSetup.instructions.clickTitle">How translation starts</h4>
+                    <p data-i18n="config.quickSetup.instructions.clickBody" data-i18n-attr="innerHTML">When you click a subtitle inside a <strong>"Make"</strong> translation list, SubMaker starts translating it from the selected source subtitle.<br>After 20-30 seconds, reload the same subtitle entry.<br>It should load <strong>translated</strong>.</p>
+                </div>
+
+                <div class="qs-info-card qs-info-card-warm">
+                    <h4 data-i18n="config.quickSetup.instructions.sourceTitle">Only 1 source language recommended</h4>
+                    <p data-i18n="config.quickSetup.instructions.sourceBody" data-i18n-attr="innerHTML">When <strong>"Make"</strong> translation lists are created, they follow the same subtitle order as the source language.<br>That lets you test the source subtitles for sync first, then choose the matching entry in the translation list instead of translating a source subtitle that is already out of sync.</p>
+                    <p class="qs-info-tip" data-i18n="config.quickSetup.instructions.tip" data-i18n-attr="innerHTML"><strong>Tip:</strong> Check for sync drift around the middle and end of the source subtitles before translating.</p>
+                </div>
+            </div>
+            <div class="qs-modal-card-footer">
+                <button type="button" class="qs-btn qs-btn-primary" id="qsInstructionsGotItBtn">
+                    <span data-i18n="config.overlays.shared.gotIt">Got it!</span>
+                </button>
+            </div>
         </div>
     </div>
 </div>

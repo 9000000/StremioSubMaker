@@ -3331,6 +3331,7 @@ label:has(#subToolboxEnabled:disabled) {
 /* (modal-header emboss reverted to original) */
 
 .modal-close {
+    appearance: none;
     position: absolute;
     top: 1.5rem;
     right: 1.5rem;
@@ -3346,6 +3347,8 @@ label:has(#subToolboxEnabled:disabled) {
     transition: all 0.2s ease;
     font-size: 1.25rem;
     color: var(--text-secondary);
+    padding: 0;
+    font-family: inherit;
 }
 
 .modal-close:hover {
@@ -3353,6 +3356,11 @@ label:has(#subToolboxEnabled:disabled) {
     border-color: var(--danger);
     color: var(--danger);
     transform: rotate(90deg);
+}
+
+.modal-close:focus-visible {
+    outline: 2px solid var(--primary-light);
+    outline-offset: 3px;
 }
 
 .modal-content {
@@ -3502,6 +3510,243 @@ label:has(#subToolboxEnabled:disabled) {
     color: var(--text-secondary);
     font-weight: 500;
     margin: 0;
+}
+
+.instructions-modal {
+    --instructions-hero-bg: linear-gradient(135deg, rgba(8, 164, 213, 0.18) 0%, rgba(51, 185, 225, 0.08) 48%, rgba(255, 255, 255, 0.22) 100%);
+    --instructions-card-bg: rgba(255, 255, 255, 0.72);
+    --instructions-card-border: rgba(15, 23, 42, 0.08);
+    --instructions-panel-bg: linear-gradient(135deg, rgba(8, 164, 213, 0.12), rgba(255, 255, 255, 0.85));
+    --instructions-panel-border: rgba(8, 164, 213, 0.22);
+    --instructions-callout-info-bg: rgba(8, 164, 213, 0.09);
+    --instructions-callout-info-border: rgba(8, 164, 213, 0.2);
+    --instructions-callout-neutral-bg: rgba(15, 23, 42, 0.04);
+    --instructions-callout-neutral-border: rgba(15, 23, 42, 0.08);
+    --instructions-callout-warm-bg: rgba(245, 158, 11, 0.12);
+    --instructions-callout-warm-border: rgba(245, 158, 11, 0.24);
+    width: min(92vw, 680px);
+    max-width: 680px;
+    max-height: min(82vh, 720px);
+    border-radius: 22px;
+    overflow: hidden;
+}
+
+.instructions-modal::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(circle at top left, rgba(8, 164, 213, 0.14), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(245, 158, 11, 0.12), transparent 28%);
+    pointer-events: none;
+}
+
+.instructions-modal-header {
+    padding: 1.2rem 1.25rem 1rem;
+    background: var(--instructions-hero-bg);
+}
+
+.instructions-modal-header h2 {
+    display: block;
+    font-size: 1.35rem;
+    line-height: 1.18;
+    width: 100%;
+    text-align: center;
+}
+
+.instructions-hero-copy {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 0 2.75rem;
+}
+
+.instructions-eyebrow {
+    margin-bottom: 0.55rem;
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--primary-light);
+}
+
+.instructions-intro {
+    margin: 0.65rem 0 0;
+    max-width: 54rem;
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+
+.instructions-modal-content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.85rem;
+    padding: 1rem 1.15rem 1.05rem;
+    text-align: center;
+}
+
+.instructions-panel,
+.instructions-card,
+.instructions-callout {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.95rem 1rem;
+    border-radius: 16px;
+    background: var(--instructions-card-bg);
+    border: 1px solid var(--instructions-card-border);
+    overflow: visible;
+    text-align: center;
+}
+
+.instructions-panel-primary {
+    background: var(--instructions-panel-bg);
+    border-color: var(--instructions-panel-border);
+}
+
+.instructions-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+}
+
+.instructions-grid-secondary {
+    grid-template-columns: 1fr;
+}
+
+.instructions-modal-content h3,
+.instructions-panel h3,
+.instructions-card h3,
+.instructions-callout h3 {
+    display: block;
+    width: 100%;
+    text-align: center;
+    margin: 0 0 0.65rem;
+    font-size: 1rem;
+    line-height: 1.35;
+    padding-bottom: 0.06rem;
+}
+
+.instructions-step-list {
+    margin: 0.2rem 0 0;
+    max-width: none;
+    padding-left: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: min(100%, 31rem);
+    margin-inline: auto;
+    text-align: left;
+}
+
+.instructions-step-list li {
+    margin: 0.45rem 0;
+    color: var(--text-primary);
+}
+
+.instructions-step-list li::marker {
+    color: var(--primary-light);
+    font-weight: 700;
+}
+
+.instructions-card p,
+.instructions-callout p {
+    margin: 0;
+    line-height: 1.7;
+    text-align: center;
+}
+
+.instructions-callout-info {
+    background: var(--instructions-callout-info-bg);
+    border-color: var(--instructions-callout-info-border);
+}
+
+.instructions-callout-neutral {
+    background: var(--instructions-callout-neutral-bg);
+    border-color: var(--instructions-callout-neutral-border);
+}
+
+.instructions-callout-warm {
+    background: var(--instructions-callout-warm-bg);
+    border-color: var(--instructions-callout-warm-border);
+}
+
+.instructions-footnote {
+    margin-top: 0.8rem !important;
+    padding-top: 0.8rem;
+    border-top: 1px dashed rgba(245, 158, 11, 0.35);
+    font-size: 0.95rem;
+}
+
+.instructions-footnote-muted {
+    border-top-color: rgba(15, 23, 42, 0.14);
+    color: var(--text-secondary);
+}
+
+.instructions-modal .modal-footer {
+    padding: 0.9rem 1.15rem 1rem;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.08)), var(--bg-secondary);
+}
+
+.instructions-modal .modal-checkbox {
+    margin-right: 0;
+    justify-content: center;
+}
+
+[data-theme="dark"] .instructions-modal {
+    --instructions-hero-bg: linear-gradient(135deg, rgba(8, 164, 213, 0.24) 0%, rgba(51, 185, 225, 0.08) 48%, rgba(255, 255, 255, 0.02) 100%);
+    --instructions-card-bg: rgba(255, 255, 255, 0.04);
+    --instructions-card-border: rgba(255, 255, 255, 0.08);
+    --instructions-panel-bg: linear-gradient(135deg, rgba(8, 164, 213, 0.18), rgba(255, 255, 255, 0.04));
+    --instructions-panel-border: rgba(125, 211, 232, 0.2);
+    --instructions-callout-info-bg: rgba(8, 164, 213, 0.1);
+    --instructions-callout-info-border: rgba(125, 211, 232, 0.18);
+    --instructions-callout-neutral-bg: rgba(255, 255, 255, 0.03);
+    --instructions-callout-neutral-border: rgba(255, 255, 255, 0.08);
+    --instructions-callout-warm-bg: rgba(245, 158, 11, 0.08);
+    --instructions-callout-warm-border: rgba(245, 158, 11, 0.18);
+}
+
+[data-theme="blackhole"] .instructions-modal {
+    --instructions-hero-bg: linear-gradient(135deg, rgba(8, 164, 213, 0.22) 0%, rgba(255, 255, 255, 0.03) 52%, rgba(0, 0, 0, 0.12) 100%);
+    --instructions-card-bg: rgba(255, 255, 255, 0.025);
+    --instructions-card-border: rgba(255, 255, 255, 0.06);
+    --instructions-panel-bg: linear-gradient(135deg, rgba(8, 164, 213, 0.16), rgba(255, 255, 255, 0.02));
+    --instructions-panel-border: rgba(125, 211, 232, 0.15);
+    --instructions-callout-info-bg: rgba(8, 164, 213, 0.08);
+    --instructions-callout-info-border: rgba(125, 211, 232, 0.14);
+    --instructions-callout-neutral-bg: rgba(255, 255, 255, 0.02);
+    --instructions-callout-neutral-border: rgba(255, 255, 255, 0.05);
+    --instructions-callout-warm-bg: rgba(245, 158, 11, 0.06);
+    --instructions-callout-warm-border: rgba(245, 158, 11, 0.14);
+}
+
+@media (max-width: 700px) {
+    .instructions-modal {
+        width: calc(100% - 1rem);
+        max-height: calc(100vh - 1rem);
+    }
+
+    .instructions-modal-header {
+        padding: 1.05rem 1rem 0.9rem;
+    }
+
+    .instructions-hero-copy {
+        padding: 0 2.25rem;
+    }
+
+    .instructions-modal-content {
+        padding: 0.9rem 1rem 1rem;
+    }
+
 }
 
 @keyframes fadeIn {

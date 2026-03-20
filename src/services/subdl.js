@@ -32,6 +32,20 @@ class SubDLService {
     decompress: true
   });
 
+  // Keep ZIP downloads separate so the file host does not inherit JSON API headers.
+  static downloadClient = axios.create({
+    headers: {
+      'User-Agent': USER_AGENT,
+      'Accept': '*/*'
+    },
+    httpAgent,
+    httpsAgent,
+    lookup: dnsLookup,
+    timeout: 18000,
+    maxRedirects: 5,
+    decompress: true
+  });
+
   constructor(apiKey = null) {
     // Ensure apiKey is always a string (protect against objects/undefined)
     this.apiKey = (typeof apiKey === 'string') ? apiKey : '';
@@ -383,11 +397,8 @@ class SubDLService {
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          subtitleResponse = await this.client.get(downloadUrl, {
+          subtitleResponse = await SubDLService.downloadClient.get(downloadUrl, {
             responseType: 'arraybuffer',
-            headers: {
-              'User-Agent': USER_AGENT
-            },
             timeout: timeout // Use configurable timeout
           });
           break; // Success, exit retry loop
