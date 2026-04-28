@@ -31,11 +31,11 @@
 
 **No setup required!**
 
-### **[https://submaker.elfhosted.com](https://submaker.elfhosted.com)**
+### **[https://submaker.elfhosted.com](https://submaker.elfhosted.com?utm_source=github&utm_medium=readme&utm_campaign=stremiosubmaker-readme)**
 
-Configure, install, done. A huge thanks to [ElfHosted](https://elfhosted.com) for the free community hosting!
+Configure, install, done. A huge thanks to [ElfHosted](https://elfhosted.com?utm_source=github&utm_medium=readme&utm_campaign=stremiosubmaker-readme) for the free community hosting!
 
-Check their [FREE Stremio Addons Guide](https://stremio-addons-guide.elfhosted.com/) for more great addons and features!
+Check their [FREE Stremio Addons Guide](https://stremio-addons-guide.elfhosted.com/?utm_source=github&utm_medium=readme&utm_campaign=stremiosubmaker-readme) for more great addons and features!
 
 > For self-hosting, see [Quick Start](#-quick-start) below.
 
@@ -233,7 +233,7 @@ Click the **Reset** button at the bottom of the config page.
 - Stremio team for excellent addon SDK
 - Google for free Gemini API access
 - All subtitle communities
-- [ElfHosted](https://elfhosted.com/) — Free community hosting
+- [ElfHosted](https://elfhosted.com/?utm_source=github&utm_medium=readme&utm_campaign=stremiosubmaker-readme) — Free community hosting
 
 ---
 
