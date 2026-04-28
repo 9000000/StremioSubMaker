@@ -288,8 +288,7 @@ class SubSourceService {
     try {
       // Check if API key is provided
       if (!this.apiKey || this.apiKey.trim() === '') {
-        log.error(() => '[SubSource] API key is required for SubSource API');
-        log.error(() => '[SubSource] Please get a free API key from https://subsource.net/');
+        log.debug(() => '[SubSource] API key is missing; skipping search');
         return [];
       }
 

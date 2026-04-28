@@ -356,6 +356,58 @@ function sanitizeLanguages(list) {
   return Array.from(deduped);
 }
 
+function normalizeProviderApiKey(value) {
+  if (value === undefined || value === null) return '';
+  const normalized = String(value).trim();
+  if (normalized === '[object Object]' || normalized === '[object Array]') return '';
+  return normalized;
+}
+
+function getLegacySubtitleProviderApiKey(config, providerKey) {
+  const legacyFields = {
+    subdl: ['SubDLAPIKey', 'SubDLApiKey', 'subDLAPIKey', 'subdlApiKey', 'subdl_api_key'],
+    subsource: ['SubSourceAPIKey', 'SubSourceAPiKey', 'SubSourceApiKey', 'subSourceAPIKey', 'subsourceApiKey', 'subsource_api_key']
+  };
+  const fields = legacyFields[providerKey] || [];
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(config || {}, field)) {
+      const apiKey = normalizeProviderApiKey(config[field]);
+      if (apiKey) return apiKey;
+    }
+  }
+  return '';
+}
+
+function normalizeApiKeySubtitleProvider(mergedConfig, rawConfig, providerKey) {
+  const providerConfig = mergedConfig.subtitleProviders?.[providerKey];
+  if (!providerConfig || typeof providerConfig !== 'object') return;
+
+  const rawProviders = rawConfig?.subtitleProviders && typeof rawConfig.subtitleProviders === 'object'
+    ? rawConfig.subtitleProviders
+    : {};
+  const rawProviderPresent = Object.prototype.hasOwnProperty.call(rawProviders, providerKey);
+  const legacyApiKey = getLegacySubtitleProviderApiKey(rawConfig, providerKey);
+  const configuredApiKey = normalizeProviderApiKey(providerConfig.apiKey);
+  const apiKey = configuredApiKey || legacyApiKey;
+
+  providerConfig.apiKey = apiKey;
+
+  if (!rawProviderPresent && !legacyApiKey) {
+    providerConfig.enabled = providerConfig.enabled === true && !!apiKey;
+    return;
+  }
+
+  if (legacyApiKey && !rawProviderPresent) {
+    providerConfig.enabled = true;
+  } else {
+    providerConfig.enabled = providerConfig.enabled === true;
+  }
+
+  if (providerConfig.enabled && !apiKey) {
+    providerConfig.enabled = false;
+  }
+}
+
 /**
  * Normalize and merge config with defaults
  * @param {Object} config - User configuration
@@ -414,6 +466,9 @@ function normalizeConfig(config) {
       ...(config.autoSubs || {})
     }
   };
+
+  normalizeApiKeySubtitleProvider(mergedConfig, config, 'subdl');
+  normalizeApiKeySubtitleProvider(mergedConfig, config, 'subsource');
 
   // Model-aware default for DeepSeek max output tokens:
   // - deepseek-chat: 8k

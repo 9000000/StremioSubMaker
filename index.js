@@ -1474,7 +1474,8 @@ const DEFAULT_STREMIO_WEB_ORIGINS = [
     'https://stremio.github.io',
     // Third-party Stremio web frontends
     'https://stremio-neo.aayushcodes.eu',
-    'https://peario.xyz'
+    'https://peario.xyz',
+    'https://web.nuvioapp.space'
 ];
 const allowedOriginsNormalized = Array.from(new Set([
     ...allowedOrigins.map(normalizeOrigin),
@@ -3237,7 +3238,7 @@ app.post('/api/validate-subdl', validationLimiter, async (req, res) => {
 
     try {
         const t = res.locals?.t || getTranslatorFromRequest(req, res);
-        const { apiKey } = req.body;
+        const apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
 
         if (!apiKey) {
             return res.status(400).json({
@@ -3255,10 +3256,14 @@ app.post('/api/validate-subdl', validationLimiter, async (req, res) => {
         try {
             const response = await axios.get(subdlUrl, {
                 params: {
-                    api_key: apiKey.trim(),
+                    api_key: apiKey,
                     imdb_id: 'tt0133093',
                     languages: 'EN',
-                    type: 'movie'
+                    type: 'movie',
+                    // Keep validation aligned with SubDLService.searchSubtitles().
+                    // SubDL currently returns "Not Authorized" for some valid-key
+                    // requests when this pagination parameter is omitted.
+                    subs_per_page: 30
                 },
                 headers: {
                     'User-Agent': 'StremioSubtitleTranslator v1.0',
@@ -3282,7 +3287,7 @@ app.post('/api/validate-subdl', validationLimiter, async (req, res) => {
                 // API returned error status
                 res.json({
                     valid: false,
-                    error: response.data.error || t('server.errors.invalidApiKey', {}, 'Invalid API key')
+                    error: response.data.error || response.data.message || t('server.errors.invalidApiKey', {}, 'Invalid API key')
                 });
             } else {
                 // Unexpected response format
@@ -3299,11 +3304,11 @@ app.post('/api/validate-subdl', validationLimiter, async (req, res) => {
                     valid: false,
                     error: t('server.errors.invalidApiKeyAuth', {}, 'Invalid API key - authentication failed')
                 });
-            } else if (apiError.response?.data?.error) {
+            } else if (apiError.response?.data?.error || apiError.response?.data?.message) {
                 // SubDL may return error in response body
                 res.json({
                     valid: false,
-                    error: apiError.response.data.error
+                    error: apiError.response.data.error || apiError.response.data.message
                 });
             } else {
                 throw apiError;
@@ -3976,6 +3981,35 @@ app.post('/api/session-state/:token', async (req, res) => {
         if (respondStorageUnavailable(res, error, '[Session API] session-state', t)) return;
         log.error(() => '[Session API] Error updating session state:', error);
         res.status(500).json({ error: t('server.errors.sessionUpdateFailed', {}, 'Failed to update session') });
+    }
+});
+
+app.delete('/api/session/:token', async (req, res) => {
+    try {
+        setNoStore(res);
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        const { token } = req.params;
+
+        if (!token || !/^[a-f0-9]{32}$/.test(token)) {
+            return res.status(400).json({ error: t('server.errors.sessionTokenFormat', {}, 'Invalid session token format') });
+        }
+
+        const deleted = await sessionManager.deleteSessionEverywhere(token);
+        if (!deleted) {
+            return res.status(404).json({ error: t('server.errors.sessionNotFound', {}, 'Session not found') });
+        }
+
+        res.json({
+            success: true,
+            deleted: true,
+            token: redactToken(token),
+            message: t('server.session.deleted', {}, 'Session deleted')
+        });
+    } catch (error) {
+        const t = res.locals?.t || getTranslatorFromRequest(req, res);
+        if (respondStorageUnavailable(res, error, '[Session API] session-delete', t)) return;
+        log.error(() => '[Session API] Error deleting session:', error);
+        res.status(500).json({ error: t('server.errors.sessionDeleteFailed', {}, 'Failed to delete session') });
     }
 });
 

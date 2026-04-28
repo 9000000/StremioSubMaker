@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.81
+
+**New Features:**
+
+- **Added complete Token Vault removal for saved sessions:** The Token Vault manager now includes a `Complete Removal` action that permanently deletes a token from SubMaker storage, clears the browser vault copy, and requires rewriting the exact token before deletion. Server-side deletion now removes loaded and storage-only sessions, alternate storage-prefix remnants, on-disk snapshot entries, token-linked history namespaces, and local caches; deleting the active page token detaches the page into a recovered draft so the current form state is kept only until the user saves again.
+
+**Bug Fixes:**
+
+- **Fixed Nuvio web clients being rejected by the origin policy:** `https://web.nuvioapp.space` is now included in the default known Stremio web frontend origins, so browser-origin addon requests from Nuvio follow the same CORS path as the other supported web frontends without opening a broad `*.nuvioapp.space` wildcard.
+
+- **Fixed Quick Setup SubDL API-key validation false failures:** The `Test SubDL API` path now matches the real SubDL provider search request by including `subs_per_page`, which avoids `Not Authorized` responses for valid keys when actual SubDL search/download already works. The validation fix is in `/api/validate-subdl` and follows the documented SubDL search request shape from [SubDL's API docs](https://subdl.com/api-doc).
+
+- **Fixed empty SubDL/SubSource API-key configs creating noisy no-result searches:** Omitted or keyless SubDL/SubSource configs now normalize to `enabled: false`, subtitle search dispatch skips those providers unless a usable API key is present, and the service-level missing-key fallback now logs at debug level and returns no results instead of producing provider errors.
+
 ## SubMaker v1.4.80
 
 **Improvements:**

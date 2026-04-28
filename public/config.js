@@ -594,6 +594,30 @@
         };
     }
 
+    function resolveCompleteTokenRemovalPlan(options = {}) {
+        if (configPageState && typeof configPageState.resolveCompleteTokenRemovalPlan === 'function') {
+            return configPageState.resolveCompleteTokenRemovalPlan(options);
+        }
+        const targetToken = String(options.targetToken || '').trim().toLowerCase();
+        const activeToken = String(options.activeToken || '').trim().toLowerCase();
+        const isActiveToken = isValidSessionToken(targetToken) && targetToken === activeToken;
+
+        return {
+            isValidToken: isValidSessionToken(targetToken),
+            deletedActiveToken: isActiveToken,
+            clearStoredToken: isActiveToken,
+            nextCacheToken: '',
+            nextContext: isActiveToken ? {
+                token: '',
+                provenance: 'recovered',
+                sourceLabel: 'Recovered draft',
+                message: 'This token was permanently removed. You are editing the last local copy until you save again.',
+                recoveredFromToken: targetToken,
+                regenerated: true
+            } : null
+        };
+    }
+
     function resolveToolboxLauncherState(options = {}) {
         if (configPageState && typeof configPageState.resolveToolboxLauncherState === 'function') {
             return configPageState.resolveToolboxLauncherState(options);
@@ -1722,6 +1746,49 @@ Translate to {target_language}.`;
         return sortVaultEntries(store.entries).slice(TOKEN_VAULT_MAX_ENTRIES - 1);
     }
 
+    function normalizeTokenVaultOverrideVerificationValue(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function tokenVaultOverrideRequiresVerification(state = tokenVaultOverrideState) {
+        return isValidSessionToken(state?.verificationToken || '');
+    }
+
+    function isTokenVaultOverrideVerificationSatisfied(state = tokenVaultOverrideState) {
+        if (!tokenVaultOverrideRequiresVerification(state)) {
+            return true;
+        }
+        return normalizeTokenVaultOverrideVerificationValue(state?.verificationValue) === normalizeTokenVaultOverrideVerificationValue(state?.verificationToken);
+    }
+
+    function syncTokenVaultOverrideConfirmationUi() {
+        const state = tokenVaultOverrideState;
+        const input = document.getElementById('tokenVaultOverrideVerificationInput');
+        const statusEl = document.getElementById('tokenVaultOverrideVerificationStatus');
+        const confirmBtn = document.querySelector('#tokenVaultOverrideModal [data-vault-override-action="confirm"]');
+        const requiresVerification = tokenVaultOverrideRequiresVerification(state);
+        const isSatisfied = isTokenVaultOverrideVerificationSatisfied(state);
+
+        if (input && state) {
+            const nextValue = String(state.verificationValue || '');
+            if (input.value !== nextValue) {
+                input.value = nextValue;
+            }
+            input.setAttribute('aria-invalid', requiresVerification && !isSatisfied ? 'true' : 'false');
+        }
+
+        if (statusEl && state) {
+            statusEl.dataset.state = isSatisfied ? 'ready' : 'pending';
+            statusEl.textContent = isSatisfied
+                ? (state.verificationStatusReady || 'Token matches. You can continue.')
+                : (state.verificationStatusPending || 'Rewrite the exact token to unlock this action.');
+        }
+
+        if (confirmBtn) {
+            confirmBtn.disabled = !state || (requiresVerification && !isSatisfied);
+        }
+    }
+
     function renderTokenVaultOverridePrompt() {
         const content = document.getElementById('tokenVaultOverrideContent');
         if (!content) return;
@@ -1736,6 +1803,30 @@ Translate to {target_language}.`;
         const victims = Array.isArray(tokenVaultOverrideState.victims)
             ? tokenVaultOverrideState.victims.map(describeVaultEntry).filter(Boolean)
             : [];
+        const requiresVerification = tokenVaultOverrideRequiresVerification(tokenVaultOverrideState);
+        const verificationSatisfied = isTokenVaultOverrideVerificationSatisfied(tokenVaultOverrideState);
+        const verificationValue = String(tokenVaultOverrideState.verificationValue || '');
+        const verificationMarkup = requiresVerification
+            ? `<div class="token-vault-override-verify">
+                    <label class="token-vault-override-verify-label" for="tokenVaultOverrideVerificationInput">${escapeVaultHtml(tokenVaultOverrideState.verificationLabel || 'Rewrite this token to confirm')}</label>
+                    ${tokenVaultOverrideState.verificationHint ? `<p class="token-vault-override-verify-copy">${escapeVaultHtml(tokenVaultOverrideState.verificationHint)}</p>` : ''}
+                    <code class="token-vault-override-verify-token">${escapeVaultHtml(tokenVaultOverrideState.verificationToken)}</code>
+                    <input
+                        type="text"
+                        id="tokenVaultOverrideVerificationInput"
+                        class="token-vault-override-verify-input"
+                        value="${escapeVaultHtml(verificationValue)}"
+                        placeholder="${escapeVaultHtml(tokenVaultOverrideState.verificationPlaceholder || 'Paste or type the exact token')}"
+                        autocomplete="off"
+                        autocapitalize="off"
+                        autocorrect="off"
+                        spellcheck="false"
+                        aria-describedby="tokenVaultOverrideVerificationStatus"
+                        aria-invalid="${verificationSatisfied ? 'false' : 'true'}"
+                    >
+                    <p id="tokenVaultOverrideVerificationStatus" class="token-vault-override-verify-status" data-state="${verificationSatisfied ? 'ready' : 'pending'}">${escapeVaultHtml(verificationSatisfied ? (tokenVaultOverrideState.verificationStatusReady || 'Token matches. You can continue.') : (tokenVaultOverrideState.verificationStatusPending || 'Rewrite the exact token to unlock this action.'))}</p>
+                </div>`
+            : '';
         const victimHtml = victims.map(victim => `<article class="token-vault-override-victim ${victim.isActive ? 'is-active' : ''}">
                 <div class="token-vault-override-victim-copy">
                     <strong>${escapeVaultHtml(victim.label)}</strong>
@@ -1759,10 +1850,12 @@ Translate to {target_language}.`;
                 ${tokenVaultOverrideState.detail ? `<p class="token-vault-override-detail">${escapeVaultHtml(tokenVaultOverrideState.detail)}</p>` : ''}
             </div>
             ${victimHtml ? `<div class="token-vault-override-list">${victimHtml}</div>` : ''}
+            ${verificationMarkup}
             <div class="token-vault-override-actions">
                 <button type="button" class="token-vault-action" data-vault-override-action="cancel">${escapeVaultHtml(tokenVaultOverrideState.cancelLabel || 'Cancel')}</button>
-                <button type="button" class="token-vault-action ${escapeVaultHtml(confirmClass)}" data-vault-override-action="confirm">${escapeVaultHtml(tokenVaultOverrideState.confirmLabel || 'Continue')}</button>
+                <button type="button" class="token-vault-action ${escapeVaultHtml(confirmClass)}" data-vault-override-action="confirm" ${requiresVerification && !verificationSatisfied ? 'disabled' : ''}>${escapeVaultHtml(tokenVaultOverrideState.confirmLabel || 'Continue')}</button>
             </div>`;
+        syncTokenVaultOverrideConfirmationUi();
     }
 
     function openTokenVaultOverridePrompt(state) {
@@ -1771,6 +1864,8 @@ Translate to {target_language}.`;
             tone: 'warning',
             emblem: '+',
             confirmClass: 'token-vault-action-primary',
+            verificationToken: '',
+            verificationValue: '',
             ...state
         };
         const modal = document.getElementById('tokenVaultOverrideModal');
@@ -1779,8 +1874,21 @@ Translate to {target_language}.`;
             modal.dataset.tone = tokenVaultOverrideState.tone || 'warning';
             modal.classList.add('show');
             modal.style.display = 'flex';
+            const panel = modal.querySelector('.token-vault-override-panel');
+            if (panel) {
+                panel.dataset.tone = tokenVaultOverrideState.tone || 'warning';
+            }
         }
         updateBodyScrollLock();
+        requestAnimationFrame(() => {
+            const verificationInput = document.getElementById('tokenVaultOverrideVerificationInput');
+            if (verificationInput) {
+                verificationInput.focus();
+                verificationInput.select();
+                return;
+            }
+            modal?.querySelector('[data-vault-override-action="cancel"]')?.focus();
+        });
     }
 
     async function closeTokenVaultOverridePrompt(cancelled = false) {
@@ -1789,6 +1897,10 @@ Translate to {target_language}.`;
         const modal = document.getElementById('tokenVaultOverrideModal');
         if (modal) {
             delete modal.dataset.tone;
+            const panel = modal.querySelector('.token-vault-override-panel');
+            if (panel) {
+                delete panel.dataset.tone;
+            }
             modal.classList.remove('show');
             modal.style.display = 'none';
         }
@@ -1800,13 +1912,18 @@ Translate to {target_language}.`;
 
     async function handleTokenVaultOverrideAction(actionEl) {
         const action = actionEl?.dataset?.vaultOverrideAction;
-        if (!action) return;
+        if (!action || actionEl.disabled) return;
         if (action === 'cancel') {
             await closeTokenVaultOverridePrompt(true);
             return;
         }
         if (action === 'confirm') {
             const state = tokenVaultOverrideState;
+            if (!isTokenVaultOverrideVerificationSatisfied(state)) {
+                document.getElementById('tokenVaultOverrideVerificationInput')?.focus();
+                syncTokenVaultOverrideConfirmationUi();
+                return;
+            }
             await closeTokenVaultOverridePrompt(false);
             if (state && typeof state.onConfirm === 'function') {
                 await state.onConfirm();
@@ -2848,6 +2965,12 @@ Translate to {target_language}.`;
             `<span class="token-vault-status-chip ${escapeVaultHtml(selected.state)}">${escapeVaultHtml(getVaultStateLabel(selected.state, selected.isActiveToken))}</span>`,
             `<span class="token-vault-meta-chip">${escapeVaultHtml(selected.isDraft ? 'Unsaved page' : (selected.isActiveToken ? 'Active on this page' : 'Saved in vault'))}</span>`
         ].join('');
+        const completeRemovalMarkup = selected.token
+            ? `<div class="token-vault-complete-removal">
+                    <button type="button" class="token-vault-action token-vault-action-danger" data-vault-action="complete-removal"${managerTokenAttr}>Complete Removal</button>
+                    <p class="token-vault-complete-removal-copy">Permanently deletes this token from SubMaker storage and clears this browser copy.</p>
+                </div>`
+            : '';
 
         const markup = `<div class="token-vault-manager">
             ${tokenVaultPendingSwitch ? `<section class="token-vault-confirm">
@@ -2891,6 +3014,7 @@ Translate to {target_language}.`;
                 <div class="token-vault-security-warning" role="note">
                     <strong>Careful!</strong> Your token gives full access to your config (including API keys).
                 </div>
+                ${completeRemovalMarkup}
             </section>
 
             <section class="token-vault-actions-card">
@@ -3976,6 +4100,31 @@ Translate to {target_language}.`;
         );
     }
 
+    function buildTokenVaultSubjectEntry(view) {
+        if (!view || !isValidSessionToken(view.token)) return null;
+        if (view.entry) return view.entry;
+
+        const now = Date.now();
+        return {
+            token: view.token,
+            label: view.label || '',
+            addedAt: view.createdAt || view.updatedAt || now,
+            lastOpenedAt: view.lastAccessedAt || 0,
+            lastSavedAt: view.updatedAt || view.createdAt || now,
+            lastKnownCreatedAt: view.createdAt || 0,
+            lastKnownUpdatedAt: view.updatedAt || 0,
+            lastKnownLastAccessedAt: view.lastAccessedAt || 0,
+            lastKnownDisabled: view.disabled === true
+        };
+    }
+
+    function clearTokenVaultLocalTokenState(token) {
+        removeTokenVaultEntry(token);
+        tokenVaultBriefMap.delete(token);
+        tokenVaultBriefFetchCache.delete(token);
+        tokenVaultBriefFetchPromises.delete(token);
+    }
+
     function promptForgetTokenFromBrowser(token) {
         if (!isValidSessionToken(token)) return;
         const view = buildTokenVaultViewModel(token);
@@ -4005,13 +4154,114 @@ Translate to {target_language}.`;
             confirmLabel: 'Forget token',
             confirmClass: 'token-vault-action-danger',
             onConfirm: async () => {
-                removeTokenVaultEntry(token);
-                tokenVaultBriefMap.delete(token);
-                tokenVaultBriefFetchCache.delete(token);
-                tokenVaultBriefFetchPromises.delete(token);
+                clearTokenVaultLocalTokenState(token);
                 renderTokenVaultRail();
                 closeTokenVault();
                 showAlert(`${view.label} forgotten from this browser.`, 'success');
+            }
+        });
+    }
+
+    async function completeRemoveVaultToken(token) {
+        if (!isValidSessionToken(token)) return;
+
+        const view = buildTokenVaultViewModel(token);
+        const removalPlan = resolveCompleteTokenRemovalPlan({
+            targetToken: token,
+            activeToken: getActiveConfigRef()
+        });
+        const wasActiveToken = removalPlan.deletedActiveToken === true;
+        const subjectEntry = buildTokenVaultSubjectEntry(view);
+
+        const detailParts = [
+            'This permanently deletes the session from SubMaker storage and removes any saved browser copy on this device.'
+        ];
+        if (wasActiveToken) {
+            detailParts.push('This page will detach immediately and keep your current settings only as a recovered draft until you save again.');
+        } else if (view.brief?.exists === false) {
+            detailParts.push('No live session is reachable on the server right now, but the local vault copy will still be cleared so the token is fully removed from this browser.');
+        } else {
+            detailParts.push('Manifest, configure, history, and toolbox links for this token will stop working as soon as deletion finishes.');
+        }
+
+        openTokenVaultOverridePrompt({
+            tone: 'danger',
+            emblem: '!',
+            eyebrow: 'Permanent deletion',
+            title: `Completely remove ${view.label}?`,
+            message: 'This action cannot be undone.',
+            detail: detailParts.join(' '),
+            victims: subjectEntry ? [subjectEntry] : [],
+            cancelLabel: 'Keep token',
+            confirmLabel: 'Delete forever',
+            confirmClass: 'token-vault-action-danger',
+            verificationToken: token,
+            verificationLabel: 'Rewrite this token to confirm',
+            verificationHint: 'Paste or type the exact token shown below to unlock permanent deletion.',
+            verificationStatusPending: 'Rewrite the exact token to unlock permanent deletion.',
+            verificationStatusReady: 'Token matches. Permanent deletion is unlocked.',
+            onConfirm: async () => {
+                showLoading(true);
+                try {
+                    const response = await fetchWithTimeout(`/api/session/${encodeURIComponent(token)}`, {
+                        method: 'DELETE',
+                        cache: 'no-store'
+                    }, 10000);
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok && response.status !== 404) {
+                        throw new Error(data?.error || `Failed to delete token (${response.status})`);
+                    }
+
+                    closeTokenVault();
+                    clearTokenVaultLocalTokenState(token);
+
+                    if (wasActiveToken) {
+                        try {
+                            const draftSnapshot = buildConfigFromForm();
+                            if (draftSnapshot) {
+                                currentConfig = draftSnapshot;
+                            }
+                        } catch (snapshotError) {
+                            console.warn('[TokenVault] Failed to snapshot form state after permanent token removal', snapshotError);
+                        }
+                        if (!currentConfig) {
+                            currentConfig = getDefaultConfig();
+                        }
+                        if (removalPlan.clearStoredToken === true) {
+                            try { localStorage.removeItem(TOKEN_KEY); } catch (_) { }
+                        }
+                        saveConfigToCache(currentConfig, removalPlan.nextCacheToken || '');
+                        setActiveSessionContext({
+                            ...(removalPlan.nextContext || {}),
+                            session: null,
+                            detachedAt: Date.now()
+                        });
+                        syncConfigUrlForToken(removalPlan.nextCacheToken || '');
+                        updateToolboxLauncherVisibility();
+                        updateQuickStats();
+                    } else {
+                        syncTokenVaultUi();
+                    }
+
+                    const serverDeleted = response.ok && data?.deleted === true;
+                    if (wasActiveToken) {
+                        showAlert(
+                            serverDeleted
+                                ? 'Token permanently removed. This page is now a recovered draft until you save again.'
+                                : 'Live session was already gone. This page is now a recovered draft until you save again.',
+                            'success'
+                        );
+                    } else {
+                        showAlert(
+                            serverDeleted
+                                ? `${view.label} permanently removed from SubMaker.`
+                                : `${view.label} cleared locally. No live session remained on the server.`,
+                            'success'
+                        );
+                    }
+                } finally {
+                    showLoading(false);
+                }
             }
         });
     }
@@ -4166,6 +4416,10 @@ Translate to {target_language}.`;
             case 'forget-token':
                 if (!isValidSessionToken(actionToken)) return;
                 promptForgetTokenFromBrowser(actionToken);
+                return;
+            case 'complete-removal':
+                if (!isValidSessionToken(actionToken)) return;
+                await completeRemoveVaultToken(actionToken);
                 return;
             case 'duplicate-token':
                 await duplicateVaultToken(actionToken);
@@ -6131,6 +6385,30 @@ Translate to {target_language}.`;
             tokenVaultOverrideModal.addEventListener('click', async (e) => {
                 const actionEl = e.target && e.target.closest ? e.target.closest('[data-vault-override-action]') : null;
                 if (!actionEl) return;
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                    await handleTokenVaultOverrideAction(actionEl);
+                } catch (error) {
+                    showAlert(error.message || 'Token Vault confirmation failed.', 'error');
+                }
+            });
+            tokenVaultOverrideModal.addEventListener('input', (e) => {
+                if (e.target?.id !== 'tokenVaultOverrideVerificationInput' || !tokenVaultOverrideState) return;
+                tokenVaultOverrideState.verificationValue = e.target.value;
+                syncTokenVaultOverrideConfirmationUi();
+            });
+            tokenVaultOverrideModal.addEventListener('keydown', async (e) => {
+                if (e.target?.id !== 'tokenVaultOverrideVerificationInput') return;
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    await closeTokenVaultOverridePrompt(true);
+                    return;
+                }
+                if (e.key !== 'Enter' || e.shiftKey) return;
+                const actionEl = tokenVaultOverrideModal.querySelector('[data-vault-override-action="confirm"]');
+                if (!actionEl || actionEl.disabled) return;
                 e.preventDefault();
                 e.stopPropagation();
                 try {
@@ -9937,7 +10215,7 @@ Translate to {target_language}.`;
         return await saveCurrentConfig();
     }
 
-    async function saveCurrentConfig(options = {}) {
+    function buildConfigFromForm() {
         ensureProvidersInState();
         ensureAutoSubsDefaults();
 
@@ -10157,6 +10435,11 @@ Translate to {target_language}.`;
         }
         config.mainProvider = String(config.mainProvider || 'gemini').toLowerCase();
         config.secondaryProvider = config.secondaryProviderEnabled ? String(config.secondaryProvider || '').toLowerCase() : '';
+        return config;
+    }
+
+    async function saveCurrentConfig(options = {}) {
+        const config = buildConfigFromForm();
 
         // Validation with visual feedback - collect all errors
         const errors = [];

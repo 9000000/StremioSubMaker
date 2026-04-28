@@ -74,8 +74,7 @@ class SubDLService {
     try {
       // Check if API key is provided
       if (!this.apiKey || this.apiKey.trim() === '') {
-        log.error(() => '[SubDL] API key is required for SubDL API');
-        log.error(() => '[SubDL] Please get a free API key from https://subdl.com');
+        log.debug(() => '[SubDL] API key is missing; skipping search');
         return [];
       }
 

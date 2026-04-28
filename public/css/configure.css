@@ -5912,6 +5912,81 @@ label:has(#subToolboxEnabled:disabled) {
     font-weight: 700;
 }
 
+.token-vault-override-verify {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.85rem 0.95rem;
+    border-radius: 16px;
+    border: 1px solid rgba(239, 68, 68, 0.16);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 247, 247, 0.82));
+}
+
+.token-vault-override-verify-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.token-vault-override-verify-copy {
+    margin: 0;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+
+.token-vault-override-verify-token {
+    display: block;
+    padding: 0.7rem 0.8rem;
+    border-radius: 12px;
+    border: 1px solid rgba(239, 68, 68, 0.18);
+    background: rgba(127, 29, 29, 0.04);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: #991b1b;
+    word-break: break-all;
+}
+
+.token-vault-override-verify-input {
+    width: 100%;
+    padding: 0.8rem 0.9rem;
+    border-radius: 12px;
+    border: 1.5px solid rgba(239, 68, 68, 0.22);
+    background: rgba(255, 255, 255, 0.96);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.token-vault-override-verify-input:focus {
+    outline: none;
+    border-color: rgba(220, 38, 38, 0.58);
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+}
+
+.token-vault-override-verify-input[aria-invalid="true"] {
+    border-color: rgba(220, 38, 38, 0.48);
+}
+
+.token-vault-override-verify-status {
+    margin: 0;
+    font-size: 0.74rem;
+    line-height: 1.4;
+    color: var(--text-secondary);
+}
+
+.token-vault-override-verify-status[data-state="ready"] {
+    color: #15803d;
+    font-weight: 700;
+}
+
+.token-vault-override-verify-status[data-state="pending"] {
+    color: #b91c1c;
+}
+
 .token-vault-override-actions {
     display: flex;
     justify-content: flex-end;
@@ -5932,6 +6007,33 @@ label:has(#subToolboxEnabled:disabled) {
     background:
         linear-gradient(180deg, rgba(20, 30, 52, 0.94), rgba(16, 24, 44, 0.9));
     border-color: rgba(91, 130, 255, 0.14);
+}
+
+[data-theme="dark"] .token-vault-override-verify,
+[data-theme="blackhole"] .token-vault-override-verify {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .token-vault-override-verify-token,
+[data-theme="blackhole"] .token-vault-override-verify-token {
+    background: rgba(239, 68, 68, 0.1);
+    color: #fecaca;
+}
+
+[data-theme="dark"] .token-vault-override-verify-input,
+[data-theme="blackhole"] .token-vault-override-verify-input {
+    background: rgba(11, 18, 32, 0.92);
+    color: #f8fafc;
+}
+
+[data-theme="dark"] .token-vault-override-verify-status[data-state="ready"],
+[data-theme="blackhole"] .token-vault-override-verify-status[data-state="ready"] {
+    color: #86efac;
+}
+
+[data-theme="dark"] .token-vault-override-verify-status[data-state="pending"],
+[data-theme="blackhole"] .token-vault-override-verify-status[data-state="pending"] {
+    color: #fca5a5;
 }
 
 [data-theme="blackhole"] .token-vault-override-victim {
@@ -7898,7 +8000,7 @@ label:has(#subToolboxEnabled:disabled) {
 }
 
 /* Dark and blackhole manager buttons stay neutral except the modal Enable/Disable action */
-[data-theme="dark"] .token-vault-manager .token-vault-action:not([data-vault-action="toggle-state"]):not([data-vault-action="forget-token"]) {
+[data-theme="dark"] .token-vault-manager .token-vault-action:not([data-vault-action="toggle-state"]):not([data-vault-action="forget-token"]):not([data-vault-action="complete-removal"]) {
     --vault-action-accent: rgba(255, 255, 255, 0.02);
     --vault-action-border: rgba(148, 163, 184, 0.18);
     --vault-action-border-hover: rgba(203, 213, 225, 0.3);
@@ -7942,7 +8044,7 @@ label:has(#subToolboxEnabled:disabled) {
     text-shadow: none;
 }
 
-[data-theme="blackhole"] .token-vault-manager .token-vault-action:not([data-vault-action="toggle-state"]):not([data-vault-action="forget-token"]) {
+[data-theme="blackhole"] .token-vault-manager .token-vault-action:not([data-vault-action="toggle-state"]):not([data-vault-action="forget-token"]):not([data-vault-action="complete-removal"]) {
     --vault-action-accent: rgba(255, 255, 255, 0.02);
     --vault-action-border: rgba(134, 143, 190, 0.18);
     --vault-action-border-hover: rgba(196, 181, 253, 0.28);
@@ -8201,6 +8303,27 @@ label:has(#subToolboxEnabled:disabled) {
 
 [data-theme="blackhole"] .token-vault-security-warning strong {
     color: #fef3c7;
+}
+
+.token-vault-complete-removal {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.token-vault-complete-removal .token-vault-action {
+    width: min(100%, 320px);
+}
+
+.token-vault-complete-removal-copy {
+    margin: 0;
+    max-width: 34rem;
+    text-align: center;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
 }
 
 /* Import Card */

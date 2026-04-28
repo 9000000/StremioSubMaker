@@ -114,6 +114,37 @@ function computeHistoryUserHash(token) {
     return `sesshist_${computeTokenFingerprint(token)}`;
 }
 
+function sanitizeHistoryComponent(value) {
+    return String(value || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 200);
+}
+
+function normalizeHistoryUserHash(value) {
+    const normalized = sanitizeHistoryComponent(value);
+    return normalized || '';
+}
+
+function buildHistoryStoreKey(userHash) {
+    const safeHash = sanitizeHistoryComponent(userHash);
+    return `histset__${safeHash}`;
+}
+
+function buildHistoryIndexKey(userHash) {
+    const safeHash = sanitizeHistoryComponent(userHash);
+    return `histidx__${safeHash}`;
+}
+
+function buildHistoryPatterns(userHash) {
+    const safeHash = sanitizeHistoryComponent(userHash);
+    return [
+        `hist__${safeHash}__*`,
+        `hist_${safeHash}_*`,
+        `hist:${safeHash}:*`
+    ];
+}
+
 // Prevent cache/key collisions from silently serving another user's config by
 // binding stored payloads to both the token and the config fingerprint.  If a
 // different payload is ever returned for the same token (e.g., due to shared
@@ -888,6 +919,52 @@ class SessionManager extends EventEmitter {
     }
 
     /**
+     * Remove a session token from the on-disk recovery snapshot immediately so
+     * manual deletions cannot be resurrected if Redis/storage is later restored
+     * from a stale snapshot before the next periodic refresh runs.
+     *
+     * @param {string} token
+     * @returns {Promise<boolean>} True when the snapshot contained and removed the token
+     */
+    async _removeSessionFromSnapshot(token) {
+        if (!this.snapshotEnabled || !token || !this.snapshotPath) {
+            return false;
+        }
+
+        try {
+            await fs.access(this.snapshotPath);
+        } catch (_) {
+            return false;
+        }
+
+        let snapshot = null;
+        try {
+            const raw = await fs.readFile(this.snapshotPath, 'utf8');
+            snapshot = JSON.parse(raw);
+        } catch (err) {
+            log.warn(() => [`[SessionManager] Failed to inspect session snapshot during delete for ${redactToken(token)}:`, err?.message || String(err)]);
+            return false;
+        }
+
+        const sessions = (snapshot && typeof snapshot.sessions === 'object' && snapshot.sessions)
+            ? { ...snapshot.sessions }
+            : null;
+        if (!sessions || !Object.prototype.hasOwnProperty.call(sessions, token)) {
+            return false;
+        }
+
+        delete sessions[token];
+        await fs.writeFile(this.snapshotPath, JSON.stringify({
+            ...(snapshot && typeof snapshot === 'object' ? snapshot : {}),
+            sessions,
+            savedAt: new Date().toISOString()
+        }, null, 2), 'utf8');
+
+        log.debug(() => `[SessionManager] Removed ${redactToken(token)} from session snapshot`);
+        return true;
+    }
+
+    /**
      * Generate a cryptographically secure random session token
      * @returns {string} 32-character hex token
      */
@@ -1493,6 +1570,120 @@ class SessionManager extends EventEmitter {
 
         await this._publishInvalidation(token, sessionData.disabled ? 'disable' : 'enable');
         return this.buildSessionBrief(token, sessionData);
+    }
+
+    /**
+     * Purge token-linked translation history entries.
+     * History remains inaccessible once the session is gone, but we still clear
+     * the namespace so permanent token removal also removes server-side history
+     * blobs tied to that token fingerprint.
+     *
+     * @param {string} historyUserHash
+     * @returns {Promise<void>}
+     */
+    async _purgeHistoryNamespace(historyUserHash) {
+        const normalizedHash = normalizeHistoryUserHash(historyUserHash);
+        if (!normalizedHash) {
+            return 0;
+        }
+
+        const adapter = await getStorageAdapter();
+        const patternResults = await Promise.all(buildHistoryPatterns(normalizedHash).map((pattern) =>
+            adapter.list(StorageAdapter.CACHE_TYPES.HISTORY, pattern)
+        ));
+        const historyKeys = Array.from(new Set(patternResults.flat().filter(Boolean)));
+        const keysToDelete = Array.from(new Set([
+            buildHistoryStoreKey(normalizedHash),
+            ...historyKeys
+        ]));
+
+        const deleteResults = await Promise.all(keysToDelete.map((key) => adapter.delete(key, StorageAdapter.CACHE_TYPES.HISTORY)));
+        let deletedCount = deleteResults.filter((result) => result === true).length;
+
+        const redisClient = StorageFactory.getRedisClient();
+        if (redisClient) {
+            try {
+                const deletedIndex = await redisClient.del(buildHistoryIndexKey(normalizedHash));
+                deletedCount += Number(deletedIndex) || 0;
+            } catch (err) {
+                log.warn(() => [`[SessionManager] Failed to purge history index for ${normalizedHash}:`, err?.message || String(err)]);
+            }
+        }
+
+        return deletedCount;
+    }
+
+    /**
+     * Delete a session from durable storage and all local caches.
+     * Unlike deleteSession(), this also removes storage-only sessions that have
+     * not been loaded into memory on the current process yet.
+     *
+     * @param {string} token - Session token
+     * @returns {Promise<boolean>} True if the session existed and was removed
+     */
+    async deleteSessionEverywhere(token) {
+        if (!token) {
+            return false;
+        }
+
+        const adapter = await getStorageAdapter();
+        const cachedSession = this.cache.get(token) || null;
+        const cachedDecrypted = this.decryptedCache.has(token);
+        const storedSession = await adapter.get(token, StorageAdapter.CACHE_TYPES.SESSION);
+        const historyNamespaces = Array.from(new Set([
+            cachedSession?.historyUserHash,
+            storedSession?.historyUserHash,
+            computeHistoryUserHash(token)
+        ].map(normalizeHistoryUserHash).filter(Boolean)));
+
+        let deletedCanonical = false;
+        try {
+            deletedCanonical = await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION) === true;
+        } catch (err) {
+            log.error(() => ['[SessionManager] Failed to delete session from storage:', err?.message || String(err)]);
+            throw err;
+        }
+
+        let deletedAlternatePrefixes = 0;
+        if (typeof adapter.deleteFromAlternatePrefixes === 'function') {
+            try {
+                deletedAlternatePrefixes = await adapter.deleteFromAlternatePrefixes(token, StorageAdapter.CACHE_TYPES.SESSION);
+            } catch (err) {
+                log.warn(() => [`[SessionManager] Failed to delete alternate-prefix session variants for ${redactToken(token)}:`, err?.message || String(err)]);
+            }
+        }
+
+        const deletedSnapshot = await this._removeSessionFromSnapshot(token);
+        let deletedHistoryEntries = 0;
+        for (const historyNamespace of historyNamespaces) {
+            deletedHistoryEntries += await this._purgeHistoryNamespace(historyNamespace);
+        }
+
+        const existed = !!cachedSession
+            || cachedDecrypted
+            || storedSession !== null
+            || deletedCanonical
+            || deletedAlternatePrefixes > 0
+            || deletedSnapshot
+            || deletedHistoryEntries > 0;
+        if (!existed) {
+            return false;
+        }
+
+        if (storedSession !== null && !deletedCanonical) {
+            throw new Error('Failed to delete persisted session');
+        }
+
+        this.cache.delete(token);
+        this.decryptedCache.delete(token);
+        this.failedLookups.delete(token);
+        this.dirty = true;
+        this.storageCountCache = { value: 0, ts: 0 };
+
+        await this._publishInvalidation(token, 'delete');
+        this.emit('sessionDeleted', { token, source: 'local' });
+        log.debug(() => `[SessionManager] Session permanently deleted: ${redactToken(token)}`);
+        return true;
     }
 
     /**

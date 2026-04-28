@@ -253,6 +253,28 @@
         };
     }
 
+    function resolveCompleteTokenRemovalPlan(options = {}) {
+        const targetToken = String(options.targetToken || '').trim().toLowerCase();
+        const activeToken = String(options.activeToken || '').trim().toLowerCase();
+        const isSessionToken = (token) => /^[a-f0-9]{32}$/.test(String(token || ''));
+        const isActiveToken = isSessionToken(targetToken) && targetToken === activeToken;
+
+        return {
+            isValidToken: isSessionToken(targetToken),
+            deletedActiveToken: isActiveToken,
+            clearStoredToken: isActiveToken,
+            nextCacheToken: '',
+            nextContext: isActiveToken ? {
+                token: '',
+                provenance: 'recovered',
+                sourceLabel: 'Recovered draft',
+                message: 'This token was permanently removed. You are editing the last local copy until you save again.',
+                recoveredFromToken: targetToken,
+                regenerated: true
+            } : null
+        };
+    }
+
     function resolveToolboxLauncherState(options = {}) {
         const tokenToCheck = options.tokenToCheck || '';
         if (!tokenToCheck) {
@@ -365,6 +387,7 @@
         resolveSaveTargetToken,
         resolveVisibleInstallToken,
         resolveTokenVaultSwitchPlan,
+        resolveCompleteTokenRemovalPlan,
         resolveToolboxLauncherState,
         shouldRefreshTokenVaultBriefs,
         shouldUseCachedTokenVaultBrief

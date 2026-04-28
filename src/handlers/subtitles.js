@@ -80,6 +80,31 @@ function shortKey(v) {
   }
 }
 
+function normalizeProviderApiKey(value) {
+  if (value === undefined || value === null) return '';
+  const normalized = String(value).trim();
+  if (normalized === '[object Object]' || normalized === '[object Array]') return '';
+  return normalized;
+}
+
+function getSubtitleProviderApiKey(config, providerKey) {
+  const providerConfig = config?.subtitleProviders?.[providerKey];
+  const providerApiKey = normalizeProviderApiKey(providerConfig?.apiKey);
+  if (providerApiKey) return providerApiKey;
+
+  const legacyFields = {
+    subdl: ['SubDLAPIKey', 'SubDLApiKey', 'subDLAPIKey', 'subdlApiKey', 'subdl_api_key'],
+    subsource: ['SubSourceAPIKey', 'SubSourceAPiKey', 'SubSourceApiKey', 'subSourceAPIKey', 'subsourceApiKey', 'subsource_api_key']
+  };
+
+  for (const field of legacyFields[providerKey] || []) {
+    const legacyApiKey = normalizeProviderApiKey(config?.[field]);
+    if (legacyApiKey) return legacyApiKey;
+  }
+
+  return '';
+}
+
 async function bumpSubtitleSearchRevisionForConfigHash(configHash) {
   try {
     const userHash = (configHash && typeof configHash === 'string' && configHash.length > 0)
@@ -2761,15 +2786,16 @@ function createSubtitleHandler(config) {
           log.debug(() => '[Subtitles] OpenSubtitles provider is disabled');
         }
 
-        // Check if SubDL provider is enabled
-        if (config.subtitleProviders?.subdl?.enabled) {
+        // Check if SubDL provider is enabled and configured
+        const subdlApiKey = getSubtitleProviderApiKey(config, 'subdl');
+        if (config.subtitleProviders?.subdl?.enabled && subdlApiKey) {
           const subdlHealth = isProviderHealthy('subdl');
           if (!subdlHealth.healthy) {
             log.debug(() => `[Subtitles] Skipping SubDL: ${subdlHealth.reason} (retry in ${subdlHealth.retryInSec}s)`);
             skippedProviders.push({ provider: 'SubDL', reason: subdlHealth.reason });
           } else {
             log.debug(() => '[Subtitles] SubDL provider is enabled');
-            const subdl = new SubDLService(config.subtitleProviders.subdl.apiKey);
+            const subdl = new SubDLService(subdlApiKey);
             addSearchTask('SubDL',
               subdl.searchSubtitles(searchParams)
                 .then(results => {
@@ -2785,19 +2811,22 @@ function createSubtitleHandler(config) {
                 })
             );
           }
+        } else if (config.subtitleProviders?.subdl?.enabled) {
+          log.debug(() => '[Subtitles] SubDL provider has no API key; treating it as not selected');
         } else {
           log.debug(() => '[Subtitles] SubDL provider is disabled');
         }
 
-        // Check if SubSource provider is enabled
-        if (config.subtitleProviders?.subsource?.enabled) {
+        // Check if SubSource provider is enabled and configured
+        const subsourceApiKey = getSubtitleProviderApiKey(config, 'subsource');
+        if (config.subtitleProviders?.subsource?.enabled && subsourceApiKey) {
           const subsourceHealth = isProviderHealthy('subsource');
           if (!subsourceHealth.healthy) {
             log.debug(() => `[Subtitles] Skipping SubSource: ${subsourceHealth.reason} (retry in ${subsourceHealth.retryInSec}s)`);
             skippedProviders.push({ provider: 'SubSource', reason: subsourceHealth.reason });
           } else {
             log.debug(() => '[Subtitles] SubSource provider is enabled');
-            const subsource = new SubSourceService(config.subtitleProviders.subsource.apiKey);
+            const subsource = new SubSourceService(subsourceApiKey);
             addSearchTask('SubSource',
               subsource.searchSubtitles(searchParams)
                 .then(results => {
@@ -2813,6 +2842,8 @@ function createSubtitleHandler(config) {
                 })
             );
           }
+        } else if (config.subtitleProviders?.subsource?.enabled) {
+          log.debug(() => '[Subtitles] SubSource provider has no API key; treating it as not selected');
         } else {
           log.debug(() => '[Subtitles] SubSource provider is disabled');
         }
