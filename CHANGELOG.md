@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.83
+
+**Bug Fixes:**
+
+- **Hardened OpenSubtitles Auth against production `429` bursts:** the shared Auth API limiter now uses a Redis-backed leaky gate instead of a fixed one-second bucket, so clustered deployments cannot burst across window boundaries while staying nominally under `4 req/sec`. All `/login`, `/subtitles`, and `/download` API calls, including token-refresh retries, now pass through the same limiter, upstream `429`/rate-limit headers push a short cooldown back into Redis for every pod, and the local no-Redis fallback is conservative at `1 req/sec`. OpenSubtitles credential validation also uses the normal validation endpoint limiter before it enters the upstream login queue.
+
+- **Fixed rate limiting failing open while Redis was late or unavailable:** the `express-rate-limit` Redis store no longer queues startup script loading behind the old 30-second Redis wait. The shared limiters now use Redis when the shared client is ready and immediately fall back to a per-process memory store when Redis is missing or a Redis command fails, so Stremio subtitle traffic no longer triggers `Redis not available for rate limiting after 30s` and no longer runs completely unmetered just because Redis is unavailable.
+
+- **Removed requests caused by cache-buster redirects:** versioned addon paths such as `/addon/{token}/v1.4.83/subtitles/...` are now accepted as internal aliases, while unversioned addon paths are served directly with `no-store` instead of a `307` hop. Configure and Quick Setup keep generating unversioned manifest install URLs so installed Stremio transports are not pinned to a release-specific path.
+
 ## SubMaker v1.4.82
 
 **Improvements:**

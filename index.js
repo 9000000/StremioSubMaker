@@ -33,7 +33,6 @@ const compression = require('compression');
 const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
-const { RedisStore: RateLimitRedisStore } = require('rate-limit-redis');
 const { LRUCache } = require('lru-cache');
 const { addonBuilder, getRouter } = require('stremio-addon-sdk');
 const Joi = require('joi');
@@ -84,7 +83,8 @@ const {
 const { MAX_SESSION_BRIEF_BATCH, getSessionManager, stripInternalFlags } = require('./src/utils/sessionManager');
 const { runStartupValidation } = require('./src/utils/startupValidation');
 const { StorageUnavailableError } = require('./src/storage/errors');
-const StorageFactory = require('./src/storage/StorageFactory');
+const { createRateLimitRedisStore } = require('./src/utils/rateLimitRedisStore');
+const { isBlockedCommunityV5Request, isStremioKaiRequest } = require('./src/utils/stremioClientIdentity');
 const { loadLocale, getTranslator, DEFAULT_LANG } = require('./src/utils/i18n');
 const { incrementCounter, CACHE_PREFIXES, CACHE_TTLS } = require('./src/utils/sharedCache');
 const { loadChangelog } = require('./src/utils/changelog');
@@ -1549,33 +1549,6 @@ function isStremioOrigin(origin) {
     }
     return STREMIO_ORIGIN_PREFIXES.some(prefix => normalized.startsWith(prefix));
 }
-const COMMUNITY_V5_BLOCKED_HOSTS = [
-    'stremio.zarg.me',
-    'zaarrg.github.io'
-];
-function isBlockedCommunityV5Request(req) {
-    if (!req) return false;
-    const origin = req.get('origin') || '';
-    const referer = req.get('referer') || '';
-    const originHost = extractHostnameFromOrigin(origin);
-    const refererHost = extractHostnameFromOrigin(referer);
-    const normalizedOrigin = normalizeOrigin(origin);
-    const normalizedReferer = normalizeOrigin(referer);
-
-    const hostBlocked = COMMUNITY_V5_BLOCKED_HOSTS.some(host =>
-        originHost === host ||
-        refererHost === host ||
-        originHost.endsWith(`.${host}`) ||
-        refererHost.endsWith(`.${host}`)
-    );
-
-    // Backup fingerprint: their fallback UI URL path contains this slug.
-    const knownPathHint =
-        normalizedOrigin.includes('stremio-web-shell-fixes') ||
-        normalizedReferer.includes('stremio-web-shell-fixes');
-
-    return hostBlocked || knownPathHint;
-}
 function isStremioClient(req) {
     const origin = req.get('origin');
     const userAgent = (req.headers['user-agent'] || '').toLowerCase();
@@ -1841,81 +1814,6 @@ app.use(helmet({
     strictTransportSecurity: false, // Disable HSTS for localhost (allows HTTP)
 }));
 
-// Redis-backed store for express-rate-limit (cross-instance accuracy)
-// The sendCommand wrapper lazily resolves the Redis client so limiters can be
-// defined at module level before the async startup initializes storage.
-// During startup, SCRIPT LOAD calls are queued and resolved once Redis connects.
-// The readiness middleware gates all real requests until storage is ready,
-// so actual rate-limit checks will always have a live Redis client.
-function createRateLimitRedisStore(prefix) {
-    // When storage type is not Redis, skip Redis-backed rate limiting entirely
-    // and let express-rate-limit use its built-in in-memory store (returns undefined).
-    // This avoids 30s timeout errors and log spam when running without Redis (e.g. local dev).
-    const storageType = (process.env.STORAGE_TYPE || 'redis').toLowerCase();
-    if (storageType !== 'redis') {
-        return undefined;
-    }
-
-    // Queue for commands issued before Redis is available (SCRIPT LOAD at construction time)
-    const pendingQueue = [];
-    let redisReady = false;
-    let pollTimer = null;
-    let timeoutTimer = null;
-
-    // Drain all queued commands once Redis client becomes available
-    function drainQueue() {
-        if (redisReady) return;
-        const client = StorageFactory.getRedisClient();
-        if (!client) return;
-        redisReady = true;
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-        if (timeoutTimer) { clearTimeout(timeoutTimer); timeoutTimer = null; }
-        for (const { args, resolve, reject } of pendingQueue.splice(0)) {
-            client.call(...args).then(resolve, reject);
-        }
-    }
-
-    // Start single poll timer on first queued command; cleared on drain or timeout
-    function ensurePolling() {
-        if (pollTimer || redisReady) return;
-        pollTimer = setInterval(() => {
-            try { drainQueue(); } catch (_) { /* ignore */ }
-        }, 250);
-        // Safety: stop polling after 30s and reject if still not ready
-        timeoutTimer = setTimeout(() => {
-            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-            if (!redisReady) {
-                for (const pending of pendingQueue.splice(0)) {
-                    pending.reject(new Error('Redis not available for rate limiting after 30s'));
-                }
-            }
-        }, 30000);
-    }
-
-    const store = new RateLimitRedisStore({
-        prefix: prefix || 'rl:',
-        sendCommand: (...args) => {
-            const client = StorageFactory.getRedisClient();
-            if (client) {
-                redisReady = true;
-                return client.call(...args);
-            }
-            // Redis not ready yet — queue the command (used for SCRIPT LOAD at construction)
-            return new Promise((resolve, reject) => {
-                pendingQueue.push({ args, resolve, reject });
-                ensurePolling();
-            });
-        },
-    });
-
-    // Swallow constructor's SCRIPT LOAD rejections to avoid unhandledRejection noise
-    // (scripts will be re-loaded on first real request via rate-limit-redis retry logic)
-    store.incrementScriptSha?.catch?.(() => { });
-    store.getScriptSha?.catch?.(() => { });
-
-    return store;
-}
-
 // Security: Rate limiting for subtitle searches and translations
 // Uses session ID or config hash instead of IP for better HA deployment support
 // This prevents all users behind a load balancer from sharing the same rate limit
@@ -1926,7 +1824,7 @@ const searchLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     store: createRateLimitRedisStore('rl:search:'),
-    passOnStoreError: true, // Fail open if Redis is unavailable — don't block requests
+    passOnStoreError: true, // Last-resort fail-open; Redis outages use local-memory fallback in the store
     keyGenerator: (req) => {
         // Try session ID first (if sessions are enabled)
         if (req.session?.id) {
@@ -2270,8 +2168,8 @@ app.use((req, res, next) => {
         const userAgent = req.headers['user-agent'] || '';
 
         // Hard block known Stremio Community v5 web-shell origins/referers.
-        // This is a targeted deny that leaves null-origin and generic StremioShell
-        // handling intact for all other clients.
+        // Stremio Kai shares the same shell origin/UA, so the helper allows
+        // only positively marked Kai requests before applying this deny.
         if (isBlockedCommunityV5Request(req)) {
             const blockOrigin = origin || 'none';
             const blockReferer = req.get('referer') || 'none';
@@ -2386,88 +2284,25 @@ app.use((req, res, next) => {
     next();
 });
 
-// Temporary cache-busting: add versioned path segment for addon routes
-// Redirect unversioned addon API routes to versioned equivalents to invalidate stale edge caches,
-// then strip the version segment before downstream routing so handlers remain unchanged.
-app.use('/addon/:config', async (req, res, next) => {
-    // Defense-in-depth: force no-store BEFORE any redirects so proxies/CDNs never cache
-    // user-specific addon paths (this was still a gap when only the destination response
-    // had no-store headers).
+// Accept optional versioned addon paths without redirecting unversioned clients.
+// The version segment is only a cache-busting alias; handlers continue to see the
+// normal Stremio SDK paths after this middleware strips it.
+app.use('/addon/:config', (req, res, next) => {
+    const ADDON_VERSION_SEGMENT_PATTERN = /^\/v[0-9]+(?:\.[0-9]+)*(?=\/|$)/;
+
+    // Defense-in-depth: force no-store before any downstream handler so proxies/CDNs
+    // never cache user-specific addon paths, even when clients still call the legacy
+    // unversioned transport URL.
     setNoStore(res);
     res.removeHeader('ETag');
 
-    // Use originalUrl so version detection works even after Express trims the mount path
-    const rawPath = req.originalUrl || req.path;
-    // If request already includes the cache-buster segment, strip it for internal routing
-    const versionMatch = rawPath.match(/\/addon\/[^/]+\/v([0-9.]+)(\/|$)/);
+    // req.url is the path with /addon/:config already stripped by the mount.
+    const versionMatch = req.url.match(ADDON_VERSION_SEGMENT_PATTERN);
     if (versionMatch) {
-        const versionSegment = `/v${versionMatch[1]}`;
-        // req.url is the path with the mount stripped, so trim the leading version segment safely
-        if (req.url.startsWith(versionSegment)) {
-            req.url = req.url.slice(versionSegment.length) || '/';
-        } else {
-            req.url = req.url.replace(versionSegment, '');
-        }
-        normalizeSubtitleQueryExtras(req);
-        return next();
+        req.url = req.url.slice(versionMatch[0].length) || '/';
     }
 
     normalizeSubtitleQueryExtras(req);
-
-    // Android compatibility dev mode: allow direct subtitle paths (no 307 hop)
-    // for players that silently drop external subtitle URLs when a redirect is required.
-    const subtitleCompatBypassCandidate = [
-        '/subtitles',   // subtitle list JSON
-        '/subtitle/',   // provider subtitle downloads
-        '/xsync',       // synced subtitles
-        '/auto/',       // auto subtitles cache
-        '/xembedded',   // embedded subtitles cache
-        '/smdb/'        // SMDB subtitle downloads
-    ].some(fragment => req.path.includes(fragment));
-
-    if (subtitleCompatBypassCandidate) {
-        try {
-            const cfg = await resolveConfigAsync(req.params.config, req);
-            const mode = String(cfg?.androidSubtitleCompatMode || 'off').toLowerCase();
-            if (mode === 'aggressive') {
-                log.debug(() => `[CacheBuster] Android compat aggressive: bypass redirect for ${req.path.substring(0, 100)}`);
-                return next();
-            }
-        } catch (e) {
-            log.debug(() => `[CacheBuster] Android compat check failed, falling back to redirect logic: ${e.message}`);
-        }
-    }
-
-    // Only redirect addon API routes (skip bare /addon/:config redirect handler)
-    const needsRedirect = [
-        '/manifest.json',       // addon install
-        '/subtitles',           // SDK subtitles handler
-        '/subtitle/',           // custom subtitle download
-        '/subtitle-resolve/',   // test C subtitle resolver
-        '/subtitle-content/',   // test C typed subtitle content
-        '/translate',           // translate downloads
-        '/learn',               // learn mode
-        '/xsync',               // synced subtitles
-        '/auto/',               // automatic subtitles cache
-        '/xembedded',           // embedded subtitles (xEmbed cache)
-        '/error-subtitle',      // error subtitles
-        '/file-translate',      // toolbox file translation
-        '/translate-embedded',  // embedded translation API
-        '/sync-subtitles',      // sync tool
-        '/sub-toolbox',         // toolbox page
-        '/sub-history',         // history page
-        '/embedded-subtitles',  // embedded extractor
-        '/auto-subtitles',      // auto subtitles tool
-        '/smdb'                 // SubMaker Database
-    ].some(fragment => req.path.includes(fragment));
-
-    if (needsRedirect) {
-        const suffix = req.url.replace(`/addon/${req.params.config}`, '');
-        const redirectTarget = `/addon/${encodeURIComponent(req.params.config)}${CACHE_BUSTER_PATH}${suffix || ''}`;
-        log.debug(() => `[CacheBuster] 307 redirect: ${req.path.substring(0, 80)} -> versioned path`);
-        return res.redirect(307, redirectTarget);
-    }
-
     return next();
 });
 
@@ -3325,9 +3160,9 @@ app.post('/api/validate-subdl', validationLimiter, async (req, res) => {
 });
 
 // API endpoint to validate OpenSubtitles credentials
-// Rate limiting is handled internally by the OpenSubtitlesService login() method
-// which uses distributed locking across pods to enforce 1 req/sec
-app.post('/api/validate-opensubtitles', async (req, res) => {
+// Route-level rate limiting handles UI abuse; OpenSubtitlesService login()
+// also uses distributed locking across pods to enforce 1 req/sec upstream.
+app.post('/api/validate-opensubtitles', validationLimiter, async (req, res) => {
     // CRITICAL: Prevent caching to avoid cross-user config contamination (user credentials in request body)
     setNoStore(res);
 
@@ -4708,7 +4543,7 @@ async function resolveConfigAsync(configStr, req) {
 
     // Detect Stremio Kai
     const userAgent = (req.headers['user-agent'] || '').toLowerCase();
-    const isStremioKai = userAgent.includes('stremio') && (userAgent.includes('kai') || userAgent.includes('kaios'));
+    const isStremioKai = isStremioKaiRequest(req);
 
     if (isStremioKai) {
         log.debug(() => `[Stremio Kai] Detected Stremio Kai request - User-Agent: ${userAgent}`);
