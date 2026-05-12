@@ -366,7 +366,8 @@ function normalizeProviderApiKey(value) {
 function getLegacySubtitleProviderApiKey(config, providerKey) {
   const legacyFields = {
     subdl: ['SubDLAPIKey', 'SubDLApiKey', 'subDLAPIKey', 'subdlApiKey', 'subdl_api_key'],
-    subsource: ['SubSourceAPIKey', 'SubSourceAPiKey', 'SubSourceApiKey', 'subSourceAPIKey', 'subsourceApiKey', 'subsource_api_key']
+    subsource: ['SubSourceAPIKey', 'SubSourceAPiKey', 'SubSourceApiKey', 'subSourceAPIKey', 'subsourceApiKey', 'subsource_api_key'],
+    scs: ['SCS_MANIFEST_TOKEN', 'SCSManifestToken', 'scsManifestToken', 'scsAuthKey', 'scsApiKey']
   };
   const fields = legacyFields[providerKey] || [];
   for (const field of fields) {
@@ -922,6 +923,49 @@ function normalizeConfig(config) {
     }
   }
 
+  const scsConfig = mergedConfig.subtitleProviders?.scs;
+  if (scsConfig) {
+    const normalizeScsValue = (value) => {
+      if (value === undefined || value === null) return '';
+      const normalized = String(value).trim();
+      if (normalized === '[object Object]' || normalized === '[object Array]') {
+        return '';
+      }
+      return normalized;
+    };
+
+    const rawImpl = typeof scsConfig.implementationType === 'string'
+      ? scsConfig.implementationType.trim().toLowerCase()
+      : '';
+    const implementationType = rawImpl === 'auth' ? 'auth' : 'community';
+    const legacyApiKey = getLegacySubtitleProviderApiKey(config, 'scs');
+    const apiKey = normalizeScsValue(scsConfig.apiKey) || legacyApiKey;
+    const apiKeyStillEncrypted = looksEncrypted(apiKey);
+
+    mergedConfig.subtitleProviders.scs = {
+      ...scsConfig,
+      enabled: scsConfig.enabled === true,
+      implementationType,
+      apiKey: apiKeyStillEncrypted ? '' : apiKey
+    };
+
+    if (apiKeyStillEncrypted) {
+      log.warn(() => '[Config] SCS auth key appears to still be encrypted; falling back to Community mode.');
+      mergedConfig.subtitleProviders.scs.implementationType = 'community';
+      mergedConfig.__credentialDecryptionFailed = true;
+      const credentialFailureFields = new Set(mergedConfig.__credentialDecryptionFailedFields || []);
+      credentialFailureFields.add('scs.apiKey');
+      mergedConfig.__credentialDecryptionFailedFields = Array.from(credentialFailureFields);
+    }
+
+    if (mergedConfig.subtitleProviders.scs.implementationType === 'auth' && !mergedConfig.subtitleProviders.scs.apiKey) {
+      log.warn(() => '[Config] SCS Auth selected without an auth key; switching to Community mode.');
+      mergedConfig.subtitleProviders.scs.implementationType = 'community';
+      mergedConfig.__needsSessionPersist = true;
+      mergedConfig.__persistReason = mergedConfig.__persistReason || 'scs-auth-to-community';
+    }
+  }
+
   const wyzieConfig = mergedConfig.subtitleProviders?.wyzie;
   if (wyzieConfig) {
     const normalizeWyzieValue = (value, fallback = '') => {
@@ -1201,7 +1245,9 @@ function getDefaultConfig(modelName = null) {
         apiKey: DEFAULT_API_KEYS.SUBSOURCE
       },
       scs: {
-        enabled: false
+        enabled: false,
+        implementationType: 'community',
+        apiKey: ''
       },
       wyzie: {
         enabled: false,

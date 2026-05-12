@@ -362,6 +362,12 @@ function normalizeSensitiveInputsForStorage(config) {
   );
 
   normalizeField(
+    () => normalized.subtitleProviders?.scs?.apiKey,
+    (value) => { normalized.subtitleProviders.scs.apiKey = value; },
+    'scs.apiKey'
+  );
+
+  normalizeField(
     () => normalized.subtitleProviders?.wyzie?.apiKey,
     (value) => { normalized.subtitleProviders.wyzie.apiKey = value; },
     'wyzie.apiKey'
@@ -449,6 +455,12 @@ function encryptUserConfig(config) {
       if (encrypted.subtitleProviders.subsource?.apiKey) {
         encrypted.subtitleProviders.subsource.apiKey =
           encrypt(encrypted.subtitleProviders.subsource.apiKey);
+      }
+
+      // SCS auth key
+      if (encrypted.subtitleProviders.scs?.apiKey) {
+        encrypted.subtitleProviders.scs.apiKey =
+          encrypt(encrypted.subtitleProviders.scs.apiKey);
       }
 
       // Wyzie API key
@@ -597,6 +609,18 @@ function decryptUserConfig(config) {
             safeDecrypt(decrypted.subtitleProviders.subsource.apiKey, 'subsource.apiKey');
           const isString = typeof decrypted.subtitleProviders.subsource.apiKey === 'string';
           log.debug(() => `[Encryption] SubSource key decrypted successfully, type: ${isString ? 'string' : 'NOT_STRING'}`);
+        }
+      }
+
+      // SCS auth key
+      if (decrypted.subtitleProviders.scs?.apiKey) {
+        const scsKeyEncrypted = isEncrypted(decrypted.subtitleProviders.scs.apiKey);
+        log.debug(() => `[Encryption] SCS auth key exists, encrypted: ${scsKeyEncrypted}, will decrypt: ${isConfigEncrypted || scsKeyEncrypted}`);
+        if (isConfigEncrypted || scsKeyEncrypted) {
+          decrypted.subtitleProviders.scs.apiKey =
+            safeDecrypt(decrypted.subtitleProviders.scs.apiKey, 'scs.apiKey');
+          const isString = typeof decrypted.subtitleProviders.scs.apiKey === 'string';
+          log.debug(() => `[Encryption] SCS auth key decrypted successfully, type: ${isString ? 'string' : 'NOT_STRING'}`);
         }
       }
 

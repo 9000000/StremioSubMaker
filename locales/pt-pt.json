@@ -804,7 +804,12 @@
           "keyRequired": "Chave obrigatória",
           "scsName": "Stremio Community Subs",
           "scsDesc": "Legendas selecionadas pela comunidade do Stremio",
-          "scsTimeoutNote": "⏱ Requer 28-30s de espera (configurado automaticamente ao ativar)",
+          "scsCommunityBadge": "Community/Auth",
+          "scsCommunityMode": "Token comunitário",
+          "scsAuthMode": "Chave Auth",
+          "scsKeyPlaceholder": "Insira a chave Auth do SCS",
+          "scsKeyNote": "Use a sua própria chave Auth do SCS para pedidos mais rápidos filtrados por idioma.",
+          "scsModeNote": "O modo Community usa o token partilhado do SubMaker; Auth envia apenas os idiomas selecionados.",
           "wyzieName": "Wyzie Subs",
           "wyzieDesc": "Agregador de legendas com chave API gratuita",
           "wyzieKeyPlaceholder": "Insira a chave API do Wyzie",
@@ -873,7 +878,8 @@
           "opensubsV3": "V3 (sem login)",
           "enabled": "Ativado",
           "disabled": "Desativado",
-          "scsTimeout": "Ativado (30s de espera)",
+          "scsAuth": "Chave Auth",
+          "scsCommunity": "Token comunitário",
           "wyzieSources": "Ativado ({count} fontes)",
           "aiTranslation": "Tradução com IA",
           "aiConfigured": "{model}",
@@ -1064,6 +1070,7 @@
         "secondaryProvidersCount": "Fornecedor Secundário requer dois fornecedores de IA configurados (principal e fallback)",
         "subdlKeyRequired": "SubDL está ativado mas falta a chave API",
         "subsourceKeyRequired": "SubSource está ativado mas falta a chave API",
+        "scsKeyRequired": "SCS Auth está ativado mas falta a chave",
         "wyzieKeyRequired": "Wyzie Subs está ativado mas falta a chave API",
         "subsroKeyRequired": "Subs.ro está ativado mas falta a chave API",
         "subtitleProviderRequired": "Por favor, ative pelo menos um fornecedor de legendas",
@@ -1141,20 +1148,28 @@
         },
         "scs": {
           "title": "Stremio Community Subtitles",
-          "description": "Legendas curadas pela comunidade. Não precisa de chave API.",
+          "description": "Legendas curadas pela comunidade. Escolha o token partilhado ou a sua própria chave de autenticação.",
           "toggleLabel": "Ativar SCS",
-          "note": "SCS fornece legendas enviadas pela comunidade. Os resultados dependem das contribuições da comunidade para o seu ficheiro de vídeo específico."
+          "note": "SCS fornece legendas enviadas pela comunidade. Os resultados dependem das contribuições da comunidade para o seu ficheiro de vídeo específico.",
+          "implementationType": "Tipo de implementação",
+          "communityTitle": "Community (Predefinido)",
+          "communityDescription": "Usa o token SCS partilhado do SubMaker. Não requer chave.",
+          "authTitle": "Auth (Recomendado)",
+          "authDescription": "Usa a sua própria chave SCS e envia apenas os idiomas selecionados no SubMaker.",
+          "apiKeyLabel": "Chave Auth do SCS",
+          "apiKeyPlaceholder": "Insira a chave Auth do SCS",
+          "apiKeyNote": "Obtenha-a na sua conta SCS em stremio-community-subtitles.top."
         },
         "moreProviders": {
           "title": "Mais fornecedores (beta)",
-          "description": "Fontes de legendas adicionais, incluindo fornecedores comunitários e agregadores."
+          "description": "Fontes de legendas adicionais e agregadores."
         },
         "timeout": {
           "title": "Tempo de espera do fornecedor",
           "description": "Tempo máximo de espera para cada fornecedor de legendas (em segundos).",
           "note": "Menor = respostas mais rápidas mas pode perder fornecedores lentos. Maior = mais fiável mas mais lento. Predefinição: 12s",
           "ariaLabel": "Tempo de espera do fornecedor de legendas",
-          "slowWarning": "SCS, Wyzie e SubSource podem ser lentos. Se não obtiver resultados de legendas, recomendamos valores de tempo de espera mais altos."
+          "slowWarning": "Wyzie e SubSource podem ser lentos. Se não obtiver resultados de legendas, experimente um tempo de espera mais alto."
         }
       },
       "providersUi": {

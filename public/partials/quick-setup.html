@@ -172,13 +172,13 @@
                             </div>
                         </div>
 
-                        <!-- SCS - no key needed -->
+                        <!-- SCS -->
                         <div class="qs-source-item" id="qsScsSource">
                             <div class="qs-source-header">
                                 <div class="qs-source-name">
                                     <span class="qs-source-emoji">🌐</span>
                                     <span data-i18n="config.quickSetup.step2.scsName">Stremio Community Subs</span>
-                                    <span class="qs-badge-free" data-i18n="config.quickSetup.step2.noKeyNeeded">No key needed</span>
+                                    <span class="qs-badge-free" data-i18n="config.quickSetup.step2.scsCommunityBadge">Community/Auth</span>
                                 </div>
                                 <label class="qs-toggle">
                                     <input type="checkbox" id="qsEnableSCS">
@@ -186,8 +186,28 @@
                                 </label>
                             </div>
                             <p class="qs-source-desc" data-i18n="config.quickSetup.step2.scsDesc">Community-curated subtitles from the Stremio community</p>
-                            <div class="qs-source-note" id="qsScsNote" style="display: none;" data-i18n="config.quickSetup.step2.scsTimeoutNote">
-                                ⏱ Requires 28-30s timeout (auto-set when enabled)
+                            <div class="qs-source-key-wrap" id="qsScsOptions" style="display: none;">
+                                <div class="qs-radio-row">
+                                    <label>
+                                        <input type="radio" name="qsScsImplementation" id="qsScsImplCommunity" value="community" checked>
+                                        <span data-i18n="config.quickSetup.step2.scsCommunityMode">Community token</span>
+                                    </label>
+                                    <label>
+                                        <input type="radio" name="qsScsImplementation" id="qsScsImplAuth" value="auth">
+                                        <span data-i18n="config.quickSetup.step2.scsAuthMode">Auth key</span>
+                                    </label>
+                                </div>
+                                <div id="qsScsAuthConfig" style="display: none; margin-top: 0.5rem;">
+                                    <div class="qs-key-input-row">
+                                        <input type="text" id="qsScsApiKey" class="qs-input qs-input-key"
+                                            placeholder="Enter SCS auth key" data-i18n-placeholder="config.quickSetup.step2.scsKeyPlaceholder"
+                                            autocomplete="off" spellcheck="false">
+                                    </div>
+                                    <p class="qs-rate-note" data-i18n="config.quickSetup.step2.scsKeyNote">Use your own SCS auth key for faster language-filtered requests.</p>
+                                </div>
+                            </div>
+                            <div class="qs-source-note" id="qsScsNote" style="display: none;" data-i18n="config.quickSetup.step2.scsModeNote">
+                                Community mode uses SubMaker's shared token; Auth mode sends only your selected languages.
                             </div>
                         </div>
 

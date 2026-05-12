@@ -804,7 +804,12 @@
           "keyRequired": "Chave obrigatória",
           "scsName": "Stremio Community Subs",
           "scsDesc": "Legendas selecionadas pela comunidade do Stremio",
-          "scsTimeoutNote": "⏱ Requer 28-30s de espera (configurado automaticamente ao ativar)",
+          "scsCommunityBadge": "Community/Auth",
+          "scsCommunityMode": "Token comunitário",
+          "scsAuthMode": "Chave Auth",
+          "scsKeyPlaceholder": "Digite a chave Auth do SCS",
+          "scsKeyNote": "Use sua própria chave Auth do SCS para requisições mais rápidas filtradas por idioma.",
+          "scsModeNote": "O modo Community usa o token compartilhado do SubMaker; Auth envia apenas os idiomas selecionados.",
           "wyzieName": "Wyzie Subs",
           "wyzieDesc": "Agregador de legendas com chave de API gratuita",
           "wyzieKeyPlaceholder": "Digite a chave da API do Wyzie",
@@ -873,7 +878,8 @@
           "opensubsV3": "V3 (sem login)",
           "enabled": "Ativado",
           "disabled": "Desativado",
-          "scsTimeout": "Ativado (30s de espera)",
+          "scsAuth": "Chave Auth",
+          "scsCommunity": "Token comunitário",
           "wyzieSources": "Ativado ({count} fontes)",
           "aiTranslation": "Tradução com IA",
           "aiConfigured": "{model}",
@@ -1064,6 +1070,7 @@
         "secondaryProvidersCount": "O Provedor Secundário requer dois provedores de IA configurados (principal e fallback)",
         "subdlKeyRequired": "SubDL está habilitado, mas a chave da API está faltando",
         "subsourceKeyRequired": "SubSource está habilitado, mas a chave da API está faltando",
+        "scsKeyRequired": "SCS Auth está habilitado, mas a chave está faltando",
         "wyzieKeyRequired": "Wyzie Subs está habilitado, mas a chave da API está faltando",
         "subsroKeyRequired": "Subs.ro está habilitado, mas a chave da API está faltando",
         "subtitleProviderRequired": "Por favor, habilite pelo menos um provedor de legendas",
@@ -1141,20 +1148,28 @@
         },
         "scs": {
           "title": "Stremio Community Subtitles",
-          "description": "Legendas curadas pela comunidade. Não requer chave de API.",
+          "description": "Legendas curadas pela comunidade. Escolha o token compartilhado ou sua própria chave de autenticação.",
           "toggleLabel": "Habilitar SCS",
-          "note": "SCS fornece legendas enviadas pela comunidade. Os resultados dependem das contribuições da comunidade para seu arquivo de vídeo específico."
+          "note": "SCS fornece legendas enviadas pela comunidade. Os resultados dependem das contribuições da comunidade para seu arquivo de vídeo específico.",
+          "implementationType": "Tipo de implementação",
+          "communityTitle": "Community (Padrão)",
+          "communityDescription": "Usa o token SCS compartilhado do SubMaker. Não requer chave.",
+          "authTitle": "Auth (Recomendado)",
+          "authDescription": "Usa sua própria chave SCS e envia apenas os idiomas selecionados no SubMaker.",
+          "apiKeyLabel": "Chave Auth do SCS",
+          "apiKeyPlaceholder": "Digite a chave Auth do SCS",
+          "apiKeyNote": "Obtenha-a na sua conta SCS em stremio-community-subtitles.top."
         },
         "moreProviders": {
           "title": "Mais provedores (beta)",
-          "description": "Fontes de legendas adicionais, incluindo provedores comunitários e agregadores."
+          "description": "Fontes de legendas adicionais e agregadores."
         },
         "timeout": {
           "title": "Tempo de espera do provedor",
           "description": "Tempo máximo de espera para cada provedor de legendas (em segundos).",
           "note": "Menor = respostas mais rápidas mas pode perder provedores lentos. Maior = mais confiável mas mais lento. Padrão: 12s",
           "ariaLabel": "Tempo de espera do provedor de legendas",
-          "slowWarning": "SCS, Wyzie e SubSource podem ser lentos. Se você não obtiver resultados de legendas, recomendamos valores de tempo de espera mais altos."
+          "slowWarning": "Wyzie e SubSource podem ser lentos. Se você não obtiver resultados de legendas, tente um tempo de espera maior."
         }
       },
       "providersUi": {

@@ -94,7 +94,8 @@ function getSubtitleProviderApiKey(config, providerKey) {
 
   const legacyFields = {
     subdl: ['SubDLAPIKey', 'SubDLApiKey', 'subDLAPIKey', 'subdlApiKey', 'subdl_api_key'],
-    subsource: ['SubSourceAPIKey', 'SubSourceAPiKey', 'SubSourceApiKey', 'subSourceAPIKey', 'subsourceApiKey', 'subsource_api_key']
+    subsource: ['SubSourceAPIKey', 'SubSourceAPiKey', 'SubSourceApiKey', 'subSourceAPIKey', 'subsourceApiKey', 'subsource_api_key'],
+    scs: ['SCS_MANIFEST_TOKEN', 'SCSManifestToken', 'scsManifestToken', 'scsAuthKey', 'scsApiKey']
   };
 
   for (const field of legacyFields[providerKey] || []) {
@@ -103,6 +104,28 @@ function getSubtitleProviderApiKey(config, providerKey) {
   }
 
   return '';
+}
+
+function getScsImplementationType(config) {
+  const raw = String(config?.subtitleProviders?.scs?.implementationType || '').trim().toLowerCase();
+  return raw === 'auth' ? 'auth' : 'community';
+}
+
+function getScsAuthKey(config) {
+  return getSubtitleProviderApiKey(config, 'scs');
+}
+
+function createScsService(config, options = {}) {
+  const implementationType = getScsImplementationType(config);
+  const authKey = implementationType === 'auth' ? getScsAuthKey(config) : '';
+
+  if (implementationType === 'auth' && !authKey && options.requireAuthKey) {
+    throw new Error('SCS Auth key is missing');
+  }
+
+  return new StremioCommunitySubtitlesService(authKey || null, {
+    useLanguageOverride: implementationType === 'auth' && !!authKey
+  });
 }
 
 async function bumpSubtitleSearchRevisionForConfigHash(configHash) {
@@ -1724,7 +1747,9 @@ async function deduplicateSearch(key, fn) {
     const result = await promise;
     // Cache the completed result for future requests (only if enough results)
     if (result && Array.isArray(result)) {
-      if (result.length >= MIN_CACHED_SUBTITLES_THRESHOLD) {
+      if (result.__partialProviderResults === true) {
+        log.debug(() => `[Subtitle Cache] Not caching partial provider results for: ${shortKey(key)} (${result.length} subtitles)`);
+      } else if (result.length >= MIN_CACHED_SUBTITLES_THRESHOLD) {
         subtitleSearchResultsCache.set(key, result);
         log.debug(() => `[Subtitle Cache] Cached search results for: ${shortKey(key)} (${result.length} subtitles)`);
       } else {
@@ -1742,6 +1767,7 @@ async function collectProviderSearchResults(searchTasks, skippedProviders = [], 
   orchestrationTimeoutMs = 0
 } = {}) {
   let providerResults = [];
+  let partialProviderResults = false;
 
   if (orchestrationTimeoutMs > 0 && searchTasks.length > 0) {
     const collectedResults = [];
@@ -1772,6 +1798,7 @@ async function collectProviderSearchResults(searchTasks, skippedProviders = [], 
       providerResults = [...collectedResults];
       const pending = searchTasks.length - resolvedCount;
       if (pending > 0) {
+        partialProviderResults = true;
         log.warn(() => `[${logContext}] Provider search timeout after ${orchestrationTimeoutMs}ms - returning ${resolvedCount}/${searchTasks.length} provider results (${pending} still pending)`);
       }
     } else {
@@ -1794,6 +1821,14 @@ async function collectProviderSearchResults(searchTasks, skippedProviders = [], 
   if (skippedProviders.length > 0) {
     const skippedNames = skippedProviders.map(s => s.provider).join(', ');
     log.info(() => `[${logContext}] Skipped ${skippedProviders.length} unhealthy provider(s): ${skippedNames}`);
+  }
+
+  if (partialProviderResults) {
+    Object.defineProperty(subtitles, '__partialProviderResults', {
+      value: true,
+      enumerable: false,
+      configurable: true
+    });
   }
 
   return subtitles;
@@ -2855,30 +2890,31 @@ function createSubtitleHandler(config) {
             log.debug(() => `[Subtitles] Skipping SCS: ${scsHealth.reason} (retry in ${scsHealth.retryInSec}s)`);
             skippedProviders.push({ provider: 'StremioCommunitySubtitles', reason: scsHealth.reason });
           } else {
-            log.debug(() => '[Subtitles] SCS provider is enabled');
+            const scsImplementationType = getScsImplementationType(config);
+            const scsAuthKey = scsImplementationType === 'auth' ? getScsAuthKey(config) : '';
 
-            // Warn if user's timeout is too low for SCS (it takes 10-22s to respond)
-            // SCS is inherently slow due to server-side hash matching against a large database
-            const userTimeoutMs = (config.subtitleProviderTimeout || 12) * 1000;
-            if (userTimeoutMs < 28000) {
-              log.debug(() => `[Subtitles] Note: SCS may be cut off by ${userTimeoutMs}ms timeout (SCS needs 28-35s). Increase timeout in settings for reliable SCS results.`);
+            if (scsImplementationType === 'auth' && !scsAuthKey) {
+              log.debug(() => '[Subtitles] Skipping SCS Auth: auth key is missing');
+              skippedProviders.push({ provider: 'StremioCommunitySubtitles', reason: 'missing auth key' });
+            } else {
+              log.debug(() => `[Subtitles] SCS provider is enabled (${scsImplementationType === 'auth' ? 'Auth token' : 'Community token'} mode)`);
+
+              const scs = createScsService(config);
+              addSearchTask('StremioCommunitySubtitles',
+                scs.searchSubtitles(searchParams)
+                  .then(results => {
+                    circuitBreaker.recordSuccess('scs');
+                    return { provider: 'StremioCommunitySubtitles', results };
+                  })
+                  .catch(error => {
+                    const code = error?.code || '';
+                    if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'EPROTO') {
+                      circuitBreaker.recordFailure('scs', error);
+                    }
+                    return { provider: 'StremioCommunitySubtitles', results: [], error };
+                  })
+              );
             }
-
-            const scs = new StremioCommunitySubtitlesService();
-            addSearchTask('StremioCommunitySubtitles',
-              scs.searchSubtitles(searchParams)
-                .then(results => {
-                  circuitBreaker.recordSuccess('scs');
-                  return { provider: 'StremioCommunitySubtitles', results };
-                })
-                .catch(error => {
-                  const code = error?.code || '';
-                  if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'EPROTO') {
-                    circuitBreaker.recordFailure('scs', error);
-                  }
-                  return { provider: 'StremioCommunitySubtitles', results: [], error };
-                })
-            );
           }
         } else {
           log.debug(() => '[Subtitles] SCS provider is disabled');
@@ -3643,7 +3679,7 @@ async function handleSubtitleDownload(fileId, language, config) {
           throw new Error('SCS provider is disabled');
         }
 
-        const scs = new StremioCommunitySubtitlesService();
+        const scs = createScsService(config, { requireAuthKey: true });
         log.debug(() => '[Download] Downloading subtitle via SCS API');
         // Remove scs_ prefix to get the SCS download identifier
         return await scs.downloadSubtitle(fileId.replace('scs_', ''), { timeout: downloadTimeoutMs, languageHint: language, skipAssConversion: config.convertAssToVtt === false && config.forceSRTOutput !== true });
@@ -4595,7 +4631,7 @@ async function handleTranslation(sourceFileId, targetLanguage, config, options =
             if (!config.subtitleProviders?.scs?.enabled) {
               throw new Error('SCS provider is disabled');
             }
-            const scs = new StremioCommunitySubtitlesService();
+            const scs = createScsService(config, { requireAuthKey: true });
             sourceContent = await scs.downloadSubtitle(sourceFileId.replace('scs_', ''), { timeout: downloadTimeoutMs, languageHint: sourceLanguageHint, skipAssConversion });
           } else if (sourceFileId.startsWith('wyzie_')) {
             // Wyzie Subs
@@ -4821,7 +4857,7 @@ async function performTranslation(sourceFileId, targetLanguage, config, { cacheK
           if (!config.subtitleProviders?.scs?.enabled) {
             throw new Error('SCS provider is disabled');
           }
-          const scs = new StremioCommunitySubtitlesService();
+          const scs = createScsService(config, { requireAuthKey: true });
           // Remove scs_ prefix to get the SCS download identifier
           sourceContent = await scs.downloadSubtitle(sourceFileId.replace('scs_', ''), { timeout: downloadTimeoutMs, skipAssConversion });
         } else if (sourceFileId.startsWith('wyzie_')) {
@@ -6178,6 +6214,8 @@ module.exports = {
   createSubDLCloudflareBlockedSubtitle,
   createInvalidSubtitleMessage,
   filterSubtitlesByRequestedLanguages,
+  collectProviderSearchResults,
+  deduplicateSearch,
   maybeConvertToSRT,
   createOpenSubtitlesV3RateLimitSubtitle,
   createOpenSubtitlesV3ServiceUnavailableSubtitle,

@@ -97,6 +97,8 @@
         subsourceEnabled: false,
         subsourceApiKey: '',
         scsEnabled: false,
+        scsAuth: false,
+        scsApiKey: '',
         wyzieEnabled: false,
         wyzieApiKey: getQuickSetupDefaultWyzieApiKey(),
         wyzieSources: getDefaultQuickSetupWyzieSources(),
@@ -946,7 +948,12 @@
     function canProceed(step) {
         switch (step) {
             case 1: return !!state.mode;
-            case 2: return true; // Sources are always valid (OpenSubs V3 is auto-on)
+            case 2: {
+                const scsEnabled = !!($('qsEnableSCS') || {}).checked;
+                const scsAuth = !!($('qsScsImplAuth') || {}).checked;
+                const scsKey = (($('qsScsApiKey') || {}).value || '').trim();
+                return !(scsEnabled && scsAuth && !scsKey);
+            }
             case 3:
                 if (state.mode === 'fetch') return true; // skipped
                 return state.geminiApiKey.trim().length > 0;
@@ -991,6 +998,8 @@
                 state.subsourceApiKey = ($('qsSubsourceApiKey') || {}).value || '';
                 // SCS
                 state.scsEnabled = !!($('qsEnableSCS') || {}).checked;
+                state.scsAuth = !!($('qsScsImplAuth') || {}).checked;
+                state.scsApiKey = (($('qsScsApiKey') || {}).value || '').trim();
                 // Wyzie
                 state.wyzieEnabled = !!($('qsEnableWyzie') || {}).checked;
                 state.wyzieApiKey = (($('qsWyzieApiKey') || {}).value || '').trim() || getQuickSetupDefaultWyzieApiKey();
@@ -1067,11 +1076,28 @@
         // SCS toggle
         const scsCheck = $('qsEnableSCS');
         const scsNote = $('qsScsNote');
-        if (scsCheck && scsNote) {
-            scsCheck.addEventListener('change', () => {
-                scsNote.style.display = scsCheck.checked ? '' : 'none';
-            });
-            if (scsCheck.checked) scsNote.style.display = '';
+        const scsOptions = $('qsScsOptions');
+        const scsAuthConfig = $('qsScsAuthConfig');
+        const scsCommunityRadio = $('qsScsImplCommunity');
+        const scsAuthRadio = $('qsScsImplAuth');
+        const scsApiKey = $('qsScsApiKey');
+        const updateScsModeUi = () => {
+            const enabled = !!(scsCheck && scsCheck.checked);
+            const auth = !!(scsAuthRadio && scsAuthRadio.checked);
+            if (scsNote) scsNote.style.display = enabled ? '' : 'none';
+            if (scsOptions) scsOptions.style.display = enabled ? '' : 'none';
+            if (scsAuthConfig) scsAuthConfig.style.display = enabled && auth ? '' : 'none';
+            state.scsEnabled = enabled;
+            state.scsAuth = auth;
+            state.scsApiKey = ((scsApiKey || {}).value || '').trim();
+            updateNav(2);
+        };
+        if (scsCheck) {
+            scsCheck.addEventListener('change', updateScsModeUi);
+            if (scsCommunityRadio) scsCommunityRadio.addEventListener('change', updateScsModeUi);
+            if (scsAuthRadio) scsAuthRadio.addEventListener('change', updateScsModeUi);
+            if (scsApiKey) scsApiKey.addEventListener('input', updateScsModeUi);
+            updateScsModeUi();
         }
 
         // Wyzie toggle
@@ -1688,7 +1714,14 @@
             items.push({ icon: '\uD83D\uDCE1', label: 'SubSource', value: tQs('summary.enabled', null, 'Enabled'), cls: 'qs-on' });
         }
         if (state.scsEnabled) {
-            items.push({ icon: '\uD83C\uDF10', label: 'Stremio Community Subs', value: tQs('summary.scsTimeout', null, 'Enabled (30s timeout)'), cls: 'qs-on' });
+            items.push({
+                icon: '\uD83C\uDF10',
+                label: 'Stremio Community Subs',
+                value: state.scsAuth
+                    ? tQs('summary.scsAuth', null, 'Auth key')
+                    : tQs('summary.scsCommunity', null, 'Community token'),
+                cls: 'qs-on'
+            });
         }
         if (state.wyzieEnabled) {
             const activeSources = Object.entries(state.wyzieSources).filter(([, v]) => v).map(([k]) => k);
@@ -1882,14 +1915,18 @@
                     enabled: state.subsourceEnabled,
                     apiKey: state.subsourceApiKey
                 },
-                scs: { enabled: state.scsEnabled },
+                scs: {
+                    enabled: state.scsEnabled,
+                    implementationType: state.scsAuth ? 'auth' : 'community',
+                    apiKey: state.scsAuth ? (state.scsApiKey || '').trim() : ''
+                },
                 wyzie: {
                     enabled: state.wyzieEnabled,
                     apiKey: (state.wyzieApiKey || getQuickSetupDefaultWyzieApiKey()).trim(),
                     sources: state.wyzieEnabled ? normalizeQuickSetupWyzieSources(state.wyzieSources) : undefined
                 }
             },
-            subtitleProviderTimeout: state.scsEnabled ? 30 : 12,
+            subtitleProviderTimeout: 12,
             translationCache: {
                 enabled: true,
                 duration: 0,
@@ -2215,7 +2252,13 @@
         if (scsCheck) scsCheck.checked = false;
         if (wyzieCheck) wyzieCheck.checked = false;
         hide('qsScsNote');
+        hide('qsScsOptions');
+        hide('qsScsAuthConfig');
         hide('qsWyzieSources');
+        const scsCommunityRadio = $('qsScsImplCommunity');
+        const scsKey = $('qsScsApiKey');
+        if (scsCommunityRadio) scsCommunityRadio.checked = true;
+        if (scsKey) scsKey.value = '';
         const un = $('qsOpenSubsUsername');
         const pw = $('qsOpenSubsPassword');
         if (un) un.value = '';
@@ -2319,6 +2362,8 @@
         // SCS
         const scs = subs.scs || {};
         state.scsEnabled = !!scs.enabled;
+        state.scsAuth = scs.implementationType === 'auth';
+        state.scsApiKey = (scs.apiKey || '').trim();
 
         // Wyzie
         const wyzie = subs.wyzie || {};
@@ -2360,6 +2405,8 @@
         state.subsourceEnabled = false;
         state.subsourceApiKey = '';
         state.scsEnabled = false;
+        state.scsAuth = false;
+        state.scsApiKey = '';
         state.wyzieEnabled = false;
         state.wyzieApiKey = getQuickSetupDefaultWyzieApiKey();
         state.wyzieSources = getDefaultQuickSetupWyzieSources();
@@ -2388,21 +2435,31 @@
         if (ssCheck) ssCheck.checked = state.subsourceEnabled;
         if (scsCheck) scsCheck.checked = state.scsEnabled;
         if (wyzieCheck) wyzieCheck.checked = state.wyzieEnabled;
+        const scsCommunityRadio = $('qsScsImplCommunity');
+        const scsAuthRadio = $('qsScsImplAuth');
+        if (scsAuthRadio) scsAuthRadio.checked = state.scsAuth === true;
+        if (scsCommunityRadio) scsCommunityRadio.checked = state.scsAuth !== true;
 
         const subdlWrap = $('qsSubdlKeyWrap');
         const ssWrap = $('qsSubsourceKeyWrap');
         const scsNote = $('qsScsNote');
+        const scsOptions = $('qsScsOptions');
+        const scsAuthConfig = $('qsScsAuthConfig');
         const wyzieSources = $('qsWyzieSources');
         if (subdlWrap) subdlWrap.style.display = state.subdlEnabled ? '' : 'none';
         if (ssWrap) ssWrap.style.display = state.subsourceEnabled ? '' : 'none';
         if (scsNote) scsNote.style.display = state.scsEnabled ? '' : 'none';
+        if (scsOptions) scsOptions.style.display = state.scsEnabled ? '' : 'none';
+        if (scsAuthConfig) scsAuthConfig.style.display = state.scsEnabled && state.scsAuth ? '' : 'none';
         if (wyzieSources) wyzieSources.style.display = state.wyzieEnabled ? '' : 'none';
 
         const subdlKey = $('qsSubdlApiKey');
         const ssKey = $('qsSubsourceApiKey');
+        const scsKey = $('qsScsApiKey');
         const wyzieKey = $('qsWyzieApiKey');
         if (subdlKey) subdlKey.value = state.subdlApiKey || '';
         if (ssKey) ssKey.value = state.subsourceApiKey || '';
+        if (scsKey) scsKey.value = state.scsApiKey || '';
         if (wyzieKey) wyzieKey.value = state.wyzieApiKey || getQuickSetupDefaultWyzieApiKey();
 
         const un = $('qsOpenSubsUsername');

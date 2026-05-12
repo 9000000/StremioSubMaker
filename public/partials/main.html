@@ -404,6 +404,84 @@
                             </div>
                         </div>
 
+                        <!-- Stremio Community Subtitles (SCS) -->
+                        <div class="form-group" style="padding: 0.85rem 0; border-bottom: 1px solid var(--border);">
+                            <div
+                                style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
+                                <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+                                    <span style="font-size: 1.2rem;">🌐</span>
+                                    <div>
+                                        <strong id="scsTitle" data-i18n="config.providers.scs.title"
+                                            style="display: block;">Stremio Community Subtitles</strong>
+                                        <span class="label-description" id="scsDescription" style="margin: 0;"
+                                            data-i18n="config.providers.scs.description">Community-curated subtitles
+                                            from the Stremio Community Subtitles addon. Choose the shared community
+                                            token or your own auth key.</span>
+                                    </div>
+                                </label>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="enableSCS" aria-label="SCS toggle"
+                                        data-i18n="config.providers.scs.toggleLabel" data-i18n-attr="aria-label">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div id="scsNote"
+                                style="font-size: 0.8rem; color: var(--text-secondary); padding: 0.5rem; background: var(--surface-light); border-radius: 6px;">
+                                <span data-i18n="config.providers.scs.note">SCS provides community-uploaded subtitles.
+                                    Auth mode uses your own key and selected languages.</span>
+                            </div>
+                            <div id="scsConfig" style="display: none; margin-top: 0.75rem;">
+                                <div
+                                    style="margin-bottom: 0.75rem; padding: 0.75rem; background: var(--surface-light); border-radius: 8px;">
+                                    <label id="scsImplTypeLabel" data-i18n="config.providers.scs.implementationType"
+                                        style="display: block; margin-bottom: 0.75rem; font-weight: 600;">Implementation
+                                        Type</label>
+                                    <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                                        <label
+                                            style="display: flex; align-items: start; gap: 0.5rem; cursor: pointer; padding: 0.75rem; background: white; border: 2px solid var(--border); border-radius: 8px; transition: all 0.2s;">
+                                            <input type="radio" name="scsImplementation" id="scsImplCommunity"
+                                                value="community" checked style="margin-top: 0.25rem;">
+                                            <div>
+                                                <strong id="scsCommunityTitle"
+                                                    data-i18n="config.providers.scs.communityTitle"
+                                                    style="display: block; margin-bottom: 0.25rem;">Community
+                                                    (Default)</strong>
+                                                <span id="scsCommunityDescription" class="label-description"
+                                                    data-i18n="config.providers.scs.communityDescription"
+                                                    style="margin: 0; font-size: 0.875rem;">Uses SubMaker's shared SCS
+                                                    token. No auth key required.</span>
+                                            </div>
+                                        </label>
+                                        <label
+                                            style="display: flex; align-items: start; gap: 0.5rem; cursor: pointer; padding: 0.75rem; background: white; border: 2px solid var(--border); border-radius: 8px; transition: all 0.2s;">
+                                            <input type="radio" name="scsImplementation" id="scsImplAuth" value="auth"
+                                                style="margin-top: 0.25rem;">
+                                            <div>
+                                                <strong id="scsAuthTitle" data-i18n="config.providers.scs.authTitle"
+                                                    style="display: block; margin-bottom: 0.25rem;">Auth
+                                                    (Recommended)</strong>
+                                                <span id="scsAuthDescription" class="label-description"
+                                                    data-i18n="config.providers.scs.authDescription"
+                                                    style="margin: 0; font-size: 0.875rem;">Uses your own SCS auth key
+                                                    and sends only your selected SubMaker languages.</span>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div id="scsAuthConfig" style="display: none;">
+                                    <label id="scsApiKeyLabel" data-i18n="config.providers.scs.apiKeyLabel"
+                                        style="display: block;">SCS Auth Key</label>
+                                    <input type="text" id="scsApiKey" name="scsApiKey"
+                                        data-i18n="config.providers.scs.apiKeyPlaceholder" data-i18n-attr="placeholder"
+                                        placeholder="Enter SCS auth key" autocomplete="off" autocapitalize="none"
+                                        autocorrect="off" spellcheck="false">
+                                    <span id="scsApiKeyNote" class="label-description"
+                                        data-i18n="config.providers.scs.apiKeyNote">Get this from your SCS account at
+                                        stremio-community-subtitles.top.</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- More Providers (beta) - Collapsible Section -->
                         <div class="form-group" style="padding-top: 1.5rem; border-top: 1px solid var(--border);">
                             <div class="more-providers-header"
@@ -416,7 +494,7 @@
                                             style="display: block;">More Providers (beta)</strong>
                                         <span class="label-description" id="moreProvidersDescription" style="margin: 0;"
                                             data-i18n="config.providers.moreProviders.description">Additional subtitle
-                                            sources including community and aggregator providers.</span>
+                                            sources and aggregator providers.</span>
                                     </div>
                                 </div>
                                 <span class="more-providers-chevron" id="moreProvidersChevron"
@@ -539,38 +617,6 @@
                                     </div>
                                 </div>
 
-                                <!-- Stremio Community Subtitles (SCS) -->
-                                <div class="form-group"
-                                    style="padding: 1rem 0; border-bottom: 1px solid var(--border);">
-                                    <div
-                                        style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
-                                        <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-                                            <span style="font-size: 1.2rem;">🌐</span>
-                                            <div>
-                                                <strong id="scsTitle" data-i18n="config.providers.scs.title"
-                                                    style="display: block;">Stremio Community Subtitles</strong>
-                                                <span class="label-description" id="scsDescription" style="margin: 0;"
-                                                    data-i18n="config.providers.scs.description">Community-curated
-                                                    subtitles from the Stremio Community Subtitles addon. No API key
-                                                    needed.</span>
-                                            </div>
-                                        </label>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" id="enableSCS" aria-label="SCS toggle"
-                                                data-i18n="config.providers.scs.toggleLabel"
-                                                data-i18n-attr="aria-label">
-                                            <span class="toggle-slider"></span>
-                                        </label>
-                                    </div>
-                                    <div id="scsNote"
-                                        style="font-size: 0.8rem; color: var(--text-secondary); padding: 0.5rem; background: var(--surface-light); border-radius: 6px;">
-                                        <span data-i18n="config.providers.scs.note">SCS provides community-uploaded
-                                            subtitles. <strong>Requires 28-30s timeout</strong> (default is 12s) due to
-                                            slow server-side processing. Set timeout to 30s for reliable SCS
-                                            results.</span>
-                                    </div>
-                                </div>
-
                                 <!-- Subs.ro -->
                                 <div class="form-group" style="padding-top: 1rem;">
                                     <div
@@ -648,9 +694,8 @@
                                         style="font-size: 1rem; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));">⚠️</span>
                                     <span
                                         style="font-size: 0.8rem; font-weight: 500; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.3);"
-                                        data-i18n="config.providers.timeout.slowWarning">SCS requires 28-30s due to slow
-                                        server processing.
-                                        Wyzie and SubSource may also be slow. Set to 30s for reliable results.</span>
+                                        data-i18n="config.providers.timeout.slowWarning">Wyzie and SubSource may be
+                                        slow. If you get no subtitle results, try a higher timeout value.</span>
                                 </div>
                             </div>
                             <div id="providerTimeoutNote"

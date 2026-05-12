@@ -1470,6 +1470,7 @@ const DEFAULT_STREMIO_WEB_ORIGINS = [
     'https://www.stremio.com',
     'https://stremio.com',
     'https://app.stremio.com',
+    'https://stremio.web.app',
     // Stremio web shell hosted on GitHub Pages
     'https://stremio.github.io',
     // Third-party Stremio web frontends
@@ -1481,6 +1482,7 @@ const allowedOriginsNormalized = Array.from(new Set([
     ...allowedOrigins.map(normalizeOrigin),
     ...DEFAULT_STREMIO_WEB_ORIGINS.map(normalizeOrigin)
 ]));
+// Explicitly allow official Stremio-hosted subdomains, including *.stremio.com.
 const STREMIO_ORIGIN_WILDCARD_SUFFIXES = ['.strem.io', '.stremio.one', '.stremio.com'];
 // Allow additional wildcard domain suffixes via env (comma-separated, e.g. ".example.com,.other.org")
 const extraWildcardSuffixes = (process.env.ALLOWED_ORIGIN_WILDCARD_SUFFIXES || '')

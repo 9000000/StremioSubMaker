@@ -99,6 +99,33 @@ const USER_AGENT = `SubMaker v${version}`;
 const SAFE_SCS_IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]+$/;
 const ENCODED_IDENTIFIER_PREFIX = 'idb64_';
 
+function normalizeManifestToken(value) {
+    if (value === undefined || value === null) {
+        return '';
+    }
+
+    let normalized = String(value).trim();
+    try {
+        const parsed = new URL(normalized);
+        const tokenSegment = parsed.pathname
+            .split('/')
+            .map(segment => segment.trim())
+            .filter(Boolean)
+            .find(segment => segment !== 'manifest.json');
+        if (tokenSegment) {
+            normalized = tokenSegment;
+        }
+    } catch (_) {
+        // Plain tokens are expected; URL parsing is only for pasted manifest URLs.
+    }
+
+    normalized = normalized.replace(/^\/+|\/+$/g, '');
+    if (!normalized || normalized === '[object Object]' || normalized === '[object Array]') {
+        return '';
+    }
+    return normalized;
+}
+
 // ============================================================================
 // SCS TIMEOUT CONFIGURATION
 // ============================================================================
@@ -368,6 +395,22 @@ const SUBMAKER_TO_SCS_LANG = Object.fromEntries(
     Object.entries(SCS_TO_SUBMAKER_LANG).map(([k, v]) => [v, k])
 );
 
+const SCS_SUPPORTED_LANGS = new Set([
+    'eng', 'pol', 'spa', 'fra', 'deu', 'ita', 'por', 'pob', 'rus', 'jpn',
+    'zho', 'kor', 'ara', 'hin', 'tur', 'nld', 'swe', 'nor', 'dan', 'fin',
+    'ces', 'slk', 'hun', 'ron', 'bul', 'ell', 'heb', 'tha', 'vie', 'ind',
+    'msa', 'ukr', 'srp', 'hrv', 'slv', 'est', 'lav', 'lit', 'fas', 'pus',
+    'urd', 'ben', 'mya', 'cat', 'eus', 'epo', 'mkd', 'tel', 'sqi'
+]);
+
+const SUBMAKER_TO_SCS_EQUIVALENT_LANG = {
+    spn: 'spa',
+    zhs: 'zho',
+    zht: 'zho',
+    ze: 'zho',
+    fil: 'tgl'
+};
+
 // Legacy ISO 639-1 (2-letter) to ISO 639-2/B mapping (fallback for any 2-letter codes)
 const ISO1_TO_ISO2B = {
     'en': 'eng', 'es': 'spa', 'pt': 'por', 'fr': 'fre', 'de': 'ger',
@@ -413,6 +456,50 @@ function normalizeLanguageCode(lang) {
     return lang;
 }
 
+function normalizeLanguageForScsRequest(lang) {
+    if (!lang) return '';
+
+    let lower = String(lang).trim().toLowerCase();
+    if (!lower) return '';
+
+    if (lower === 'pt-br' || lower === 'pt_br' || lower === 'ptbr') {
+        lower = 'pob';
+    } else {
+        lower = lower.replace(/[_-]/g, '');
+    }
+
+    if (lower.length === 2 && ISO1_TO_ISO2B[lower]) {
+        lower = ISO1_TO_ISO2B[lower];
+    }
+
+    if (SUBMAKER_TO_SCS_EQUIVALENT_LANG[lower]) {
+        lower = SUBMAKER_TO_SCS_EQUIVALENT_LANG[lower];
+    }
+
+    const scsLang = SUBMAKER_TO_SCS_LANG[lower] || lower;
+    return SCS_SUPPORTED_LANGS.has(scsLang) ? scsLang : '';
+}
+
+function buildScsLanguageOverride(languages) {
+    if (!Array.isArray(languages) || languages.length === 0) {
+        return '';
+    }
+
+    const seen = new Set();
+    const normalized = [];
+
+    for (const lang of languages) {
+        const scsLang = normalizeLanguageForScsRequest(lang);
+        if (!scsLang || seen.has(scsLang)) {
+            continue;
+        }
+        seen.add(scsLang);
+        normalized.push(scsLang);
+    }
+
+    return normalized.join(',');
+}
+
 class StremioCommunitySubtitlesService {
     static initLogged = false;
 
@@ -428,15 +515,28 @@ class StremioCommunitySubtitlesService {
         timeout: SCS_DEFAULT_TIMEOUT_MS // Default timeout, will be overridden by user config
     });
 
-    constructor() {
-        // Use env var if set, otherwise use fallback community token
-        this.manifestToken = process.env.SCS_MANIFEST_TOKEN || SCS_FALLBACK_TOKEN;
+    constructor(manifestToken = null, options = {}) {
+        if (manifestToken && typeof manifestToken === 'object') {
+            options = manifestToken;
+            manifestToken = options.manifestToken || options.apiKey || null;
+        }
+
+        const userManifestToken = normalizeManifestToken(manifestToken);
+        const envManifestToken = normalizeManifestToken(process.env.SCS_MANIFEST_TOKEN);
+
+        // Use user auth token when configured, otherwise preserve the existing
+        // shared community-token behavior.
+        this.manifestToken = userManifestToken || envManifestToken || SCS_FALLBACK_TOKEN;
+        this.useLanguageOverride = options?.useLanguageOverride === true && !!userManifestToken;
+        this.usesUserManifestToken = !!userManifestToken;
 
         // Use static client for all instances (connection pooling optimization)
         this.client = StremioCommunitySubtitlesService.client;
 
         if (!StremioCommunitySubtitlesService.initLogged) {
-            if (process.env.SCS_MANIFEST_TOKEN) {
+            if (userManifestToken) {
+                log.debug(() => '[SCS] Initialized with user auth manifest token');
+            } else if (envManifestToken) {
                 log.debug(() => '[SCS] Initialized with custom manifest token from env');
             } else {
                 log.debug(() => '[SCS] Initialized with default community token');
@@ -459,7 +559,7 @@ class StremioCommunitySubtitlesService {
 
         // Token is always available (env or fallback)
         try {
-            const { type, imdb_id, videoHash, videoSize, filename, providerTimeout } = params;
+            const { type, imdb_id, videoHash, videoSize, filename, providerTimeout, languages } = params;
             // videoHash is now only set when Stremio provides a real OpenSubtitles hash
             // (our derived MD5 hashes are no longer passed - they're useless for SCS matching)
             const hasRealHash = !!videoHash;
@@ -492,6 +592,10 @@ class StremioCommunitySubtitlesService {
             if (videoHash) queryParts.push(`videoHash=${videoHash}`);
             if (videoSize) queryParts.push(`videoSize=${videoSize}`);
             if (filename) queryParts.push(`filename=${encodeURIComponent(filename)}`);
+            if (this.useLanguageOverride) {
+                const langsOverride = buildScsLanguageOverride(languages);
+                if (langsOverride) queryParts.push(`langs=${encodeURIComponent(langsOverride)}`);
+            }
 
             const paramsJson = queryParts.join('&') + '.json';
 

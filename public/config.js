@@ -244,6 +244,16 @@
         setDescriptionWithLink('subsourceDescription', 'config.providers.subsource.description', 'config.providers.subsource.linkLabel', 'Get your free API key from');
         setText('subdlTitle', 'config.providers.subdl.title', 'SubDL');
         setDescriptionWithLink('subdlDescription', 'config.providers.subdl.description', 'config.providers.subdl.linkLabel', 'Get your free API key from');
+        setText('scsTitle', 'config.providers.scs.title', 'Stremio Community Subtitles');
+        setText('scsDescription', 'config.providers.scs.description', 'Community-curated subtitles from the Stremio Community Subtitles addon. Choose the shared community token or your own auth key.');
+        setText('scsImplTypeLabel', 'config.providers.scs.implementationType', 'Implementation Type');
+        setText('scsCommunityTitle', 'config.providers.scs.communityTitle', 'Community (Default)');
+        setText('scsCommunityDescription', 'config.providers.scs.communityDescription', "Uses SubMaker's shared SCS token. No auth key required.");
+        setText('scsAuthTitle', 'config.providers.scs.authTitle', 'Auth (Recommended)');
+        setText('scsAuthDescription', 'config.providers.scs.authDescription', 'Uses your own SCS auth key and sends only your selected SubMaker languages.');
+        setText('scsApiKeyLabel', 'config.providers.scs.apiKeyLabel', 'SCS Auth Key');
+        setAttr('scsApiKey', 'placeholder', 'config.providers.scs.apiKeyPlaceholder', 'Enter SCS auth key');
+        setText('scsApiKeyNote', 'config.providers.scs.apiKeyNote', 'Get this from your SCS account at stremio-community-subtitles.top.');
         setText('wyzieTitle', 'config.providers.wyzie.title', 'Wyzie Subs');
         setDescriptionWithLink('wyzieDescription', 'config.providers.wyzie.description', 'config.providers.wyzie.linkLabel', 'Get your free API key from');
         setAttr('validateWyzie', 'title', 'config.providers.wyzie.validateTitle', 'Validate API key');
@@ -407,6 +417,33 @@
             shouldFetchSession,
             fetchToken: shouldFetchSession ? intendedToken : '',
             isFirstRun: !hasCachedConfig && !intendedToken
+        };
+    }
+
+    function resolveTranslationModeRestoreState(options = {}) {
+        if (configPageState && typeof configPageState.resolveTranslationModeRestoreState === 'function') {
+            return configPageState.resolveTranslationModeRestoreState(options);
+        }
+        const current = options.currentConfig && typeof options.currentConfig === 'object' ? options.currentConfig : {};
+        const backup = options.translationModeBackup && typeof options.translationModeBackup === 'object' ? options.translationModeBackup : null;
+        const hasTranslationModeBackup = !!backup;
+        const pickArray = (key) => {
+            const backupValue = hasTranslationModeBackup ? backup[key] : undefined;
+            if (Array.isArray(backupValue)) return [...backupValue];
+            const currentValue = current[key];
+            return Array.isArray(currentValue) ? [...currentValue] : [];
+        };
+        const learnTargetLanguages = pickArray('learnTargetLanguages');
+        const learnModeSource = hasTranslationModeBackup ? backup.learnMode === true : current.learnMode === true;
+        return {
+            hasTranslationModeBackup,
+            sourceLanguages: pickArray('sourceLanguages'),
+            targetLanguages: pickArray('targetLanguages'),
+            learnTargetLanguages,
+            learnMode: learnModeSource && learnTargetLanguages.length > 0,
+            learnOrder: (hasTranslationModeBackup ? backup.learnOrder : '') || current.learnOrder || 'source-top',
+            learnItalic: hasTranslationModeBackup ? backup.learnItalic !== false : current.learnItalic !== false,
+            learnItalicTarget: (hasTranslationModeBackup ? backup.learnItalicTarget : '') || current.learnItalicTarget || 'target'
         };
     }
 
@@ -1192,7 +1229,9 @@ Translate to {target_language}.`;
                     apiKey: DEFAULT_API_KEYS.SUBSOURCE
                 },
                 scs: {
-                    enabled: false // Stremio Community Subtitles - no API key needed
+                    enabled: false,
+                    implementationType: 'community',
+                    apiKey: ''
                 },
                 wyzie: {
                     enabled: false,
@@ -6725,6 +6764,17 @@ Translate to {target_language}.`;
             toggleProviderConfig('subsourceConfig', e.target.checked);
         });
 
+        const scsToggle = document.getElementById('enableSCS');
+        if (scsToggle) {
+            scsToggle.addEventListener('change', (e) => {
+                toggleProviderConfig('scsConfig', e.target.checked);
+            });
+        }
+
+        document.querySelectorAll('input[name="scsImplementation"]').forEach(radio => {
+            radio.addEventListener('change', handleScsImplChange);
+        });
+
         const wyzieToggle = document.getElementById('enableWyzie');
         if (wyzieToggle) {
             wyzieToggle.addEventListener('change', (e) => {
@@ -7303,6 +7353,34 @@ Translate to {target_language}.`;
 
         // Update visual selection state for all radio buttons
         document.querySelectorAll('input[name="opensubtitlesImplementation"]').forEach(radio => {
+            const label = radio.closest('label');
+            if (label) {
+                if (radio.checked) {
+                    label.style.borderColor = 'var(--primary)';
+                    label.style.background = 'var(--surface-light)';
+                } else {
+                    label.style.borderColor = 'var(--border)';
+                    label.style.background = 'white';
+                }
+            }
+        });
+    }
+
+    function handleScsImplChange(e) {
+        const authConfig = document.getElementById('scsAuthConfig');
+        if (!authConfig) return;
+
+        let implementationType;
+        if (e && e.target && e.target.value) {
+            implementationType = e.target.value;
+        } else {
+            const checkedRadio = document.querySelector('input[name="scsImplementation"]:checked');
+            implementationType = checkedRadio ? checkedRadio.value : 'community';
+        }
+
+        authConfig.style.display = implementationType === 'auth' ? 'block' : 'none';
+
+        document.querySelectorAll('input[name="scsImplementation"]').forEach(radio => {
             const label = radio.closest('label');
             if (label) {
                 if (radio.checked) {
@@ -9105,14 +9183,14 @@ Translate to {target_language}.`;
 
             updateSelectedChips('notranslation', []);
 
-            const restored = translationModeBackup || {};
-            currentConfig.sourceLanguages = normalizeLanguageCodes(restored.sourceLanguages || currentConfig.sourceLanguages || []);
-            currentConfig.targetLanguages = normalizeLanguageCodes(restored.targetLanguages || currentConfig.targetLanguages || []);
-            currentConfig.learnTargetLanguages = normalizeLanguageCodes(restored.learnTargetLanguages || currentConfig.learnTargetLanguages || []);
-            currentConfig.learnMode = restored.learnMode === true && currentConfig.learnTargetLanguages.length > 0;
-            currentConfig.learnOrder = restored.learnOrder || currentConfig.learnOrder || 'source-top';
+            const restored = resolveTranslationModeRestoreState({ currentConfig, translationModeBackup });
+            currentConfig.sourceLanguages = normalizeLanguageCodes(restored.sourceLanguages || []);
+            currentConfig.targetLanguages = normalizeLanguageCodes(restored.targetLanguages || []);
+            currentConfig.learnTargetLanguages = normalizeLanguageCodes(restored.learnTargetLanguages || []);
+            currentConfig.learnMode = restored.learnMode === true;
+            currentConfig.learnOrder = restored.learnOrder || 'source-top';
             currentConfig.learnItalic = restored.learnItalic !== false;
-            currentConfig.learnItalicTarget = restored.learnItalicTarget || currentConfig.learnItalicTarget || 'target';
+            currentConfig.learnItalicTarget = restored.learnItalicTarget || 'target';
             enforceLanguageLimits();
 
             syncGridSelection('sourceLanguages', currentConfig.sourceLanguages);
@@ -9576,6 +9654,8 @@ Translate to {target_language}.`;
                 if (defaults.subtitleProviders.scs) {
                     const oldScs = oldConfig.subtitleProviders.scs || {};
                     newConfig.subtitleProviders.scs.enabled = oldScs.enabled === true;
+                    newConfig.subtitleProviders.scs.implementationType = oldScs.implementationType === 'auth' ? 'auth' : 'community';
+                    newConfig.subtitleProviders.scs.apiKey = (oldScs.apiKey || '').trim();
                 }
 
                 // Wyzie: preserve enabled state and sources config if provider exists
@@ -9882,10 +9962,24 @@ Translate to {target_language}.`;
             currentConfig.subtitleProviders?.subsource?.apiKey || DEFAULT_API_KEYS.SUBSOURCE;
         toggleProviderConfig('subsourceConfig', subsourceEnabled);
 
-        // Stremio Community Subtitles (SCS) - no API key needed
+        // Stremio Community Subtitles (SCS)
         const scsEnabled = currentConfig.subtitleProviders?.scs?.enabled === true;
         const scsToggle = document.getElementById('enableSCS');
         if (scsToggle) scsToggle.checked = scsEnabled;
+        const scsImplementationType = currentConfig.subtitleProviders?.scs?.implementationType === 'auth' ? 'auth' : 'community';
+        const scsCommunityRadio = document.getElementById('scsImplCommunity');
+        const scsAuthRadio = document.getElementById('scsImplAuth');
+        if (scsImplementationType === 'auth') {
+            if (scsAuthRadio) scsAuthRadio.checked = true;
+        } else if (scsCommunityRadio) {
+            scsCommunityRadio.checked = true;
+        }
+        const scsApiKeyEl = document.getElementById('scsApiKey');
+        if (scsApiKeyEl) {
+            scsApiKeyEl.value = currentConfig.subtitleProviders?.scs?.apiKey || '';
+        }
+        toggleProviderConfig('scsConfig', scsEnabled);
+        handleScsImplChange();
 
         // Wyzie Subs
         const wyzieEnabled = currentConfig.subtitleProviders?.wyzie?.enabled === true;
@@ -10335,7 +10429,9 @@ Translate to {target_language}.`;
                     apiKey: document.getElementById('subsourceApiKey').value.trim()
                 },
                 scs: {
-                    enabled: document.getElementById('enableSCS')?.checked || false
+                    enabled: document.getElementById('enableSCS')?.checked || false,
+                    implementationType: document.querySelector('input[name="scsImplementation"]:checked')?.value === 'auth' ? 'auth' : 'community',
+                    apiKey: document.getElementById('scsApiKey')?.value?.trim() || ''
                 },
                 wyzie: {
                     enabled: document.getElementById('enableWyzie')?.checked || false,
@@ -10460,6 +10556,9 @@ Translate to {target_language}.`;
         }
         if (config.subtitleProviders.subsource?.enabled && !config.subtitleProviders.subsource.apiKey?.trim()) {
             errors.push(tConfig('config.validation.subsourceKeyRequired', {}, '⚠️ SubSource is enabled but API key is missing'));
+        }
+        if (config.subtitleProviders.scs?.enabled && config.subtitleProviders.scs.implementationType === 'auth' && !config.subtitleProviders.scs.apiKey?.trim()) {
+            errors.push(tConfig('config.validation.scsKeyRequired', {}, '⚠️ SCS Auth is enabled but auth key is missing'));
         }
         if (config.subtitleProviders.wyzie?.enabled && !config.subtitleProviders.wyzie.apiKey?.trim()) {
             errors.push(tConfig('config.validation.wyzieKeyRequired', {}, '⚠️ Wyzie Subs is enabled but API key is missing'));

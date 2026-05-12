@@ -233,6 +233,47 @@
         return freshConfig;
     }
 
+    function resolveTranslationModeRestoreState(options = {}) {
+        const currentConfig = options.currentConfig && typeof options.currentConfig === 'object'
+            ? options.currentConfig
+            : {};
+        const translationModeBackup = options.translationModeBackup && typeof options.translationModeBackup === 'object'
+            ? options.translationModeBackup
+            : null;
+        const hasTranslationModeBackup = !!translationModeBackup;
+
+        const pickArray = (key) => {
+            const backupValue = hasTranslationModeBackup ? translationModeBackup[key] : undefined;
+            if (Array.isArray(backupValue)) return [...backupValue];
+            const currentValue = currentConfig[key];
+            return Array.isArray(currentValue) ? [...currentValue] : [];
+        };
+
+        const learnTargetLanguages = pickArray('learnTargetLanguages');
+        const learnModeSource = hasTranslationModeBackup
+            ? translationModeBackup.learnMode === true
+            : currentConfig.learnMode === true;
+        const learnOrder = (hasTranslationModeBackup ? translationModeBackup.learnOrder : '')
+            || currentConfig.learnOrder
+            || 'source-top';
+        const learnItalicTarget = (hasTranslationModeBackup ? translationModeBackup.learnItalicTarget : '')
+            || currentConfig.learnItalicTarget
+            || 'target';
+
+        return {
+            hasTranslationModeBackup,
+            sourceLanguages: pickArray('sourceLanguages'),
+            targetLanguages: pickArray('targetLanguages'),
+            learnTargetLanguages,
+            learnMode: learnModeSource && learnTargetLanguages.length > 0,
+            learnOrder,
+            learnItalic: hasTranslationModeBackup
+                ? translationModeBackup.learnItalic !== false
+                : currentConfig.learnItalic !== false,
+            learnItalicTarget
+        };
+    }
+
     function resolveTokenVaultSwitchPlan(options = {}) {
         const targetToken = String(options.targetToken || '').trim().toLowerCase();
         const activeToken = String(options.activeToken || '').trim().toLowerCase();
@@ -385,6 +426,7 @@
         resolveConfigInstructionsPreference,
         resolveSessionLoadFailurePlan,
         resolveSaveTargetToken,
+        resolveTranslationModeRestoreState,
         resolveVisibleInstallToken,
         resolveTokenVaultSwitchPlan,
         resolveCompleteTokenRemovalPlan,
