@@ -50,6 +50,7 @@ const { redactToken } = require('./src/utils/security');
 const { getAllLanguages, getAllTranslationLanguages, getLanguageName, toISO6392, findISO6391ByName, canonicalSyncLanguageCode } = require('./src/utils/languages');
 const { generateCacheKeys } = require('./src/utils/cacheKeys');
 const { getCached: getDownloadCached, saveCached: saveDownloadCached, getCacheStats: getDownloadCacheStats } = require('./src/utils/downloadCache');
+const { checkOpenSubtitlesDownloadIntent } = require('./src/utils/openSubtitlesDownloadGuard');
 const { createSubtitleHandler, handleSubtitleDownload, handleTranslation, createLoadingSubtitle, createSessionTokenErrorSubtitle, createOpenSubtitlesAuthErrorSubtitle, createOpenSubtitlesQuotaExceededSubtitle, createCredentialDecryptionErrorSubtitle, createTranslationErrorSubtitle, readFromPartialCache, hasCachedTranslation, purgeTranslationCache, translationStatus, inFlightTranslations, canUserStartTranslation, getHistoryForUser, migrateHistoryNamespace, resolveHistoryUserHash, saveRequestToHistory, resolveHistoryTitle, enrichHistoryEntriesBackground, maybeConvertToSRT } = require('./src/handlers/subtitles');
 const GeminiService = require('./src/services/gemini');
 const TranslationEngine = require('./src/services/translationEngine');
@@ -3437,34 +3438,19 @@ app.post('/api/validate-gemini', validationLimiter, async (req, res) => {
             });
         }
 
-        const axios = require('axios');
-        const { httpAgent, httpsAgent } = require('./src/utils/httpAgents');
-
-        // Use v1 endpoint and API key header for validation
-        const geminiUrl = 'https://generativelanguage.googleapis.com/v1/models';
-
         try {
-            const response = await axios.get(geminiUrl, {
-                headers: { 'x-goog-api-key': geminiApiKey },
-                timeout: 10000,
-                httpAgent,
-                httpsAgent
-            });
+            // Validate through the same v1beta client and x-goog-api-key header used
+            // for model discovery and translation. This also supports Google's new
+            // authorization keys (AQ.) without assuming any key prefix or shape.
+            const gemini = new GeminiService(geminiApiKey);
+            await gemini.getAvailableModels({ silent: true, throwOnError: true });
 
             await clearCachedProviderAuthFailure(geminiAuthFailureCacheKey);
 
-            // If we got here without errors, API key is valid
-            if (response.data && response.data.models) {
-                res.json({
-                    valid: true,
-                    message: t('server.validation.apiKeyValid', {}, 'API key is valid')
-                });
-            } else {
-                res.json({
-                    valid: true,
-                    message: t('server.validation.apiKeyValid', {}, 'API key is valid')
-                });
-            }
+            res.json({
+                valid: true,
+                message: t('server.validation.apiKeyValid', {}, 'API key is valid')
+            });
         } catch (apiError) {
             // Check for authentication errors
             if (apiError.response?.status === 401 || apiError.response?.status === 403) {
@@ -3633,6 +3619,16 @@ app.post('/api/validate-wyzie', validationLimiter, async (req, res) => {
 
             if (Number.isFinite(result.resultsCount)) {
                 payload.resultsCount = result.resultsCount;
+            }
+
+            if (typeof result.keyType === 'string' && result.keyType) {
+                payload.keyType = result.keyType;
+            }
+            if (Array.isArray(result.availableSources)) {
+                payload.availableSources = result.availableSources;
+            }
+            if (Array.isArray(result.restrictedSources)) {
+                payload.restrictedSources = result.restrictedSources;
             }
 
             return res.json(payload);
@@ -4201,6 +4197,13 @@ app.post('/api/translate-file', fileTranslationLimiter, validateRequest(fileTran
 
             const thinking = clampNumber(incoming.thinkingBudget, -1, 200000);
             if (thinking !== null) parsed.thinkingBudget = thinking;
+
+            const thinkingLevel = typeof incoming.thinkingLevel === 'string'
+                ? incoming.thinkingLevel.trim().toLowerCase()
+                : '';
+            if (['disabled', 'minimal', 'low', 'medium', 'high'].includes(thinkingLevel)) {
+                parsed.thinkingLevel = thinkingLevel;
+            }
 
             const temperature = clampNumber(incoming.temperature, 0, 2);
             if (temperature !== null) parsed.temperature = temperature;
@@ -4948,6 +4951,33 @@ const subtitleDownloadHandler = async (req, res) => {
             setSubtitleCacheHeaders(res, 'final');
             res.send(cachedContent);
             return;
+        }
+
+        // Authenticated OpenSubtitles `/download` calls consume the user's
+        // daily quota when the link is generated. Some players (including
+        // Nuvio builds) probe every returned subtitle URL before the user has
+        // selected one. Coordinate a short intent window through Redis so two
+        // SubMaker pods allow one initial request, defer the other distinct
+        // file IDs, and immediately allow the file the client requests again
+        // as its real selection. Cache hits above never enter this guard.
+        const providerPrefixes = ['subdl_', 'subsource_', 'v3_', 'scs_', 'wyzie_', 'subsro_'];
+        const isOpenSubtitlesAuthFile = !providerPrefixes.some(prefix => fileId.startsWith(prefix));
+        const openSubtitlesConfig = config.subtitleProviders?.opensubtitles || {};
+        const usesOpenSubtitlesAuth = openSubtitlesConfig.enabled === true
+            && String(openSubtitlesConfig.implementationType || 'v3').toLowerCase() === 'auth'
+            && !!openSubtitlesConfig.username
+            && !!openSubtitlesConfig.password;
+        if (isOpenSubtitlesAuthFile && usesOpenSubtitlesAuth) {
+            const intent = await checkOpenSubtitlesDownloadIntent(configKey, fileId);
+            if (!intent.allowed) {
+                log.debug(() => `[Download] Deferred OpenSubtitles prefetch for ${fileId}: ${intent.reason}`);
+                const { createInvalidSubtitleMessage } = require('./src/handlers/subtitles');
+                const prefetchMessage = createInvalidSubtitleMessage('Click again to load this subtitle.', config?.uiLanguage || 'en');
+                res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                res.setHeader('Content-Disposition', `attachment; filename="${fileId}.srt"`);
+                setSubtitleCacheHeaders(res, 'loading');
+                return res.send(prefetchMessage);
+            }
         }
 
         // STEP 2: Cache miss - check for Stremio Community prefetch cooldown
@@ -7522,6 +7552,13 @@ app.post('/api/translate-embedded', embeddedTranslationLimiter, async (req, res)
 
             const thinking = clampNumber(incoming.thinkingBudget, -1, 200000);
             if (thinking !== null) parsed.thinkingBudget = thinking;
+
+            const thinkingLevel = typeof incoming.thinkingLevel === 'string'
+                ? incoming.thinkingLevel.trim().toLowerCase()
+                : '';
+            if (['disabled', 'minimal', 'low', 'medium', 'high'].includes(thinkingLevel)) {
+                parsed.thinkingLevel = thinkingLevel;
+            }
 
             const temperature = clampNumber(incoming.temperature, 0, 2);
             if (temperature !== null) parsed.temperature = temperature;

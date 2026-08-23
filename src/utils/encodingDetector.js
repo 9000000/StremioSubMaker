@@ -10,6 +10,7 @@
 
 const chardet = require('chardet');
 const iconv = require('iconv-lite');
+const { isUtf8: nodeIsUtf8 } = require('buffer');
 const log = require('./logger');
 
 /**
@@ -19,6 +20,55 @@ const log = require('./logger');
  * where chardet often confuses regional codepages with Latin-1 or Windows-1252.
  */
 const LANGUAGE_ENCODING_HINTS = {
+  // Western European
+  en: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  eng: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  english: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  ca: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  cat: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  da: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  dan: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  de: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  deu: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  ger: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  es: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  spa: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  spn: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  eu: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  eus: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  baq: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  fi: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  fin: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  fr: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  fra: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  fre: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  gl: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  glg: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  is: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  isl: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  ice: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  it: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  ita: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  ms: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  msa: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  may: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  nl: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  nld: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  dut: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  no: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  nor: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  nob: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  nno: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  pt: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  por: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  pob: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  sv: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  swe: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  id: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  ind: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  tl: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  tgl: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
+  fil: ['windows-1252', 'iso-8859-1', 'iso-8859-15'],
   // Arabic
   ar: ['windows-1256', 'iso-8859-6'],
   ara: ['windows-1256', 'iso-8859-6'],
@@ -58,10 +108,26 @@ const LANGUAGE_ENCODING_HINTS = {
   bg: ['windows-1251'],
   bul: ['windows-1251'],
   bulgarian: ['windows-1251'],
-  // Serbian (Cyrillic)
-  sr: ['windows-1251'],
-  srp: ['windows-1251'],
-  serbian: ['windows-1251'],
+  // Belarusian and Macedonian
+  be: ['windows-1251'],
+  bel: ['windows-1251'],
+  belarusian: ['windows-1251'],
+  mk: ['windows-1251'],
+  mkd: ['windows-1251'],
+  mac: ['windows-1251'],
+  macedonian: ['windows-1251'],
+  // Serbian can be either Latin (Windows-1250/ISO-8859-2) or Cyrillic
+  // (Windows-1251/ISO-8859-5). Generic sr/srp hints are resolved by a
+  // script-aware chooser below instead of assuming that Serbian is Cyrillic.
+  sr: ['windows-1250', 'windows-1251', 'iso-8859-2', 'iso-8859-5'],
+  srp: ['windows-1250', 'windows-1251', 'iso-8859-2', 'iso-8859-5'],
+  serbian: ['windows-1250', 'windows-1251', 'iso-8859-2', 'iso-8859-5'],
+  'sr-latn': ['windows-1250', 'iso-8859-2'],
+  'serbian latin': ['windows-1250', 'iso-8859-2'],
+  'serbian (latin)': ['windows-1250', 'iso-8859-2'],
+  'sr-cyrl': ['windows-1251', 'iso-8859-5'],
+  'serbian cyrillic': ['windows-1251', 'iso-8859-5'],
+  'serbian (cyrillic)': ['windows-1251', 'iso-8859-5'],
   // Polish
   pl: ['windows-1250', 'iso-8859-2'],
   pol: ['windows-1250', 'iso-8859-2'],
@@ -71,6 +137,24 @@ const LANGUAGE_ENCODING_HINTS = {
   ces: ['windows-1250', 'iso-8859-2'],
   cze: ['windows-1250', 'iso-8859-2'],
   czech: ['windows-1250', 'iso-8859-2'],
+  // Other Central European Latin languages
+  sq: ['windows-1250', 'iso-8859-2'],
+  alb: ['windows-1250', 'iso-8859-2'],
+  sqi: ['windows-1250', 'iso-8859-2'],
+  albanian: ['windows-1250', 'iso-8859-2'],
+  bs: ['windows-1250', 'iso-8859-2'],
+  bos: ['windows-1250', 'iso-8859-2'],
+  bosnian: ['windows-1250', 'iso-8859-2'],
+  hr: ['windows-1250', 'iso-8859-2'],
+  hrv: ['windows-1250', 'iso-8859-2'],
+  croatian: ['windows-1250', 'iso-8859-2'],
+  sk: ['windows-1250', 'iso-8859-2'],
+  slk: ['windows-1250', 'iso-8859-2'],
+  slo: ['windows-1250', 'iso-8859-2'],
+  slovak: ['windows-1250', 'iso-8859-2'],
+  sl: ['windows-1250', 'iso-8859-2'],
+  slv: ['windows-1250', 'iso-8859-2'],
+  slovenian: ['windows-1250', 'iso-8859-2'],
   // Hungarian
   hu: ['windows-1250', 'iso-8859-2'],
   hun: ['windows-1250', 'iso-8859-2'],
@@ -105,13 +189,109 @@ const LANGUAGE_ENCODING_HINTS = {
   kor: ['euc-kr'],
   korean: ['euc-kr'],
   // Baltic
-  lt: ['windows-1257'],
-  lit: ['windows-1257'],
-  lithuanian: ['windows-1257'],
-  lv: ['windows-1257'],
-  lav: ['windows-1257'],
-  latvian: ['windows-1257'],
+  lt: ['windows-1257', 'iso-8859-13'],
+  lit: ['windows-1257', 'iso-8859-13'],
+  lithuanian: ['windows-1257', 'iso-8859-13'],
+  lv: ['windows-1257', 'iso-8859-13'],
+  lav: ['windows-1257', 'iso-8859-13'],
+  latvian: ['windows-1257', 'iso-8859-13'],
+  et: ['windows-1257', 'iso-8859-13'],
+  est: ['windows-1257', 'iso-8859-13'],
+  estonian: ['windows-1257', 'iso-8859-13'],
 };
+
+const GENERIC_SERBIAN_HINTS = new Set(['sr', 'srp', 'serbian']);
+const SERBIAN_LATIN_ALPHABET = new Set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzČĆĐŠŽčćđšž');
+const SERBIAN_CYRILLIC_ALPHABET = new Set('АБВГДЂЕЖЗИЈКЛЉМНЊОПРСТЋУФХЦЧЏШабвгдђежзијклљмнњопрстћуфхцчџш');
+const SERBIAN_SCORE_SAMPLE_CHARS = 32768;
+
+function normalizeEncodingName(encoding) {
+  return String(encoding || '').trim().toLowerCase().replace(/_/g, '-');
+}
+
+function isValidUtf8(buffer) {
+  try {
+    if (typeof nodeIsUtf8 === 'function') {
+      return nodeIsUtf8(buffer);
+    }
+    new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function stripSubtitleSyntax(decoded) {
+  return String(decoded || '')
+    .replace(/\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d{3}/g, ' ')
+    .replace(/^\s*\d+\s*$/gm, ' ')
+    .replace(/<[^>]*>|\{\\[^}]*\}/g, ' ');
+}
+
+function scoreSerbianCandidate(decoded) {
+  const text = stripSubtitleSyntax(decoded).slice(0, SERBIAN_SCORE_SAMPLE_CHARS);
+  let latin = 0;
+  let cyrillic = 0;
+  let unexpectedLatin = 0;
+  let unexpectedCyrillic = 0;
+  let mixedWords = 0;
+  let wordScriptMask = 0;
+
+  for (const char of text) {
+    const codePoint = char.codePointAt(0);
+    const isLatin =
+      (codePoint >= 0x0041 && codePoint <= 0x005A) ||
+      (codePoint >= 0x0061 && codePoint <= 0x007A) ||
+      (codePoint >= 0x00C0 && codePoint <= 0x024F);
+    const isCyrillic = codePoint >= 0x0400 && codePoint <= 0x052F;
+
+    if (isLatin) {
+      latin++;
+      wordScriptMask |= 1;
+      if (!SERBIAN_LATIN_ALPHABET.has(char)) unexpectedLatin++;
+    } else if (isCyrillic) {
+      cyrillic++;
+      wordScriptMask |= 2;
+      if (!SERBIAN_CYRILLIC_ALPHABET.has(char)) unexpectedCyrillic++;
+    } else {
+      if (wordScriptMask === 3) mixedWords++;
+      wordScriptMask = 0;
+    }
+  }
+  if (wordScriptMask === 3) mixedWords++;
+  const replacementCount = (text.match(/\uFFFD/g) || []).length;
+  const suspiciousControls = (text.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g) || []).length;
+  const dominantScript = Math.max(latin, cyrillic);
+  const minorityScript = Math.min(latin, cyrillic);
+
+  return dominantScript
+    - (minorityScript * 1.5)
+    - ((unexpectedLatin + unexpectedCyrillic) * 6)
+    - (mixedWords * 15)
+    - (replacementCount * 30)
+    - (suspiciousControls * 20);
+}
+
+function decodeGenericSerbian(buffer, detectedEncoding) {
+  const candidates = LANGUAGE_ENCODING_HINTS.srp;
+  const normalizedDetected = normalizeEncodingName(detectedEncoding);
+  const sample = buffer.subarray(0, Math.min(buffer.length, SERBIAN_SCORE_SAMPLE_CHARS));
+  let best = null;
+
+  for (let index = 0; index < candidates.length; index++) {
+    const encoding = candidates[index];
+    if (!iconv.encodingExists(encoding)) continue;
+    const decoded = iconv.decode(sample, encoding);
+    const detectionBonus = normalizeEncodingName(encoding) === normalizedDetected ? 5 : 0;
+    const score = scoreSerbianCandidate(decoded) + detectionBonus - (index * 0.01);
+    if (!best || score > best.score) {
+      best = { encoding, score };
+    }
+  }
+
+  if (best) best.decoded = iconv.decode(buffer, best.encoding);
+  return best;
+}
 
 /**
  * Resolve a language hint string to preferred encodings.
@@ -186,9 +366,6 @@ function validateDecodedForLanguage(decoded, langHint) {
     bg: /[\u0400-\u04FF]/,
     bul: /[\u0400-\u04FF]/,
     bulgarian: /[\u0400-\u04FF]/,
-    sr: /[\u0400-\u04FF]/,
-    srp: /[\u0400-\u04FF]/,
-    serbian: /[\u0400-\u04FF]/,
     // Thai script: U+0E00-U+0E7F
     th: /[\u0E00-\u0E7F]/,
     tha: /[\u0E00-\u0E7F]/,
@@ -256,6 +433,16 @@ function detectAndConvertEncoding(content, source = 'Unknown', languageHint = nu
       }
     }
 
+    // Never reinterpret valid UTF-8 based on a language hint. The old path
+    // could take a perfectly valid Serbian Latin UTF-8 subtitle and decode its
+    // bytes as Windows-1251 merely because generic Serbian was assumed to use
+    // Cyrillic. This fast path protects every modern Unicode language from the
+    // same kind of destructive legacy-codepage override.
+    if (isValidUtf8(buffer)) {
+      log.debug(() => `[${source}] Content is valid UTF-8${languageHint ? ` (language hint: ${languageHint})` : ''}`);
+      return buffer.toString('utf-8');
+    }
+
     // Use chardet to detect encoding
     // Sample first 4KB for detection (faster and usually accurate enough)
     const sampleSize = Math.min(buffer.length, 4096);
@@ -301,6 +488,20 @@ function detectAndConvertEncoding(content, source = 'Unknown', languageHint = nu
       };
 
       const encoding = encodingMap[detected] || detected.toLowerCase();
+
+      // Serbian subtitles legitimately use either Latin or Cyrillic. When the
+      // provider only supplies the generic sr/srp code, evaluate both regional
+      // codepage families and reject mixed-script/codepage-garbage candidates.
+      const normalizedLanguageHint = typeof languageHint === 'string'
+        ? languageHint.trim().toLowerCase()
+        : '';
+      if (GENERIC_SERBIAN_HINTS.has(normalizedLanguageHint)) {
+        const selected = decodeGenericSerbian(buffer, encoding);
+        if (selected) {
+          log.debug(() => `[${source}] Selected ${selected.encoding} for generic Serbian subtitle (chardet: ${detected})`);
+          return selected.decoded;
+        }
+      }
 
       // If we have a language hint, check if chardet's detection makes sense for that language.
       // Chardet often misidentifies Arabic/Hebrew as ISO-8859-1 or Windows-1252 because the

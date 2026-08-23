@@ -249,9 +249,19 @@ test('OpenSubtitles Auth reuses a valid JWT for search without logging in', asyn
       loginCalls += 1;
       throw new Error('login should not be called with a valid JWT');
     };
-    service.client.get = async () => {
+    let authorizationHeader = null;
+    service.client.defaults.adapter = async (requestConfig) => {
       searchCalls += 1;
-      return { data: { data: [] }, headers: {} };
+      authorizationHeader = requestConfig.headers?.get
+        ? requestConfig.headers.get('Authorization')
+        : requestConfig.headers?.Authorization;
+      return {
+        data: { data: [] },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: requestConfig
+      };
     };
 
     const results = await service.searchSubtitles({
@@ -264,6 +274,7 @@ test('OpenSubtitles Auth reuses a valid JWT for search without logging in', asyn
     assert.deepEqual(results, []);
     assert.equal(searchCalls, 1);
     assert.equal(loginCalls, 0);
+    assert.equal(authorizationHeader, 'Bearer cached-jwt');
   } finally {
     sharedCache.getStorageAdapter = originalGetStorageAdapter;
     OpenSubtitlesService.__testing.resetRateLimiterState();

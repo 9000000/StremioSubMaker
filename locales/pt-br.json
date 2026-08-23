@@ -636,6 +636,8 @@
       "osAuthMissingRateLimited": "O modo OpenSubtitles Auth está ativo sem credenciais, então os downloads atingiram o limite básico de taxa. Adicione seu nome de usuário/senha ou mude para V3 (sem login).",
       "providerRateLimitTitle": "Limite de taxa do {service} atingido (429)",
       "providerRateLimitBody": "Muitas requisições em um curto período.\\nPor favor, aguarde alguns minutos e tente novamente.",
+      "subdlDownloadQuotaTitle": "Cota de downloads do SubDL atingida (429)",
+      "subdlDownloadQuotaBody": "Esta chave de API do SubDL não pode baixar mais arquivos agora.\\nVerifique o uso no SubDL, aguarde a renovação da cota, use outra chave ou plano, ou escolha outro provedor.",
       "providerAuthErrorTitle": "Erro de Autenticação",
       "providerAuthErrorBody": "{service} rejeitou sua chave de API ou credenciais",
       "notAvailableTitle": "Legenda Não Disponível (Erro 404)",
@@ -811,11 +813,10 @@
           "scsKeyNote": "Use sua própria chave Auth do SCS para requisições mais rápidas filtradas por idioma.",
           "scsModeNote": "O modo Community usa o token compartilhado do SubMaker; Auth envia apenas os idiomas selecionados.",
           "wyzieName": "Wyzie Subs",
-          "wyzieDesc": "Agregador de legendas com chave de API gratuita",
+          "wyzieDesc": "Agregador que pesquisa todas as fontes disponíveis para sua chave de API",
           "wyzieKeyPlaceholder": "Digite a chave da API do Wyzie",
-          "wyzieGetKey": "Obtenha sua chave de API gratuita em sub.wyzie.io/redeem",
-          "wyzieSources": "Fontes:",
-          "wyzieMoreSources": "Mais fontes = mais legendas, mas mais lento"
+          "wyzieGetKey": "Obtenha sua chave de API gratuita em store.wyzie.io/redeem",
+          "wyzieAutoSources": "O Wyzie pesquisa automaticamente todas as fontes atuais disponíveis para o plano da sua chave de API."
         },
         "step3": {
           "title": "Tradução com IA",
@@ -880,7 +881,7 @@
           "disabled": "Desativado",
           "scsAuth": "Chave Auth",
           "scsCommunity": "Token comunitário",
-          "wyzieSources": "Ativado ({count} fontes)",
+          "wyzieSources": "Todas as fontes disponíveis",
           "aiTranslation": "Tradução com IA",
           "aiConfigured": "{model}",
           "aiNotConfigured": "Não configurado",
@@ -1139,12 +1140,12 @@
         "wyzie": {
           "title": "Wyzie Subs",
           "description": "Obtenha sua chave de API gratuita em",
-          "linkLabel": "sub.wyzie.io/redeem",
+          "linkLabel": "store.wyzie.io/redeem",
           "placeholder": "Digite a chave da API do Wyzie",
           "validateTitle": "Validar chave da API",
           "validateCta": "Testar",
           "toggleLabel": "Habilitar Wyzie Subs",
-          "note": "Wyzie agrega legendas de várias fontes. Os resultados podem se sobrepor a outros provedores habilitados."
+          "note": "O Wyzie pesquisa automaticamente todas as fontes atuais disponíveis para o plano da sua chave de API. Os resultados podem se sobrepor a outros provedores habilitados."
         },
         "scs": {
           "title": "Stremio Community Subtitles",
@@ -1228,7 +1229,12 @@
             "gemma27b": "Gemma 27b (beta) (Recommended for Rate Limits)",
             "flashLite": "Gemini 2.5 Flash-Lite",
             "flash": "Gemini 2.5 Flash",
+            "flashLite31": "Gemini 3.1 Flash Lite",
             "flash3": "Gemini 3.0 Flash (beta)",
+            "flashLite35": "Gemini 3.5 Flash-Lite (beta)",
+            "flash35": "Gemini 3.5 Flash (beta)",
+            "flash36": "Gemini 3.6 Flash (beta)",
+            "flash37": "Gemini 3.7 Flash (beta)",
             "pro": "Gemini 2.5 Pro (beta)",
             "pro3": "Gemini 3.0 Pro (beta)"
           },
@@ -1399,6 +1405,15 @@
         "thinking": {
           "label": "Orçamento de Pensamento (Raciocínio Estendido)",
           "description": "0 = desativado, -1 = dinâmico (auto-ajuste), ou contagem de token fixa (1-32768). Valores mais altos = raciocínio mais profundo, mas mais lento."
+        },
+        "thinkingLevel": {
+          "label": "Nível de raciocínio",
+          "description": "Controla o raciocínio do Gemini 3.x. Mínimo é a opção compatível mais próxima de desativado.",
+          "disabled": "Desativado (opção mais próxima)",
+          "minimal": "Mínimo",
+          "low": "Baixo",
+          "medium": "Médio",
+          "high": "Alto"
         },
         "temperature": {
           "label": "Temperatura (Criatividade)",
@@ -1571,6 +1586,15 @@
         "thinking": {
           "label": "Orçamento de Pensamento (Raciocínio Estendido)",
           "helper": "0 = desativado, -1 = dinâmico (auto-ajuste), ou contagem de token fixa (1-32768)."
+        },
+        "thinkingLevel": {
+          "label": "Nível de raciocínio",
+          "helper": "Controla o raciocínio do Gemini 3.x. Mínimo é a opção compatível mais próxima de desativado.",
+          "disabled": "Desativado (opção mais próxima)",
+          "minimal": "Mínimo",
+          "low": "Baixo",
+          "medium": "Médio",
+          "high": "Alto"
         },
         "temperature": {
           "label": "Temperatura (Criatividade)",

@@ -5,7 +5,7 @@ const DeepLProvider = require('./providers/deepl');
 const GoogleTranslateProvider = require('./providers/googleTranslate');
 const log = require('../utils/logger');
 const { validateCustomBaseUrl, areInternalEndpointsAllowed, createSsrfSafeLookup } = require('../utils/ssrfProtection');
-const { getDefaultProviderParameters, mergeProviderParameters, selectGeminiApiKey, getEffectiveGeminiModel } = require('../utils/config');
+const { getDefaultProviderParameters, getModelSpecificDefaults, mergeProviderParameters, selectGeminiApiKey, getEffectiveGeminiModel } = require('../utils/config');
 
 const KEY_OPTIONAL_PROVIDERS = new Set(['googletranslate', 'custom']);
 
@@ -191,6 +191,7 @@ async function createProviderInstance(providerKey, providerConfig = {}, provider
           translationTimeout: providerParams.translationTimeout,
           maxRetries: providerParams.maxRetries,
           thinkingBudget: providerParams.thinkingBudget,
+          thinkingLevel: providerParams.thinkingLevel,
           temperature: providerParams.temperature,
           topP: providerParams.topP,
           enableJsonOutput
@@ -382,7 +383,19 @@ async function createTranslationProvider(config) {
   };
   const getGeminiAdvancedSettings = () => {
     const settings = config?.advancedSettings || {};
-    const base = settings.enabled === true ? settings : {};
+    const modelDefaults = getModelSpecificDefaults(getEffectiveGeminiModel(config));
+    const base = settings.enabled === true
+      ? { ...settings }
+      : {
+          maxOutputTokens: settings.maxOutputTokens,
+          translationTimeout: settings.translationTimeout,
+          maxRetries: settings.maxRetries,
+          thinkingBudget: modelDefaults.thinkingBudget,
+          thinkingLevel: modelDefaults.thinkingLevel,
+          temperature: modelDefaults.temperature,
+          topP: settings.topP,
+          topK: settings.topK
+        };
     // Keep provider JSON mode aligned with workflow-based JSON structured mode.
     if (structuredJsonEnabled) {
       base.enableJsonOutput = true;

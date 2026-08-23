@@ -70,6 +70,7 @@ const providerParameterSchema = Joi.object({
   translationTimeout: Joi.number().min(5).max(720).optional(),
   maxRetries: Joi.number().integer().min(0).max(5).optional(),
   thinkingBudget: Joi.number().min(-1).max(200000).optional(),
+  thinkingLevel: Joi.string().valid('disabled', 'minimal', 'low', 'medium', 'high').optional(),
   modelType: Joi.string().max(100).optional(),
   formality: Joi.string().max(50).optional(),
   preserveFormatting: Joi.boolean().optional()

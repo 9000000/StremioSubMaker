@@ -2017,53 +2017,14 @@
     animation: qsSlideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* ---- Wyzie Sub-providers Grid ---- */
-.qs-wyzie-sources {
+/* ---- Wyzie API-key configuration ---- */
+.qs-wyzie-config {
     margin-top: 0.55rem;
     padding: 0.6rem 0.75rem;
     background: var(--qs-auth-fields-bg);
     border: 1px solid var(--qs-auth-fields-border);
     border-radius: 8px;
     animation: qsSlideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.qs-wyzie-sources-label {
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: var(--qs-text-secondary);
-    margin-bottom: 0.4rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.qs-wyzie-sources-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.3rem;
-}
-
-.qs-wyzie-cb {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.25rem 0.4rem;
-    font-size: 0.78rem;
-    color: var(--qs-text-secondary);
-    cursor: pointer;
-    border-radius: 5px;
-    transition: background 0.15s;
-}
-
-.qs-wyzie-cb:hover {
-    background: rgba(8, 164, 213, 0.06);
-}
-
-.qs-wyzie-cb input[type="checkbox"] {
-    width: 14px;
-    height: 14px;
-    accent-color: #08A4D5;
-    cursor: pointer;
-    flex-shrink: 0;
 }
 
 /* ---- Responsive ---- */

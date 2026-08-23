@@ -320,21 +320,6 @@
         window.SubMakerDefaultApiKeys = Object.freeze({ ...DEFAULT_API_KEYS });
     }
 
-    function normalizeWyzieSourceConfig(sourceConfig) {
-        const raw = (sourceConfig && typeof sourceConfig === 'object') ? sourceConfig : {};
-        return {
-            opensubtitles: raw.opensubtitles === true || raw.opensubs === true,
-            subf2m: raw.subf2m === true,
-            subdl: raw.subdl === true,
-            podnapisi: raw.podnapisi === true,
-            gestdown: raw.gestdown === true,
-            animetosho: raw.animetosho === true,
-            kitsunekko: raw.kitsunekko === true,
-            jimaku: raw.jimaku === true,
-            yify: raw.yify === true
-        };
-    }
-
     // Popular languages for quick selection
     const POPULAR_LANGUAGES = ['eng', 'spa', 'fre', 'ger', 'por', 'pob', 'ita', 'rus', 'jpn', 'kor', 'chi', 'ara'];
     let translationModeBackup = null;
@@ -964,9 +949,12 @@ Translate to {target_language}.`;
     const DEFAULT_GEMINI_MODEL = 'gemini-flash-lite-latest';
 
     function normalizeGeminiModelName(modelName) {
-        const normalized = typeof modelName === 'string' ? modelName.trim() : '';
+        const normalized = typeof modelName === 'string' ? modelName.trim().replace(/^models\//, '') : '';
         if (normalized === `${GEMINI_31_FLASH_LITE_MODEL}-preview`) {
             return GEMINI_31_FLASH_LITE_MODEL;
+        }
+        if (normalized === 'gemini-3-pro-preview') {
+            return DEFAULT_GEMINI_MODEL;
         }
         if (normalized === GEMINI_FLASH_LATEST_MODEL) {
             return DEFAULT_GEMINI_MODEL;
@@ -974,42 +962,79 @@ Translate to {target_language}.`;
         return normalized;
     }
 
+    function isGemini3ModelName(modelName) {
+        const modelId = normalizeGeminiModelName(modelName);
+        return /^gemini-3(?:[.-]|$)/i.test(modelId) || /^gemini-(?:flash|flash-lite|pro)-latest$/i.test(modelId);
+    }
+
+    function sanitizeGeminiThinkingLevel(value, fallback = '') {
+        const allowed = ['disabled', 'minimal', 'low', 'medium', 'high'];
+        const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+        if (allowed.includes(normalized)) return normalized;
+        const normalizedFallback = typeof fallback === 'string' ? fallback.trim().toLowerCase() : '';
+        return allowed.includes(normalizedFallback) ? normalizedFallback : '';
+    }
+
     const MODEL_SPECIFIC_DEFAULTS = {
 
         'gemini-2.5-flash-lite': {
             thinkingBudget: 0,
-            temperature: 0.7
+            thinkingLevel: '',
+            temperature: 0.8
         },
         'gemini-2.5-flash-lite-preview-09-2025': {
             thinkingBudget: 0,
-            temperature: 0.7
+            thinkingLevel: '',
+            temperature: 0.8
         },
         'gemini-2.5-flash': {
             thinkingBudget: -1,
+            thinkingLevel: '',
             temperature: 0.5
         },
         'gemini-3-flash-preview': {
             thinkingBudget: -1,
-            temperature: 0.5
-        },
-        'gemini-3-flash-preview': {
-            thinkingBudget: -1,
+            thinkingLevel: 'high',
             temperature: 0.5
         },
         'gemini-3.1-flash-lite': {
             thinkingBudget: 0,
+            thinkingLevel: 'minimal',
             temperature: 0.8
+        },
+        'gemini-3.5-flash-lite': {
+            thinkingBudget: 0,
+            thinkingLevel: 'minimal',
+            temperature: 0.8
+        },
+        'gemini-3.5-flash': {
+            thinkingBudget: -1,
+            thinkingLevel: 'high',
+            temperature: 0.5
+        },
+        'gemini-3.6-flash': {
+            thinkingBudget: -1,
+            thinkingLevel: 'high',
+            temperature: 0.5
+        },
+        'gemini-3.7-flash': {
+            thinkingBudget: -1,
+            thinkingLevel: 'high',
+            temperature: 0.5
         },
         'gemini-flash-lite-latest': {
             thinkingBudget: 0,
+            thinkingLevel: 'minimal',
             temperature: 0.8
         },
         'gemini-2.5-pro': {
             thinkingBudget: 1000,
+            thinkingLevel: '',
             temperature: 0.5
         },
-        'gemini-3-pro-preview': {
+        'gemini-3.1-pro-preview': {
             thinkingBudget: 1000,
+            thinkingLevel: 'high',
             temperature: 0.5
         }
     };
@@ -1020,10 +1045,34 @@ Translate to {target_language}.`;
      * @returns {Object} - Model-specific settings { thinkingBudget, temperature }
      */
     function getModelSpecificDefaults(modelName) {
-        return MODEL_SPECIFIC_DEFAULTS[normalizeGeminiModelName(modelName)] || {
-            thinkingBudget: 0,
-            temperature: 0.8
-        };
+        const normalized = normalizeGeminiModelName(modelName).toLowerCase();
+        const exactDefaults = MODEL_SPECIFIC_DEFAULTS[normalized];
+        if (exactDefaults) return { ...exactDefaults };
+
+        const isGemini3 = /^gemini-3(?:[.-]|$)/.test(normalized)
+            || /^gemini-(?:flash|flash-lite|pro)-latest$/.test(normalized);
+        if (isGemini3 && normalized.includes('flash-lite')) {
+            return { thinkingBudget: 0, thinkingLevel: 'minimal', temperature: 0.8 };
+        }
+        if (isGemini3 && normalized.includes('flash')) {
+            return { thinkingBudget: -1, thinkingLevel: 'high', temperature: 0.5 };
+        }
+        if (isGemini3 && normalized.includes('pro')) {
+            return { thinkingBudget: 1000, thinkingLevel: 'high', temperature: 0.5 };
+        }
+        if (normalized.includes('gemma')) {
+            return { thinkingBudget: 0, thinkingLevel: '', temperature: 0.7 };
+        }
+        if (normalized.includes('flash-lite')) {
+            return { thinkingBudget: 0, thinkingLevel: '', temperature: 0.8 };
+        }
+        if (normalized.includes('flash')) {
+            return { thinkingBudget: -1, thinkingLevel: '', temperature: 0.5 };
+        }
+        if (normalized.includes('pro')) {
+            return { thinkingBudget: 1000, thinkingLevel: '', temperature: 0.5 };
+        }
+        return { thinkingBudget: 0, thinkingLevel: '', temperature: 0.8 };
     }
 
     function getVisibleGeminiModelOptions() {
@@ -1106,6 +1155,22 @@ Translate to {target_language}.`;
             getModelSpecificDefaults,
             normalizeBaseModel: normalizeGeminiModelForBaseSelect
         };
+    }
+
+    function getAdvancedGeminiModelValue() {
+        const advancedModel = document.getElementById('advancedModel')?.value || '';
+        const baseModel = document.getElementById('geminiModel')?.value || DEFAULT_GEMINI_MODEL;
+        return normalizeGeminiModelName(advancedModel || baseModel);
+    }
+
+    function updateGeminiThinkingControl() {
+        const model = getAdvancedGeminiModelValue();
+        const usesThinkingLevel = isGemini3ModelName(model);
+        const budgetGroup = document.getElementById('advancedThinkingBudgetGroup');
+        const levelGroup = document.getElementById('advancedThinkingLevelGroup');
+
+        if (budgetGroup) budgetGroup.style.display = usesThinkingLevel ? 'none' : '';
+        if (levelGroup) levelGroup.style.display = usesThinkingLevel ? '' : 'none';
     }
 
     function getDefaultProviderParameters() {
@@ -1278,6 +1343,7 @@ Translate to {target_language}.`;
                 enabled: false, // Auto-set to true if any setting differs from defaults (forces bypass cache)
                 geminiModel: '', // Override model (empty = use default)
                 thinkingBudget: modelDefaults.thinkingBudget,
+                thinkingLevel: modelDefaults.thinkingLevel,
                 temperature: modelDefaults.temperature,
                 topP: 0.95,
                 topK: 40,
@@ -6403,18 +6469,23 @@ Translate to {target_language}.`;
 
         const advModelEl = document.getElementById('advancedModel');
         const advThinkingEl = document.getElementById('advancedThinkingBudget');
+        const advThinkingLevelEl = document.getElementById('advancedThinkingLevel');
         const advTempEl = document.getElementById('advancedTemperature');
         const advTopPEl = document.getElementById('advancedTopP');
         const batchCtxEl = document.getElementById('enableBatchContext');
         const ctxSizeEl = document.getElementById('contextSize');
 
-        if (!advModelEl || !advThinkingEl || !advTempEl || !advTopPEl) {
+        if (!advModelEl || !advThinkingEl || !advThinkingLevelEl || !advTempEl || !advTopPEl) {
             return false; // Elements not loaded yet
         }
 
         // Check if any value differs from model-specific defaults
         const modelChanged = advModelEl.value !== (defaults.geminiModel || '');
-        const thinkingChanged = parseInt(advThinkingEl.value) !== defaults.thinkingBudget;
+        const activeModel = normalizeGeminiModelName(advModelEl.value || currentBaseModel);
+        const activeModelDefaults = getModelSpecificDefaults(activeModel);
+        const thinkingChanged = isGemini3ModelName(activeModel)
+            ? sanitizeGeminiThinkingLevel(advThinkingLevelEl.value) !== activeModelDefaults.thinkingLevel
+            : parseInt(advThinkingEl.value) !== activeModelDefaults.thinkingBudget;
         const tempChanged = parseFloat(advTempEl.value) !== defaults.temperature;
         const topPChanged = parseFloat(advTopPEl.value) !== defaults.topP;
         // Batch context changes are also considered advanced modifications
@@ -7713,13 +7784,16 @@ Translate to {target_language}.`;
             // Reset ALL advanced settings fields to the new model's defaults
             const advModelEl = document.getElementById('advancedModel');
             const advThinkingEl = document.getElementById('advancedThinkingBudget');
+            const advThinkingLevelEl = document.getElementById('advancedThinkingLevel');
             const advTempEl = document.getElementById('advancedTemperature');
             const advTopPEl = document.getElementById('advancedTopP');
 
             if (advModelEl) advModelEl.value = ''; // Reset to "Use Default Model"
             if (advThinkingEl) advThinkingEl.value = modelDefaults.thinkingBudget;
+            if (advThinkingLevelEl) advThinkingLevelEl.value = modelDefaults.thinkingLevel || 'disabled';
             if (advTempEl) advTempEl.value = modelDefaults.temperature;
             if (advTopPEl) advTopPEl.value = fullDefaults.topP;
+            updateGeminiThinkingControl();
 
             // Update bypass cache state based on new defaults
             updateBypassCacheForAdvancedSettings();
@@ -7783,6 +7857,7 @@ Translate to {target_language}.`;
         // Advanced Settings - Auto-enable bypass cache when any setting is modified
         const advModelEl = document.getElementById('advancedModel');
         const advThinkingEl = document.getElementById('advancedThinkingBudget');
+        const advThinkingLevelEl = document.getElementById('advancedThinkingLevel');
         const advTempEl = document.getElementById('advancedTemperature');
         const advTopPEl = document.getElementById('advancedTopP');
         const workflowInputs = getTranslationWorkflowInputs();
@@ -7823,12 +7898,24 @@ Translate to {target_language}.`;
             tryFetchAdvancedModels();
         });
 
-        [advModelEl, advThinkingEl, advTempEl, advTopPEl, ...workflowInputs].forEach(el => {
+        [advModelEl, advThinkingEl, advThinkingLevelEl, advTempEl, advTopPEl, ...workflowInputs].forEach(el => {
             if (el) {
                 el.addEventListener('change', updateBypassCacheForAdvancedSettings);
                 el.addEventListener('input', updateBypassCacheForAdvancedSettings);
             }
         });
+
+        if (advModelEl) {
+            advModelEl.addEventListener('change', () => {
+                const selectedModel = getAdvancedGeminiModelValue();
+                const selectedDefaults = getModelSpecificDefaults(selectedModel);
+                if (advThinkingEl) advThinkingEl.value = selectedDefaults.thinkingBudget;
+                if (advThinkingLevelEl) advThinkingLevelEl.value = selectedDefaults.thinkingLevel || 'disabled';
+                if (advTempEl) advTempEl.value = selectedDefaults.temperature;
+                updateGeminiThinkingControl();
+                updateBypassCacheForAdvancedSettings();
+            });
+        }
 
         // Batch context toggle - show/hide context size field
         const enableBatchContextEl = document.getElementById('enableBatchContext');
@@ -9838,11 +9925,15 @@ Translate to {target_language}.`;
         const hardcodedModels = [
 
             { name: 'gemini-3.1-flash-lite', displayName: 'Gemini 3.1 Flash Lite' },
+            { name: 'gemini-3.7-flash', displayName: 'Gemini 3.7 Flash (beta)' },
+            { name: 'gemini-3.6-flash', displayName: 'Gemini 3.6 Flash (beta)' },
+            { name: 'gemini-3.5-flash', displayName: 'Gemini 3.5 Flash (beta)' },
+            { name: 'gemini-3.5-flash-lite', displayName: 'Gemini 3.5 Flash-Lite (beta)' },
             { name: 'gemini-2.5-flash-lite', displayName: 'Gemini 2.5 Flash-Lite' },
             { name: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
             { name: 'gemini-3-flash-preview', displayName: 'Gemini 3.0 Flash (beta)' },
             { name: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro (beta)' },
-            { name: 'gemini-3-pro-preview', displayName: 'Gemini 3.0 Pro (beta)' }
+            { name: 'gemini-3.1-pro-preview', displayName: 'Gemini 3.1 Pro (beta)' }
         ];
 
         // Track added models to avoid duplicates
@@ -10182,23 +10273,12 @@ Translate to {target_language}.`;
                     newConfig.subtitleProviders.scs.apiKey = (oldScs.apiKey || '').trim();
                 }
 
-                // Wyzie: preserve enabled state and sources config if provider exists
+                // Wyzie: preserve enabled state and API key. Wyzie now owns the
+                // dynamic source inventory, so legacy per-source settings are dropped.
                 if (defaults.subtitleProviders.wyzie) {
                     const oldWyzie = oldConfig.subtitleProviders.wyzie || {};
                     newConfig.subtitleProviders.wyzie.enabled = oldWyzie.enabled === true;
                     newConfig.subtitleProviders.wyzie.apiKey = (oldWyzie.apiKey || '').trim();
-                    // Preserve sources config if it exists
-                    if (oldWyzie.sources && typeof oldWyzie.sources === 'object') {
-                        newConfig.subtitleProviders.wyzie.sources = normalizeWyzieSourceConfig(oldWyzie.sources);
-                    } else if (oldWyzie.enabled === true) {
-                        // BACKWARDS COMPAT: If user had Wyzie enabled but no sources saved,
-                        // default to ALL sources enabled (preserves their previous behavior)
-                        newConfig.subtitleProviders.wyzie.sources = {
-                            opensubtitles: true, subf2m: true, subdl: true,
-                            podnapisi: true, gestdown: true, animetosho: true,
-                            kitsunekko: true, jimaku: true, yify: true
-                        };
-                    }
                 }
 
                 // Subs.ro: preserve enabled state and apiKey if provider exists
@@ -10515,16 +10595,6 @@ Translate to {target_language}.`;
         }
         toggleProviderConfig('wyzieConfig', wyzieEnabled);
 
-        // Default all sources to DISABLED if not specified (user must opt-in)
-        const wyzieSourceConfig = normalizeWyzieSourceConfig(currentConfig.subtitleProviders?.wyzie?.sources) || {
-            opensubtitles: false, subf2m: false, subdl: false, podnapisi: false, gestdown: false, animetosho: false, kitsunekko: false, jimaku: false, yify: false
-        };
-        const sourceIds = ['opensubtitles', 'subf2m', 'subdl', 'podnapisi', 'gestdown', 'animetosho', 'kitsunekko', 'jimaku', 'yify'];
-        sourceIds.forEach(src => {
-            const el = document.getElementById('wyzieSource' + src.charAt(0).toUpperCase() + src.slice(1));
-            if (el) el.checked = wyzieSourceConfig[src] === true; // Default to false for new users
-        });
-
         // Subs.ro - Romanian subtitle database, requires API key
         const subsroEnabled = currentConfig.subtitleProviders?.subsro?.enabled === true;
         const subsroToggle = document.getElementById('enableSubsRo');
@@ -10651,6 +10721,7 @@ Translate to {target_language}.`;
 
         const advModelEl = document.getElementById('advancedModel');
         const advThinkingEl = document.getElementById('advancedThinkingBudget');
+        const advThinkingLevelEl = document.getElementById('advancedThinkingLevel');
         const advTempEl = document.getElementById('advancedTemperature');
         const advTopPEl = document.getElementById('advancedTopP');
 
@@ -10660,8 +10731,16 @@ Translate to {target_language}.`;
         }
 
         if (advThinkingEl) advThinkingEl.value = currentConfig.advancedSettings?.thinkingBudget ?? 0;
+        if (advThinkingLevelEl) {
+            const activeDefaults = getModelSpecificDefaults(currentConfig.advancedSettings?.geminiModel || currentConfig.geminiModel);
+            advThinkingLevelEl.value = sanitizeGeminiThinkingLevel(
+                currentConfig.advancedSettings?.thinkingLevel,
+                activeDefaults.thinkingLevel || 'disabled'
+            ) || 'disabled';
+        }
         if (advTempEl) advTempEl.value = currentConfig.advancedSettings?.temperature ?? 0.8;
         if (advTopPEl) advTopPEl.value = currentConfig.advancedSettings?.topP ?? 0.95;
+        updateGeminiThinkingControl();
 
         // Load batch context settings
         const enableBatchContextEl = document.getElementById('enableBatchContext');
@@ -10959,18 +11038,7 @@ Translate to {target_language}.`;
                 },
                 wyzie: {
                     enabled: document.getElementById('enableWyzie')?.checked || false,
-                    apiKey: document.getElementById('wyzieApiKey')?.value?.trim() || '',
-                    sources: {
-                        opensubtitles: document.getElementById('wyzieSourceOpensubtitles')?.checked === true,
-                        subf2m: document.getElementById('wyzieSourceSubf2m')?.checked === true,
-                        subdl: document.getElementById('wyzieSourceSubdl')?.checked === true,
-                        podnapisi: document.getElementById('wyzieSourcePodnapisi')?.checked === true,
-                        gestdown: document.getElementById('wyzieSourceGestdown')?.checked === true,
-                        animetosho: document.getElementById('wyzieSourceAnimetosho')?.checked === true,
-                        kitsunekko: document.getElementById('wyzieSourceKitsunekko')?.checked === true,
-                        jimaku: document.getElementById('wyzieSourceJimaku')?.checked === true,
-                        yify: document.getElementById('wyzieSourceYify')?.checked === true
-                    }
+                    apiKey: document.getElementById('wyzieApiKey')?.value?.trim() || ''
                 },
                 subsro: {
                     enabled: document.getElementById('enableSubsRo')?.checked || false,
@@ -11036,6 +11104,7 @@ Translate to {target_language}.`;
                 enabled: areAdvancedSettingsModified(), // Auto-detect if any setting differs from defaults
                 geminiModel: (function () { const el = document.getElementById('advancedModel'); return el ? el.value : ''; })(),
                 thinkingBudget: (function () { const el = document.getElementById('advancedThinkingBudget'); return el ? parseInt(el.value) : 0; })(),
+                thinkingLevel: (function () { const el = document.getElementById('advancedThinkingLevel'); return el ? sanitizeGeminiThinkingLevel(el.value) : ''; })(),
                 temperature: (function () { const el = document.getElementById('advancedTemperature'); return el ? parseFloat(el.value) : 0.8; })(),
                 topP: (function () { const el = document.getElementById('advancedTopP'); return el ? parseFloat(el.value) : 0.95; })(),
                 topK: 40, // Keep default topK

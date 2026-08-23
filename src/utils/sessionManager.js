@@ -14,6 +14,7 @@ const { encryptUserConfig, decryptUserConfig, normalizeSensitiveInputsForStorage
 const { redactToken } = require('./security');
 const { getRedisPassword } = require('./redisHelper');
 const { MAX_SESSION_BRIEF_BATCH, SESSION_BRIEF_LOOKUP_CONCURRENCY, normalizeSessionBriefTokens } = require('./sessionBriefBatch');
+const { tryAcquireLock } = require('./sharedCache');
 
 // Cache decrypted configs briefly to avoid redundant decryption on rapid navigation
 const DECRYPTED_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -131,18 +132,20 @@ function buildHistoryStoreKey(userHash) {
     return `histset__${safeHash}`;
 }
 
+function buildHistoryEntryKeys(userHash, entryId) {
+    const safeHash = sanitizeHistoryComponent(userHash);
+    const safeId = sanitizeHistoryComponent(entryId);
+    if (!safeHash || !safeId) return [];
+    return [
+        `hist__${safeHash}__${safeId}`,
+        `hist_${safeHash}_${safeId}`,
+        `hist:${safeHash}:${safeId}`
+    ];
+}
+
 function buildHistoryIndexKey(userHash) {
     const safeHash = sanitizeHistoryComponent(userHash);
     return `histidx__${safeHash}`;
-}
-
-function buildHistoryPatterns(userHash) {
-    const safeHash = sanitizeHistoryComponent(userHash);
-    return [
-        `hist__${safeHash}__*`,
-        `hist_${safeHash}_*`,
-        `hist:${safeHash}:*`
-    ];
 }
 
 // Prevent cache/key collisions from silently serving another user's config by
@@ -1593,19 +1596,47 @@ class SessionManager extends EventEmitter {
         }
 
         const adapter = await getStorageAdapter();
-        const patternResults = await Promise.all(buildHistoryPatterns(normalizedHash).map((pattern) =>
-            adapter.list(StorageAdapter.CACHE_TYPES.HISTORY, pattern)
-        ));
-        const historyKeys = Array.from(new Set(patternResults.flat().filter(Boolean)));
+        const storeKey = buildHistoryStoreKey(normalizedHash);
+        const entryIds = new Set();
+
+        // Current history writes maintain both a compact per-user store and a
+        // capped Redis sorted-set index. Reading those bounded sources avoids
+        // three full keyspace SCAN loops on every session deletion. On large
+        // shared Redis deployments, those scans could keep the HTTP deletion
+        // request open until the reverse proxy timed out, even when the session
+        // was brand-new and had no history.
+        try {
+            const store = await adapter.get(storeKey, StorageAdapter.CACHE_TYPES.HISTORY);
+            const entries = store && typeof store === 'object' && !Array.isArray(store)
+                ? store.entries
+                : null;
+            if (entries && typeof entries === 'object') {
+                Object.keys(entries).forEach((id) => entryIds.add(id));
+            }
+        } catch (err) {
+            log.debug(() => [`[SessionManager] Failed to read history store during purge for ${normalizedHash}:`, err?.message || String(err)]);
+        }
+
+        const redisClient = StorageFactory.getRedisClient();
+        if (redisClient) {
+            try {
+                const indexedIds = await redisClient.zrange(buildHistoryIndexKey(normalizedHash), 0, -1);
+                if (Array.isArray(indexedIds)) {
+                    indexedIds.forEach((id) => entryIds.add(id));
+                }
+            } catch (err) {
+                log.debug(() => [`[SessionManager] Failed to read history index during purge for ${normalizedHash}:`, err?.message || String(err)]);
+            }
+        }
+
         const keysToDelete = Array.from(new Set([
-            buildHistoryStoreKey(normalizedHash),
-            ...historyKeys
+            storeKey,
+            ...Array.from(entryIds).flatMap((id) => buildHistoryEntryKeys(normalizedHash, id))
         ]));
 
         const deleteResults = await Promise.all(keysToDelete.map((key) => adapter.delete(key, StorageAdapter.CACHE_TYPES.HISTORY)));
         let deletedCount = deleteResults.filter((result) => result === true).length;
 
-        const redisClient = StorageFactory.getRedisClient();
         if (redisClient) {
             try {
                 const deletedIndex = await redisClient.del(buildHistoryIndexKey(normalizedHash));
@@ -2398,6 +2429,19 @@ class SessionManager extends EventEmitter {
         }
 
         try {
+            // Startup and periodic verification run in every Kubernetes pod.
+            // Only one replica should perform the full session-key scan during
+            // a verification window; the other replicas continue serving from
+            // the shared O(1) index.
+            const maintenanceLock = await tryAcquireLock(
+                'maintenance:session-index-verification',
+                Math.max(60_000, SESSION_INDEX_VERIFY_INTERVAL_MS - 60_000)
+            );
+            if (!maintenanceLock.acquired) {
+                log.debug(() => '[SessionManager] Session index verification already running on another replica; skipping');
+                return;
+            }
+
             const adapter = await getStorageAdapter();
             if (typeof adapter.getSessionCount !== 'function' || typeof adapter.resetSessionIndex !== 'function') {
                 return;

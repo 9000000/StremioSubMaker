@@ -43,8 +43,12 @@
         'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite',
         'gemini-2.5-flash': 'Gemini 2.5 Flash',
         'gemini-3-flash-preview': 'Gemini 3.0 Flash (beta)',
+        'gemini-3.5-flash-lite': 'Gemini 3.5 Flash-Lite (beta)',
+        'gemini-3.5-flash': 'Gemini 3.5 Flash (beta)',
+        'gemini-3.6-flash': 'Gemini 3.6 Flash (beta)',
+        'gemini-3.7-flash': 'Gemini 3.7 Flash (beta)',
         'gemini-2.5-pro': 'Gemini 2.5 Pro (beta)',
-        'gemini-3-pro-preview': 'Gemini 3.0 Pro (beta)',
+        'gemini-3.1-pro-preview': 'Gemini 3.1 Pro (beta)',
         'gemini-flash-lite-latest': 'Gemini Flash Lite Latest'
     };
     const DEFAULT_WYZIE_API_KEY = '';
@@ -57,30 +61,6 @@
             }
         } catch (_) { }
         return DEFAULT_WYZIE_API_KEY;
-    }
-
-    function getDefaultQuickSetupWyzieSources() {
-        return normalizeQuickSetupWyzieSources({
-            subf2m: true,
-            podnapisi: true,
-            gestdown: true,
-            animetosho: true
-        });
-    }
-
-    function normalizeQuickSetupWyzieSources(sourceConfig) {
-        const raw = (sourceConfig && typeof sourceConfig === 'object') ? sourceConfig : {};
-        return {
-            subf2m: raw.subf2m === true,
-            podnapisi: raw.podnapisi === true,
-            gestdown: raw.gestdown === true,
-            animetosho: raw.animetosho === true,
-            opensubtitles: raw.opensubtitles === true || raw.opensubs === true,
-            subdl: raw.subdl === true,
-            kitsunekko: raw.kitsunekko === true,
-            jimaku: raw.jimaku === true,
-            yify: raw.yify === true
-        };
     }
 
     // Wizard State
@@ -100,7 +80,6 @@
         scsApiKey: '',
         wyzieEnabled: false,
         wyzieApiKey: getQuickSetupDefaultWyzieApiKey(),
-        wyzieSources: getDefaultQuickSetupWyzieSources(),
         // AI (translate mode only)
         geminiApiKey: '',
         geminiKeyValid: false,
@@ -188,6 +167,7 @@
             if (helperDefaults && Number.isFinite(Number(helperDefaults.thinkingBudget)) && Number.isFinite(Number(helperDefaults.temperature))) {
                 return {
                     thinkingBudget: Number(helperDefaults.thinkingBudget),
+                    thinkingLevel: typeof helperDefaults.thinkingLevel === 'string' ? helperDefaults.thinkingLevel : '',
                     temperature: Number(helperDefaults.temperature)
                 };
             }
@@ -195,16 +175,31 @@
 
         switch (normalizedModel) {
             case 'gemini-2.5-flash':
+                return { thinkingBudget: -1, thinkingLevel: '', temperature: 0.5 };
             case 'gemini-3-flash-preview':
-                return { thinkingBudget: -1, temperature: 0.5 };
+                return { thinkingBudget: -1, thinkingLevel: 'high', temperature: 0.5 };
+            case 'gemini-3.5-flash':
+            case 'gemini-3.6-flash':
+            case 'gemini-3.7-flash':
+                return { thinkingBudget: -1, thinkingLevel: 'high', temperature: 0.5 };
             case 'gemini-2.5-pro':
-            case 'gemini-3-pro-preview':
-                return { thinkingBudget: 1000, temperature: 0.5 };
+                return { thinkingBudget: 1000, thinkingLevel: '', temperature: 0.5 };
+            case 'gemini-3.1-pro-preview':
+                return { thinkingBudget: 1000, thinkingLevel: 'high', temperature: 0.5 };
             case 'gemini-2.5-flash-lite':
+                return { thinkingBudget: 0, thinkingLevel: '', temperature: 0.8 };
             case 'gemini-3.1-flash-lite':
+            case 'gemini-3.5-flash-lite':
             case 'gemini-flash-lite-latest':
+                return { thinkingBudget: 0, thinkingLevel: 'minimal', temperature: 0.8 };
             default:
-                return { thinkingBudget: 0, temperature: 0.8 };
+                if (/^gemini-3(?:[.-]|$)/.test(normalizedModel) && normalizedModel.includes('flash-lite')) {
+                    return { thinkingBudget: 0, thinkingLevel: 'minimal', temperature: 0.8 };
+                }
+                if (/^gemini-3(?:[.-]|$)/.test(normalizedModel) && normalizedModel.includes('flash')) {
+                    return { thinkingBudget: -1, thinkingLevel: 'high', temperature: 0.5 };
+                }
+                return { thinkingBudget: 0, thinkingLevel: '', temperature: 0.8 };
         }
     }
 
@@ -1001,19 +996,6 @@
                 // Wyzie
                 state.wyzieEnabled = !!($('qsEnableWyzie') || {}).checked;
                 state.wyzieApiKey = (($('qsWyzieApiKey') || {}).value || '').trim() || getQuickSetupDefaultWyzieApiKey();
-                if (state.wyzieEnabled) {
-                    state.wyzieSources = normalizeQuickSetupWyzieSources({
-                        subf2m: !!($('qsWyzieSubf2m') || {}).checked,
-                        podnapisi: !!($('qsWyziePodnapisi') || {}).checked,
-                        gestdown: !!($('qsWyzieGestdown') || {}).checked,
-                        animetosho: !!($('qsWyzieAnimetosho') || {}).checked,
-                        opensubtitles: !!($('qsWyzieOpensubs') || {}).checked,
-                        subdl: !!($('qsWyzieSubdl') || {}).checked,
-                        kitsunekko: !!($('qsWyzieKitsunekko') || {}).checked,
-                        jimaku: !!($('qsWyzieJimaku') || {}).checked,
-                        yify: !!($('qsWyzieYify') || {}).checked
-                    });
-                }
                 break;
             case 3:
                 state.geminiApiKey = ($('qsGeminiApiKey') || {}).value || '';
@@ -1100,12 +1082,12 @@
 
         // Wyzie toggle
         const wyzieCheck = $('qsEnableWyzie');
-        const wyzieSources = $('qsWyzieSources');
-        if (wyzieCheck && wyzieSources) {
+        const wyzieConfig = $('qsWyzieConfig');
+        if (wyzieCheck && wyzieConfig) {
             wyzieCheck.addEventListener('change', () => {
-                wyzieSources.style.display = wyzieCheck.checked ? '' : 'none';
+                wyzieConfig.style.display = wyzieCheck.checked ? '' : 'none';
             });
-            if (wyzieCheck.checked) wyzieSources.style.display = '';
+            if (wyzieCheck.checked) wyzieConfig.style.display = '';
         }
         // Test / Validate Buttons
 
@@ -1722,8 +1704,7 @@
             });
         }
         if (state.wyzieEnabled) {
-            const activeSources = Object.entries(state.wyzieSources).filter(([, v]) => v).map(([k]) => k);
-            items.push({ icon: '\uD83D\uDD0D', label: 'Wyzie Subs', value: tQs('summary.wyzieSources', { count: activeSources.length }, `Enabled (${activeSources.length} sources)`), cls: 'qs-on' });
+            items.push({ icon: '\uD83D\uDD0D', label: 'Wyzie Subs', value: tQs('summary.wyzieSources', null, 'All available sources'), cls: 'qs-on' });
         }
 
         // AI
@@ -1920,8 +1901,7 @@
                 },
                 wyzie: {
                     enabled: state.wyzieEnabled,
-                    apiKey: (state.wyzieApiKey || getQuickSetupDefaultWyzieApiKey()).trim(),
-                    sources: state.wyzieEnabled ? normalizeQuickSetupWyzieSources(state.wyzieSources) : undefined
+                    apiKey: (state.wyzieApiKey || getQuickSetupDefaultWyzieApiKey()).trim()
                 }
             },
             subtitleProviderTimeout: 12,
@@ -1952,6 +1932,7 @@
                 enabled: false,
                 geminiModel: '',
                 thinkingBudget: geminiAdvancedDefaults.thinkingBudget,
+                thinkingLevel: geminiAdvancedDefaults.thinkingLevel,
                 temperature: geminiAdvancedDefaults.temperature,
                 topP: 0.95,
                 topK: 40,
@@ -2252,7 +2233,7 @@
         hide('qsScsNote');
         hide('qsScsOptions');
         hide('qsScsAuthConfig');
-        hide('qsWyzieSources');
+        hide('qsWyzieConfig');
         const scsCommunityRadio = $('qsScsImplCommunity');
         const scsKey = $('qsScsApiKey');
         if (scsCommunityRadio) scsCommunityRadio.checked = true;
@@ -2367,7 +2348,6 @@
         const wyzie = subs.wyzie || {};
         state.wyzieEnabled = !!wyzie.enabled;
         state.wyzieApiKey = (wyzie.apiKey || '').trim() || getQuickSetupDefaultWyzieApiKey();
-        state.wyzieSources = normalizeQuickSetupWyzieSources(wyzie.sources || getDefaultQuickSetupWyzieSources());
 
         // AI
         state.geminiApiKey = config.geminiApiKey || '';
@@ -2407,7 +2387,6 @@
         state.scsApiKey = '';
         state.wyzieEnabled = false;
         state.wyzieApiKey = getQuickSetupDefaultWyzieApiKey();
-        state.wyzieSources = getDefaultQuickSetupWyzieSources();
         state.geminiApiKey = '';
         state.geminiKeyValid = false;
         state.sourceLanguages = ['eng'];
@@ -2443,13 +2422,13 @@
         const scsNote = $('qsScsNote');
         const scsOptions = $('qsScsOptions');
         const scsAuthConfig = $('qsScsAuthConfig');
-        const wyzieSources = $('qsWyzieSources');
+        const wyzieConfig = $('qsWyzieConfig');
         if (subdlWrap) subdlWrap.style.display = state.subdlEnabled ? '' : 'none';
         if (ssWrap) ssWrap.style.display = state.subsourceEnabled ? '' : 'none';
         if (scsNote) scsNote.style.display = state.scsEnabled ? '' : 'none';
         if (scsOptions) scsOptions.style.display = state.scsEnabled ? '' : 'none';
         if (scsAuthConfig) scsAuthConfig.style.display = state.scsEnabled && state.scsAuth ? '' : 'none';
-        if (wyzieSources) wyzieSources.style.display = state.wyzieEnabled ? '' : 'none';
+        if (wyzieConfig) wyzieConfig.style.display = state.wyzieEnabled ? '' : 'none';
 
         const subdlKey = $('qsSubdlApiKey');
         const ssKey = $('qsSubsourceApiKey');
@@ -2469,14 +2448,6 @@
             if (authFields) authFields.style.display = '';
         }
 
-        // Wyzie sub-sources
-        const wyzieSourceState = normalizeQuickSetupWyzieSources(state.wyzieSources || getDefaultQuickSetupWyzieSources());
-        state.wyzieSources = wyzieSourceState;
-        const ids = { subf2m: 'qsWyzieSubf2m', podnapisi: 'qsWyziePodnapisi', gestdown: 'qsWyzieGestdown', animetosho: 'qsWyzieAnimetosho', opensubtitles: 'qsWyzieOpensubs', subdl: 'qsWyzieSubdl', kitsunekko: 'qsWyzieKitsunekko', jimaku: 'qsWyzieJimaku', yify: 'qsWyzieYify' };
-        for (const [key, id] of Object.entries(ids)) {
-            const el = $(id);
-            if (el) el.checked = !!wyzieSourceState[key];
-        }
         // Step 3 - Gemini key
         const geminiKey = $('qsGeminiApiKey');
         if (geminiKey) geminiKey.value = state.geminiApiKey || '';

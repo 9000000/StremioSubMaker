@@ -20,7 +20,7 @@ const DEFAULT_API_KEYS = {
   SUBSOURCE: '',
 
   // Wyzie Subs API Key
-  // Get your own at: https://sub.wyzie.io/redeem
+  // Get your own at: https://store.wyzie.io/redeem
   // No bundled fallback key; users must provide their own
   WYZIE: '',
 

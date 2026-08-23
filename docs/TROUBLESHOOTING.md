@@ -10,7 +10,7 @@ Common issues and solutions for SubMaker.
 
 | Problem | Solution |
 |---------|----------|
-| API key invalid | Validate key at [Google AI Studio](https://makersuite.google.com) |
+| API key invalid | Validate key at [Google AI Studio](https://aistudio.google.com/apikey) |
 | Rate limit hit (HTTP 429) | Switch to Gemma 27b model, add more API keys with rotation, or use a secondary provider |
 | Translation timeout | Increase provider timeout in API Keys section |
 | Provider errors (503/prohibited) | Enable a **Secondary Provider** in Translation Settings as fallback |
@@ -47,7 +47,7 @@ Common issues and solutions for SubMaker.
 
 - **Reduce providers** — Disable unnecessary providers (Wyzie, SCS are slower)
 - **Increase timeout** — Higher values for reliable results from slow providers
-- **Wyzie sources** — Uncheck unused Wyzie sub-sources in More Providers section
+- **Wyzie searches** — Wyzie automatically searches every current source available to the API-key plan; disable Wyzie itself if you do not want the extra aggregator request
 - **Search hang guard** — The provider timeout saved in the config page controls normal subtitle searches. Advanced deployments can tune the separate stuck-search guard with `SUBTITLE_SEARCH_HARD_TIMEOUT_MS` (default 60000ms) and `SUBTITLE_SEARCH_STALE_GRACE_MS`; cache lookups such as xEmbed, xSync, Auto, and SMDB are not hidden behind route-level fallback timers.
 - **Redis/cache stalls** — Redis commands are bounded by `REDIS_COMMAND_TIMEOUT_MS` (default 5000ms). xEmbed, xSync, and Auto subtitle-list reads use maintained per-video indexes and must not rebuild indexes with Redis `SCAN` during a subtitle request.
 
@@ -105,7 +105,7 @@ Stremio on Android makes only 1 request for subtitles and caches it. Mobile Mode
 
 | Provider | Key Format | Notes |
 |----------|------------|-------|
-| Gemini | `AIza...` | Free at [Google AI Studio](https://makersuite.google.com/app/apikey) |
+| Gemini | `AQ....` or legacy `AIza...` | Free at [Google AI Studio](https://aistudio.google.com/apikey) |
 | OpenSubtitles | Username + Password | V3 mode needs no auth, Auth mode recommended |
 | SubSource | API key | Get from [subsource.net/api-docs](https://subsource.net/api-docs) |
 | SubDL | API key | Get from [subdl.com/panel/api](https://subdl.com/panel/api) |

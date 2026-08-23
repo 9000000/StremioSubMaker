@@ -46,6 +46,34 @@ function buildRateLimitUserMessage(serviceLabel, translate) {
   );
 }
 
+function getApiErrorMessage(error) {
+  const candidates = [
+    error?.response?.data?.message,
+    error?.providerMessage,
+    error?.originalError?.response?.data?.message,
+    error?.originalError?.providerMessage,
+    error?.message,
+    error?.originalError?.message
+  ];
+  const message = candidates.find(value => typeof value === 'string' && value.trim());
+  return String(message || '');
+}
+
+function isOpenSubtitlesQuotaError(error) {
+  if (!error) return false;
+  if (error.type === 'quota_exceeded') return true;
+
+  const statusCode = error.response?.status
+    || error.statusCode
+    || error.originalError?.response?.status
+    || error.originalError?.statusCode;
+  if (Number(statusCode) !== 406) return false;
+
+  const message = getApiErrorMessage(error).toLowerCase();
+  return (message.includes('allowed') && message.includes('subtitles'))
+    || (message.includes('quota') && message.includes('renew'));
+}
+
 function getResponseTextPreview(error, maxChars = 2048) {
   const data = error?.response?.data;
   if (data == null) return '';
@@ -194,9 +222,7 @@ function parseApiError(error, serviceName = 'API', options = {}) {
     // OpenSubtitles daily quota exceeded (406 Not Acceptable used for download quota)
     // Matches any plan: free (20), Gold (200), VIP (1000), etc.
     else if (parsed.statusCode === 406 && serviceName === 'OpenSubtitles') {
-      const msg = String(error.response?.data?.message || error.message || '').toLowerCase();
-      const looksLikeQuota = (msg.includes('allowed') && msg.includes('subtitles')) || (msg.includes('quota') && msg.includes('renew'));
-      if (looksLikeQuota) {
+      if (isOpenSubtitlesQuotaError(error)) {
         parsed.type = 'quota_exceeded';
         parsed.isRetryable = false;
         parsed.userMessage = translate('apiErrors.opensubsQuota', {}, 'OpenSubtitles daily download limit reached. Try again after the next UTC midnight.');
@@ -342,6 +368,7 @@ function handleDownloadError(error, serviceName, options = {}) {
   customError.statusCode = parsed.statusCode;
   customError.type = parsed.type;
   customError.isRetryable = parsed.isRetryable;
+  customError.providerMessage = getApiErrorMessage(error);
   // Mark as already logged to avoid duplicate logs in higher layers
   customError._alreadyLogged = true;
 
@@ -436,6 +463,8 @@ function isRetryableError(error) {
 }
 
 module.exports = {
+  getApiErrorMessage,
+  isOpenSubtitlesQuotaError,
   parseApiError,
   logApiError,
   handleSearchError,

@@ -636,6 +636,8 @@
       "osAuthMissingRateLimited": "OpenSubtitles Auth mode is active without credentials, so downloads hit the basic rate limit. Add your username/password or switch to V3 (no login).",
       "providerRateLimitTitle": "{service} rate limit reached (429)",
       "providerRateLimitBody": "Too many requests in a short period.\\nPlease wait a few minutes and try again.",
+      "subdlDownloadQuotaTitle": "SubDL download quota reached (429)",
+      "subdlDownloadQuotaBody": "This SubDL API key cannot download more files right now.\\nCheck its SubDL usage, wait for the quota reset, use another key or plan, or choose another provider.",
       "providerAuthErrorTitle": "Authentication Error",
       "providerAuthErrorBody": "{service} rejected your API key or credentials",
       "notAvailableTitle": "Subtitle Not Available (Error 404)",
@@ -811,11 +813,10 @@
           "scsKeyNote": "Use your own SCS auth key for faster language-filtered requests.",
           "scsModeNote": "Community mode uses SubMaker's shared token; Auth mode sends only your selected languages.",
           "wyzieName": "Wyzie Subs",
-          "wyzieDesc": "Free subtitle aggregator with a free API key",
+          "wyzieDesc": "Subtitle aggregator that searches every source available to your API key",
           "wyzieKeyPlaceholder": "Enter Wyzie API key",
-          "wyzieGetKey": "Get your free API key at sub.wyzie.io/redeem",
-          "wyzieSources": "Sources:",
-          "wyzieMoreSources": "More sources = more subtitles but slower"
+          "wyzieGetKey": "Get your free API key at store.wyzie.io/redeem",
+          "wyzieAutoSources": "Wyzie automatically searches every current source available to your API-key plan."
         },
         "step3": {
           "title": "AI Translation",
@@ -894,7 +895,7 @@
           "disabled": "Disabled",
           "scsAuth": "Auth key",
           "scsCommunity": "Community token",
-          "wyzieSources": "Enabled ({count} sources)",
+          "wyzieSources": "All available sources",
           "aiTranslation": "AI Translation",
           "aiConfigured": "{model}",
           "aiNotConfigured": "Not configured",
@@ -1139,12 +1140,12 @@
         "wyzie": {
           "title": "Wyzie Subs",
           "description": "Get your free API key from",
-          "linkLabel": "sub.wyzie.io/redeem",
+          "linkLabel": "store.wyzie.io/redeem",
           "placeholder": "Enter Wyzie API key",
           "validateTitle": "Validate API key",
           "validateCta": "Test",
           "toggleLabel": "Enable Wyzie Subs",
-          "note": "Wyzie aggregates subtitles from multiple sources. Results may overlap with other providers you have enabled."
+          "note": "Wyzie automatically searches every current source available to your API-key plan. Results may overlap with other providers you have enabled."
         },
         "scs": {
           "title": "Stremio Community Subtitles",
@@ -1228,7 +1229,12 @@
             "gemma27b": "Gemma 27b (beta) (Recommended for Rate Limits)",
             "flashLite": "Gemini 2.5 Flash-Lite",
             "flash": "Gemini 2.5 Flash",
+            "flashLite31": "Gemini 3.1 Flash Lite",
             "flash3": "Gemini 3.0 Flash (beta)",
+            "flashLite35": "Gemini 3.5 Flash-Lite (beta)",
+            "flash35": "Gemini 3.5 Flash (beta)",
+            "flash36": "Gemini 3.6 Flash (beta)",
+            "flash37": "Gemini 3.7 Flash (beta)",
             "pro": "Gemini 2.5 Pro (beta)",
             "pro3": "Gemini 3.0 Pro (beta)"
           },
@@ -1399,6 +1405,15 @@
         "thinking": {
           "label": "Thinking Budget (Extended Reasoning)",
           "description": "0 = disabled, -1 = dynamic (auto-adjust), or fixed token count (1-32768). Higher values = deeper reasoning but slower."
+        },
+        "thinkingLevel": {
+          "label": "Thinking Level",
+          "description": "Controls Gemini 3.x reasoning. Minimal is the closest supported option to disabled thinking.",
+          "disabled": "Disabled (closest supported)",
+          "minimal": "Minimal",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
         },
         "temperature": {
           "label": "Temperature (Creativity)",
@@ -1571,6 +1586,15 @@
         "thinking": {
           "label": "Thinking Budget (Extended Reasoning)",
           "helper": "0 = disabled, -1 = dynamic (auto-adjust), or fixed token count (1-32768)."
+        },
+        "thinkingLevel": {
+          "label": "Thinking Level",
+          "helper": "Controls Gemini 3.x reasoning. Minimal is the closest supported option to disabled thinking.",
+          "disabled": "Disabled (closest supported)",
+          "minimal": "Minimal",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
         },
         "temperature": {
           "label": "Temperature (Creativity)",

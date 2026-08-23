@@ -636,6 +636,8 @@
       "osAuthMissingRateLimited": "وضع مصادقة OpenSubtitles نشط بدون بيانات اعتماد، لذلك تصل التنزيلات إلى حد المعدل الأساسي. أضف اسم المستخدم/كلمة المرور أو قم بالتبديل إلى V3 (بدون تسجيل دخول).",
       "providerRateLimitTitle": "تم الوصول إلى حد معدل {service} (429)",
       "providerRateLimitBody": "طلبات كثيرة جداً في فترة قصيرة.\\nيرجى الانتظار بضع دقائق والمحاولة مرة أخرى.",
+      "subdlDownloadQuotaTitle": "تم بلوغ حصة تنزيل SubDL (429)",
+      "subdlDownloadQuotaBody": "لا يمكن لمفتاح SubDL API هذا تنزيل المزيد من الملفات الآن.\\nتحقق من استخدامه في SubDL، وانتظر إعادة تعيين الحصة، أو استخدم مفتاحاً أو خطة أخرى، أو اختر مزوداً آخر.",
       "providerAuthErrorTitle": "خطأ في المصادقة",
       "providerAuthErrorBody": "رفضت {service} مفتاح API أو بيانات الاعتماد الخاصة بك",
       "notAvailableTitle": "الترجمة غير متاحة (Error 404)",
@@ -811,11 +813,10 @@
           "scsKeyNote": "استخدم مفتاح SCS Auth الخاص بك لطلبات أسرع مفلترة حسب اللغة.",
           "scsModeNote": "يستخدم وضع Community الرمز المشترك في SubMaker؛ ويرسل وضع Auth اللغات المختارة فقط.",
           "wyzieName": "Wyzie Subs",
-          "wyzieDesc": "مجمّع ترجمات بمفتاح API مجاني",
+          "wyzieDesc": "مجمّع يبحث في كل المصادر المتاحة لمفتاح API الخاص بك",
           "wyzieKeyPlaceholder": "أدخل مفتاح API الخاص بـ Wyzie",
-          "wyzieGetKey": "احصل على مفتاح API مجاني من sub.wyzie.io/redeem",
-          "wyzieSources": "المصادر:",
-          "wyzieMoreSources": "مصادر أكثر = ترجمات أكثر لكن أبطأ"
+          "wyzieGetKey": "احصل على مفتاح API مجاني من store.wyzie.io/redeem",
+          "wyzieAutoSources": "يبحث Wyzie تلقائيًا في كل المصادر الحالية المتاحة لخطة مفتاح API الخاص بك."
         },
         "step3": {
           "title": "الترجمة بالذكاء الاصطناعي",
@@ -881,7 +882,7 @@
           "disabled": "مُعطّل",
           "scsAuth": "مفتاح Auth",
           "scsCommunity": "رمز المجتمع",
-          "wyzieSources": "مُفعّل ({count} مصادر)",
+          "wyzieSources": "كل المصادر المتاحة",
           "aiTranslation": "الترجمة بالذكاء الاصطناعي",
           "aiConfigured": "{model}",
           "aiNotConfigured": "غير مُعدّ",
@@ -1139,12 +1140,12 @@
         "wyzie": {
           "title": "Wyzie Subs",
           "description": "احصل على مفتاح API مجاني من",
-          "linkLabel": "sub.wyzie.io/redeem",
+          "linkLabel": "store.wyzie.io/redeem",
           "placeholder": "أدخل مفتاح API الخاص بـ Wyzie",
           "validateTitle": "التحقق من مفتاح API",
           "validateCta": "اختبار",
           "toggleLabel": "تمكين Wyzie Subs",
-          "note": "يجمع Wyzie الترجمات من مصادر متعددة. قد تتداخل النتائج مع مزودين آخرين ممكّنين."
+          "note": "يبحث Wyzie تلقائيًا في كل المصادر الحالية المتاحة لخطة مفتاح API الخاص بك. قد تتداخل النتائج مع مزودين آخرين ممكّنين."
         },
         "scs": {
           "title": "Stremio Community Subtitles",
@@ -1228,7 +1229,12 @@
             "gemma27b": "Gemma 27b (beta) (Recommended for Rate Limits)",
             "flashLite": "Gemini 2.5 Flash-Lite",
             "flash": "Gemini 2.5 Flash",
+            "flashLite31": "Gemini 3.1 Flash Lite",
             "flash3": "Gemini 3.0 Flash (beta)",
+            "flashLite35": "Gemini 3.5 Flash-Lite (beta)",
+            "flash35": "Gemini 3.5 Flash (beta)",
+            "flash36": "Gemini 3.6 Flash (beta)",
+            "flash37": "Gemini 3.7 Flash (beta)",
             "pro": "Gemini 2.5 Pro (beta)",
             "pro3": "Gemini 3.0 Pro (beta)"
           },
@@ -1399,6 +1405,15 @@
         "thinking": {
           "label": "ميزانية التفكير (استدلال موسع)",
           "description": "0 = معطل، -1 = ديناميكي (ضبط تلقائي)، أو عدد رموز ثابت (1-32768). القيم الأعلى = استدلال أعمق ولكن أبطأ."
+        },
+        "thinkingLevel": {
+          "label": "مستوى التفكير",
+          "description": "يتحكم في استدلال Gemini 3.x. الحد الأدنى هو أقرب خيار مدعوم لتعطيل التفكير.",
+          "disabled": "معطل (أقرب خيار مدعوم)",
+          "minimal": "الحد الأدنى",
+          "low": "منخفض",
+          "medium": "متوسط",
+          "high": "مرتفع"
         },
         "temperature": {
           "label": "الحرارة (الإبداع)",
@@ -1571,6 +1586,15 @@
         "thinking": {
           "label": "ميزانية التفكير (استدلال موسع)",
           "helper": "0 = معطل، -1 = ديناميكي (ضبط تلقائي)، أو عدد رموز ثابت (1-32768)."
+        },
+        "thinkingLevel": {
+          "label": "مستوى التفكير",
+          "helper": "يتحكم في استدلال Gemini 3.x. الحد الأدنى هو أقرب خيار مدعوم لتعطيل التفكير.",
+          "disabled": "معطل (أقرب خيار مدعوم)",
+          "minimal": "الحد الأدنى",
+          "low": "منخفض",
+          "medium": "متوسط",
+          "high": "مرتفع"
         },
         "temperature": {
           "label": "الحرارة (الإبداع)",

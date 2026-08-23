@@ -6,7 +6,7 @@ const { detectAndConvertEncoding } = require('../utils/encodingDetector');
 const { appendHiddenInformationalNote } = require('../utils/subtitle');
 const { redactSensitiveData } = require('../utils/logger');
 const log = require('../utils/logger');
-const { detectArchiveType, extractSubtitleFromArchive, isArchive, createEpisodeNotFoundSubtitle, createZipTooLargeSubtitle } = require('../utils/archiveExtractor');
+const { detectArchiveType, extractSubtitleFromArchive, isArchive, createEpisodeNotFoundSubtitle, createZipTooLargeSubtitle, convertSubtitleToVtt } = require('../utils/archiveExtractor');
 const { analyzeResponseContent, createInvalidResponseSubtitle } = require('../utils/responseAnalyzer');
 const {
   getProviderAuthFailureCacheKey,
@@ -53,6 +53,18 @@ function isSubDLAuthFailure(error) {
   );
 }
 
+function detectPlainSubtitleFormat(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return null;
+  // Subtitle structure markers are ASCII in all supported legacy codepages, so
+  // a Latin-1 preview is safe before the actual language-aware decoding step.
+  const preview = buffer.subarray(0, Math.min(buffer.length, 16384)).toString('latin1').replace(/^ï»¿/, '').trimStart();
+  if (/^WEBVTT(?:\s|$)/i.test(preview)) return 'vtt';
+  if (/^\{\d+\}\{\d+\}/m.test(preview)) return 'sub';
+  if (/^\d+\s*\r?\n\d{2}:\d{2}:\d{2}[,.:]\d{2,3}\s*-->/m.test(preview)) return 'srt';
+  if (/^\s*\[Script Info\]/im.test(preview) || /^\s*Dialogue\s*:/im.test(preview)) return 'ass';
+  return null;
+}
+
 class SubDLService {
   // Static/singleton axios client - shared across all instances for connection reuse
   static client = axios.create({
@@ -71,7 +83,8 @@ class SubDLService {
     decompress: true
   });
 
-  // Keep ZIP downloads separate so the file host does not inherit JSON API headers.
+  // Keep archive downloads separate so the file host only receives the
+  // authentication header required for the user's own download quota.
   static downloadClient = axios.create({
     headers: {
       'User-Agent': USER_AGENT,
@@ -400,6 +413,19 @@ class SubDLService {
     try {
       log.debug(() => ['[SubDL] Downloading subtitle:', fileId]);
 
+      // Never fall back to SubDL's anonymous per-IP download allowance. Normal
+      // configuration disables this provider without a key, but failing closed
+      // here also protects legacy, malformed, and direct service calls.
+      if (!this.apiKey) {
+        const authError = new Error('SubDL API key is required for subtitle downloads');
+        authError.response = {
+          status: 401,
+          data: { message: 'SubDL API key is required for subtitle downloads' },
+          headers: {}
+        };
+        throw authError;
+      }
+
       // Check if this is a season pack download
       let isSeasonPack = false;
       let seasonPackSeason = null;
@@ -446,7 +472,11 @@ class SubDLService {
         try {
           subtitleResponse = await SubDLService.downloadClient.get(downloadUrl, {
             responseType: 'arraybuffer',
-            timeout: timeout // Use configurable timeout
+            timeout: timeout, // Use configurable timeout
+            // Without this header SubDL treats the request as anonymous and
+            // applies its per-IP quota. That makes every user of a shared host
+            // consume the same allowance even though each configured a key.
+            ...(this.apiKey ? { headers: { 'x-api-key': this.apiKey } } : {})
           });
           break; // Success, exit retry loop
         } catch (err) {
@@ -487,6 +517,22 @@ class SubDLService {
       // Check for valid archive signature (ZIP, RAR, Gzip, 7z, Tar, etc.)
       const archiveType = detectArchiveType(responseBuffer);
       if (!archiveType) {
+        // Although SubDL documents this endpoint as a ZIP download, it can
+        // return the subtitle file itself (observed with MicroDVD `.sub`
+        // payloads). Accept only positively identified subtitle structures so
+        // JSON/HTML error documents remain rejected.
+        const plainFormat = detectPlainSubtitleFormat(responseBuffer);
+        if (plainFormat) {
+          log.debug(() => `[SubDL] Download endpoint returned a plain ${plainFormat.toUpperCase()} subtitle`);
+          const decoded = detectAndConvertEncoding(responseBuffer, 'SubDL', options.languageHint || null);
+          if (plainFormat === 'sub' || plainFormat === 'ass') {
+            return await convertSubtitleToVtt(decoded, `subtitle.${plainFormat}`, 'SubDL', {
+              skipAssConversion: options.skipAssConversion
+            });
+          }
+          return decoded;
+        }
+
         // Not a valid archive - provide user-friendly error message
         log.error(() => `[SubDL] Response is not a valid archive. Content analysis: ${contentAnalysis.type} - ${contentAnalysis.hint}`);
         if (responseBuffer.length > 0 && responseBuffer.length < 500) {
@@ -653,5 +699,6 @@ class SubDLService {
 module.exports = SubDLService;
 module.exports.__testing = {
   getSubDLUpstreamMessage,
-  isSubDLAuthFailure
+  isSubDLAuthFailure,
+  detectPlainSubtitleFormat
 };

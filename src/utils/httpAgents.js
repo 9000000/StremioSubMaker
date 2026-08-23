@@ -30,6 +30,7 @@
 
 const http = require('http');
 const https = require('https');
+const dns = require('dns');
 const axios = require('axios');
 const log = require('./logger');
 const { scsHttpsAgent } = require('./scsHttpAgent');
@@ -61,26 +62,33 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: true // Verify server certificates (security)
 });
 
-// DNS cache to reduce lookup latency and flakiness.
-// cacheable-lookup v7 is ESM-only; this project is CommonJS. If npm resolves
-// an ESM-only version, keep startup working and let axios use Node's default DNS.
-let dnsLookup;
-try {
-  let CacheableLookup = require('cacheable-lookup');
-  CacheableLookup = (CacheableLookup && (CacheableLookup.default || CacheableLookup.CacheableLookup)) || CacheableLookup;
-  const dnsCache = new CacheableLookup({
-    maxTtl: 60,      // seconds to keep successful lookups
-    errorTtl: 0,     // don't cache failed lookups
-    cache: new Map() // in-memory cache
-  });
-  dnsLookup = dnsCache.lookup.bind(dnsCache);
-} catch (error) {
-  if (error?.code === 'ERR_REQUIRE_ESM') {
-    log.warn(() => '[HTTP Agents] cacheable-lookup is ESM-only in this install; DNS cache disabled');
-  } else {
-    log.warn(() => `[HTTP Agents] DNS cache unavailable: ${error.message}`);
-  }
+// cacheable-lookup v7 is ESM-only, while this module is CommonJS. Start with
+// Node's lookup so requests can proceed immediately, then swap in the cache
+// once the dynamic import finishes.
+let activeDnsLookup = dns.lookup.bind(dns);
+
+function dnsLookup(hostname, options, callback) {
+  return activeDnsLookup(hostname, options, callback);
 }
+
+void import('cacheable-lookup')
+  .then((cacheableLookupModule) => {
+    const CacheableLookup = cacheableLookupModule.default || cacheableLookupModule.CacheableLookup;
+    if (typeof CacheableLookup !== 'function') {
+      throw new TypeError('cacheable-lookup did not export a constructor');
+    }
+
+    const dnsCache = new CacheableLookup({
+      maxTtl: 60,      // seconds to keep successful lookups
+      errorTtl: 0,     // don't cache failed lookups
+      cache: new Map() // in-memory cache
+    });
+    activeDnsLookup = dnsCache.lookup.bind(dnsCache);
+    log.debug(() => '[HTTP Agents] DNS cache initialized');
+  })
+  .catch((error) => {
+    log.warn(() => `[HTTP Agents] DNS cache unavailable; using Node DNS lookup: ${error.message}`);
+  });
 
 log.debug(() => '[HTTP Agents] Connection pooling initialized: maxSockets=100, maxFreeSockets=20, keepAlive=true');
 

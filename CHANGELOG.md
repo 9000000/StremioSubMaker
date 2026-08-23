@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.89
+
+**Improvements:**
+
+- **Expanded the Gemini model list with new models:** SubMaker now lists Gemini 3.5 Flash-Lite, 3.5 Flash, 3.6 Flash, and 3.7 Flash while retaining the supported Gemini 2.5 Flash, 2.5 Flash-Lite, 3 Flash Preview, and 3.1 Flash-Lite choices.
+
+- **Added model-aware Gemini 3 thinking-level controls:** Config page and Sub Toolbox file-translation Advanced Settings now switch Gemini 3 models from the legacy numeric Thinking Budget input to Disabled, Minimal, Low, Medium, and High thinking levels.
+
+- **Made Wyzie follow its current dynamic source inventory:** Wyzie searches now send the documented `source=all` value so the upstream service automatically queries every source available to the user's API-key plan.
+
+- **Moved Wyzie key validation to the quota-free capability endpoint:** The Configure and Quick Setup validation flow now verifies keys through Wyzie's key-scoped `/sources` endpoint instead of spending a subtitle-search request. The backend also reports the key type plus currently available and restricted sources, and the free-key link now uses Wyzie's current `store.wyzie.io/redeem` address across the UI, locales, README, and troubleshooting guide.
+
+- **Coordinated Redis maintenance across Kubernetes replicas:** Session-index verification and the one-time legacy translation-cache sweep now use the shared Redis distributed lock, so a multi-pod SubMaker deployment performs each full-keyspace maintenance pass once per maintenance window instead of once per pod. The unrelated 30-minute cache-metrics path no longer scans the full session namespace at all.
+
+**Bug Fixes:**
+
+- **Fixed startup on Node releases that cannot `require()` ESM-only dependencies:** `cacheable-lookup` v7 now initializes through a CommonJS-compatible dynamic import instead of crashing while `httpAgents` loads. Requests use Node's normal DNS lookup until the cache is ready, and continue with that safe fallback plus a warning if cache initialization fails.
+
+- **Stopped SubDL downloads from exhausting a shared host's anonymous IP quota:** SubDL search and key validation were already authenticated, but the subsequent archive request omitted the user's key, making every account on a shared deployment consume the common egress IP's anonymous allowance. This caused successful searches to turn into download-time `429` subtitles and, when the request outlasted the proxy, an empty/failed subtitle response. Archive requests now authenticate with the user's configured key through the `x-api-key` header without placing it in download URLs or logs, and keyless legacy/malformed calls fail locally instead of falling back to anonymous downloads. A genuine per-key quota `429` now returns localized guidance in the subtitle shown by Stremio instead of incorrectly promising that a short wait will fix it.
+
+- **Stopped non-quota OpenSubtitles errors from being mislabeled as an exhausted daily quota:** The final download handler previously rendered every HTTP 406 as `daily download limit reached`, even though OpenSubtitles also uses 406 for unavailable or rejected file IDs. It now preserves the upstream response through the shared error wrapper and shows the quota subtitle only when the response actually contains quota-exhaustion semantics, so users with downloads remaining are no longer given the false limit warning.
+
+- **Hardened OpenSubtitles Auth against speculative player downloads:** Some clients probe multiple returned subtitle URLs before selection. A single atomic Redis operation now allows one initial request across all SubMaker replicas, defers other distinct files in the short window, and allows the file requested again as the real selection. The guard uses one expiring hash key rather than composing ownership locks and counters, with a bounded process-local fallback when Redis is unavailable.
+
+- **Removed obsolete Wyzie sub-source choices from saved and new configurations:** Configure and Quick Setup no longer show the nine legacy source checkboxes that do not match Wyzie's live source API. Existing session configs automatically discard the old `subtitleProviders.wyzie.sources` object and persist the migration while preserving the enabled state and API key; the UI now explains that source selection follows the key's current Wyzie plan.
+
+- **Kept Wyzie downloads working with its current direct-source URLs:** Wyzie may now return HTTPS download links hosted by the selected subtitle provider rather than a `sub.wyzie.io` proxy URL. SubMaker accepts and downloads those current URLs, validates that they use HTTPS, avoids misleading non-Wyzie-host warnings, and keeps the normal encoding/conversion path intact.
+
+- **Fixed new Google AI Studio authorization keys failing Gemini validation:** Gemini keys using the new `AQ.` format are now kept intact and validated through the same `v1beta` model-discovery client and `x-goog-api-key` header used by real translations, instead of the validation-only `v1/models` request that rejected keys which otherwise worked.
+
+- **Fixed Gemini 3 requests using retired generation parameters:** Gemini 3-family requests now send `thinkingLevel` instead of numeric `thinkingBudget`, omit legacy temperature/Top-K/Top-P fields rejected by current models, and use the correct output-token fallback. Legacy Gemini 2.x requests keep their existing numeric thinking and sampling behavior, base-model selections now apply their family defaults even when Advanced Settings is disabled, and Gemini 3 minimal reasoning is handled consistently by prompt, output-sizing, streaming, and structured-output paths.
+
+- **Fixed original subtitle text being corrupted by incorrect character-encoding overrides:** Valid UTF-8 is now preserved before any legacy-codepage detection, so language hints can no longer reinterpret Unicode subtitle bytes as a regional Windows encoding. Generic Serbian subtitles now choose between Latin Windows-1250/ISO-8859-2 and Cyrillic Windows-1251/ISO-8859-5 using script-aware validation instead of assuming Cyrillic, while expanded Western, Central European, Baltic, Belarusian, and Macedonian hints prevent the same lookalike-codepage corruption across other affected languages.
+
+- **Fixed SubDL rejecting plain subtitle payloads returned by its archive download endpoint:** SubDL sometimes returns a MicroDVD, SRT, VTT, or ASS file directly even though the URL is documented as a ZIP download. Positively identified plain subtitle structures are now decoded through the shared language-aware path and converted when needed, while JSON, HTML, and other invalid upstream responses remain rejected.
+
+- **Stopped session deletion from scanning the entire shared Redis history keyspace:** Permanent session deletion now reads the user's bounded history store and sorted-set index, then removes only that session's known current and legacy history keys. It no longer performs three full Redis `SCAN` walks for every deletion, which previously made `/api/session/:token` hang behind the reverse proxy on large multi-pod installations even when deleting a brand-new session with no history.
+
+- **Accepted provider archives that label SubRip files as `.srt.txt`:** Archive selection now recognizes the real-world double extension as SRT for both individual files and season packs while continuing to reject arbitrary `.txt` readmes and release notes. This fixes valid SubSource downloads that previously failed with `No subtitle file found in archive`.
+
 ## SubMaker v1.4.88
 
 **Improvements:**

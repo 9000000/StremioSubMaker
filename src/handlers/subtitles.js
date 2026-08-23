@@ -33,10 +33,11 @@ const { generateCacheKeys } = require('../utils/cacheKeys');
 const { deduplicateSubtitles, logDeduplicationStats } = require('../utils/subtitleDeduplication');
 const { version } = require('../utils/version');
 const { isProviderHealthy, circuitBreaker } = require('../utils/httpAgents');
-const { getShared, setShared, incrementCounter, decrementCounter, getCounter, CACHE_PREFIXES, CACHE_TTLS } = require('../utils/sharedCache');
+const { getShared, setShared, incrementCounter, decrementCounter, getCounter, tryAcquireLock, CACHE_PREFIXES, CACHE_TTLS } = require('../utils/sharedCache');
 const { getEffectiveGeminiModel } = require('../utils/config');
 const { applyExplicitFilenameSeasonHint, hasExplicitSeasonEpisodeMismatch, resolveAnimeVideoInfo } = require('../utils/animeSearchResolver');
 const { buildTmdbToImdbWikidataQuery } = require('../utils/tmdbWikidata');
+const { getApiErrorMessage, isOpenSubtitlesQuotaError } = require('../utils/apiErrorHandler');
 
 const fs = require('fs');
 const path = require('path');
@@ -1329,6 +1330,14 @@ async function verifyBypassCacheIntegrity() {
 async function purgeLegacyTranslationCacheEntries() {
   try {
     const adapter = await getStorageAdapter();
+    const maintenanceLock = await tryAcquireLock(
+      'maintenance:legacy-translation-cache-purge:v1',
+      7 * 24 * 60 * 60 * 1000
+    );
+    if (!maintenanceLock.acquired) {
+      log.debug(() => '[Cache] Legacy translation purge already handled by another replica; skipping');
+      return;
+    }
     const keys = await adapter.list(StorageAdapter.CACHE_TYPES.TRANSLATION);
     if (!Array.isArray(keys) || keys.length === 0) {
       return;
@@ -1715,15 +1724,6 @@ async function logCacheMetrics() {
 
   log.debug(() => `[Cache Metrics] Uptime: ${uptime}m | Hits: ${cacheMetrics.hits} | Misses: ${cacheMetrics.misses} | Hit Rate: ${hitRate}% | Disk R/W: ${cacheMetrics.diskReads}/${cacheMetrics.diskWrites} | API Calls: ${cacheMetrics.apiCalls} | Est. Cost Saved: $${cacheMetrics.estimatedCostSaved.toFixed(3)} | Cache Size: ${cacheSizeGB}GB | Evicted: ${cacheMetrics.filesEvicted}`);
 
-  // Also snapshot session namespace so Redis SCAN output includes sessions alongside other caches
-  try {
-    const adapter = await getStorageAdapter();
-    if (adapter && typeof adapter.list === 'function') {
-      await adapter.list(StorageAdapter.CACHE_TYPES.SESSION, '*');
-    }
-  } catch (err) {
-    log.warn(() => `[Cache Metrics] Failed to list sessions for diagnostics: ${err?.message || err}`);
-  }
 }
 
 // Initialize cache on module load
@@ -3033,10 +3033,8 @@ function createSubtitleHandler(config) {
           } else {
             log.debug(() => '[Subtitles] Wyzie Subs provider is enabled');
             const wyzie = new WyzieSubsService(wyzieApiKey);
-            // Pass sources config so Wyzie only queries user-selected sources
-            const wyzieParams = { ...searchParams, sources: config.subtitleProviders.wyzie.sources };
             addSearchTask('WyzieSubs',
-              wyzie.searchSubtitles(wyzieParams)
+              wyzie.searchSubtitles(searchParams)
                 .then(results => {
                   circuitBreaker.recordSuccess('wyzie');
                   return { provider: 'WyzieSubs', results };
@@ -3949,10 +3947,22 @@ ${hint}`, null, uiLanguage);
         return createOpenSubtitlesV3RateLimitSubtitle(config.uiLanguage || 'en');
       }
 
+      // SubDL archive requests use the configured API key. A download-time 429
+      // therefore means that key's download allowance is unavailable, not a
+      // short anonymous-IP burst that will necessarily clear in a few minutes.
+      if (fileId.startsWith('subdl_')) {
+        return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 00:00:03,000
+${t('subtitle.subdlDownloadQuotaTitle', {}, 'SubDL download quota reached (429)')}
+
+2
+00:00:03,001 --> 04:00:00,000
+${t('subtitle.subdlDownloadQuotaBody', {}, 'This SubDL API key cannot download more files right now.\nCheck its SubDL usage, wait for the quota reset, use another key or plan, or choose another provider.')}`, null, uiLanguage);
+      }
+
       // Determine which service based on fileId (generic two-cue fallback)
       let serviceName = 'Subtitle Provider';
-      if (fileId.startsWith('subdl_')) serviceName = 'SubDL';
-      else if (fileId.startsWith('subsource_')) serviceName = 'SubSource';
+      if (fileId.startsWith('subsource_')) serviceName = 'SubSource';
       else if (fileId.startsWith('scs_')) serviceName = 'Stremio Community Subtitles';
       else if (fileId.startsWith('wyzie_')) serviceName = 'Wyzie Subs';
       else if (fileId.startsWith('subsro_')) serviceName = 'Subs.ro';
@@ -3972,7 +3982,7 @@ ${t('subtitle.providerRateLimitBody', {}, 'Too many requests in a short period.\
       return createSubDLCloudflareBlockedSubtitle(config.uiLanguage || 'en');
     }
 
-    const rawMsg = (error.response?.data?.message || error.message || '').toString();
+    const rawMsg = getApiErrorMessage(error);
     const lowerMsg = rawMsg.toLowerCase();
     // CDN 403 (file unavailable) and rate-limit 403 (cannot consume) are NOT auth failures
     const is403ButNotAuth = errorStatus === 403 && (
@@ -4084,9 +4094,7 @@ ${t('subtitle.providerServerErrorBody', {}, 'The subtitle server is experiencing
     // Handle OpenSubtitles daily quota exceeded (HTTP 406 with specific message)
     // Only applies to OpenSubtitles Auth (v1) path where fileId has no provider prefix
     if (!fileId.startsWith('subdl_') && !fileId.startsWith('subsource_') && !fileId.startsWith('v3_') && !fileId.startsWith('wyzie_') && !fileId.startsWith('scs_') && !fileId.startsWith('subsro_')) {
-      const isOsQuota = (errorStatus === 406) ||
-        lowerMsg.includes('allowed') && lowerMsg.includes('subtitles') ||
-        (lowerMsg.includes('quota') && lowerMsg.includes('renew'));
+      const isOsQuota = isOpenSubtitlesQuotaError(error);
       if (isOsQuota) {
         // Pass the actual API error message so VIP/Gold users see their real quota (e.g., 200, 1000)
         // instead of hardcoded "20 subtitles"
