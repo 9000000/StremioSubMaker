@@ -31,9 +31,6 @@
 const http = require('http');
 const https = require('https');
 const axios = require('axios');
-// Handle ESM (v7+) and CJS (v6) exports of cacheable-lookup
-let CacheableLookup = require('cacheable-lookup');
-CacheableLookup = (CacheableLookup && (CacheableLookup.default || CacheableLookup.CacheableLookup)) || CacheableLookup;
 const log = require('./logger');
 const { scsHttpsAgent } = require('./scsHttpAgent');
 
@@ -64,13 +61,26 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: true // Verify server certificates (security)
 });
 
-// DNS cache to reduce lookup latency and flakiness
-const dnsCache = new CacheableLookup({
-  maxTtl: 60,      // seconds to keep successful lookups
-  errorTtl: 0,     // don't cache failed lookups
-  cache: new Map() // in-memory cache
-});
-const dnsLookup = dnsCache.lookup.bind(dnsCache);
+// DNS cache to reduce lookup latency and flakiness.
+// cacheable-lookup v7 is ESM-only; this project is CommonJS. If npm resolves
+// an ESM-only version, keep startup working and let axios use Node's default DNS.
+let dnsLookup;
+try {
+  let CacheableLookup = require('cacheable-lookup');
+  CacheableLookup = (CacheableLookup && (CacheableLookup.default || CacheableLookup.CacheableLookup)) || CacheableLookup;
+  const dnsCache = new CacheableLookup({
+    maxTtl: 60,      // seconds to keep successful lookups
+    errorTtl: 0,     // don't cache failed lookups
+    cache: new Map() // in-memory cache
+  });
+  dnsLookup = dnsCache.lookup.bind(dnsCache);
+} catch (error) {
+  if (error?.code === 'ERR_REQUIRE_ESM') {
+    log.warn(() => '[HTTP Agents] cacheable-lookup is ESM-only in this install; DNS cache disabled');
+  } else {
+    log.warn(() => `[HTTP Agents] DNS cache unavailable: ${error.message}`);
+  }
+}
 
 log.debug(() => '[HTTP Agents] Connection pooling initialized: maxSockets=100, maxFreeSockets=20, keepAlive=true');
 
