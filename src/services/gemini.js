@@ -12,7 +12,8 @@ const {
   clearCachedProviderAuthFailure
 } = require('../utils/providerAuthFailureCache');
 
-// Use v1beta endpoint - v1 endpoint doesn't support /models/{model} operations
+// Keep discovery, metadata, token counting, and generation on Google's current
+// documented Gemini REST surface.
 const GEMINI_API_URL = process.env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com/v1beta';
 
 function normalizeGeminiModelId(model) {
@@ -231,7 +232,8 @@ class GeminiService {
   async getAvailableModels(options = {}) {
     const silent = !!options.silent;
     const throwOnError = options.throwOnError === true;
-    if (await hasCachedProviderAuthFailure(this.authFailureCacheKey)) {
+    const bypassAuthFailureCache = options.bypassAuthFailureCache === true;
+    if (!bypassAuthFailureCache && await hasCachedProviderAuthFailure(this.authFailureCacheKey)) {
       log.warn(() => '[Gemini] Fetch models blocked: cached invalid API key detected');
       return [];
     }

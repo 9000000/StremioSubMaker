@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.91
+
+**Improvements:**
+
+- **Added an explicit custom-provider connection test:** The Custom Provider card can now verify its base URL, optional API key, and selected model together through the same server-side OpenAI-compatible request path used for translation. The deliberately small probe is rate-limited, never persists the submitted credentials, returns no credential-bearing response details, retains private-network and DNS-rebinding protections, and no longer runs implicitly when the custom key field loses focus.
+
+**Bug Fixes:**
+
+- **Stopped stale authentication failures from keeping new Gemini `AQ.` keys marked invalid:** The explicit Gemini API-key Test action now always rechecks Google's live `v1beta` model endpoint with the runtime `x-goog-api-key` authentication path. A rejection cached by an older SubMaker release or during a newly issued key's provisioning window can no longer force every manual retry to fail for the full 10-minute negative-cache lifetime; successful validation clears the stale entry, while background model discovery and translation traffic keep the existing invalid-key suppression.
+
+- **Removed retiring and legacy-access Gemini models from new selections:** Gemini 2.5 and Gemini 3 Flash Preview choices are no longer offered to new configurations because newly provisioned Google projects can list those models even when generation is unavailable. Existing saved selections are migrated to Google's current recommended replacements before translation, including advanced model overrides.
+
 ## SubMaker v1.4.90
 
 **Improvements:**

@@ -760,13 +760,6 @@
                                 <option value="gemini-3.5-flash-lite"
                                     data-i18n="config.gemini.model.options.flashLite35">Gemini 3.5 Flash-Lite (beta)
                                 </option>
-                                <option value="gemini-3-flash-preview" data-i18n="config.gemini.model.options.flash3">
-                                    Gemini 3.0 Flash (beta)</option>
-                                <option value="gemini-2.5-flash-lite" data-i18n="config.gemini.model.options.flashLite">
-                                    Gemini 2.5 Flash-Lite</option>
-                                <option value="gemini-2.5-flash" data-i18n="config.gemini.model.options.flash">Gemini
-                                    2.5 Flash</option>
-
                             </select>
                             <div class="field-error" id="geminiModelError"
                                 data-i18n="config.validation.geminiModelRequired">Please select a model</div>
@@ -777,15 +770,6 @@
                                     translation while the source subtitle is fine?</strong> <span
                                     data-i18n="config.gemini.model.retranslationHintBody">Quickly triple-click the
                                     subtitle to force a fresh re-translation, or change translation settings.</span>
-                            </div>
-                            <div id="proRateLimitWarning"
-                                style="display: none; margin-top: 0.75rem; padding: 0.75rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; font-size: 0.875rem; color: var(--text-secondary);">
-                                <strong style="color: #ef4444;" data-i18n="config.gemini.model.rateWarningTitle">⚠️ Free
-                                    Tier Limitation:</strong> <span data-i18n="config.gemini.model.rateWarningBody">If
-                                    using a free API key,
-                                    Gemini 2.5 Pro may trigger rate limits (HTTP 429). You'll likely only be able to
-                                    translate one
-                                    subtitle at a time.</span>
                             </div>
                         </div>
 
@@ -1120,13 +1104,24 @@
                                         <input type="text" id="provider-custom-key" placeholder="API key (optional)"
                                             data-i18n="config.providersUi.placeholders.customKey"
                                             data-i18n-attr="placeholder" class="sensitive-input masked">
-                                        <input type="text" id="provider-custom-model"
-                                            placeholder="e.g. llama3:8b, mistral:7b"
-                                            data-i18n="config.providersUi.placeholders.customModel"
-                                            data-i18n-attr="placeholder">
+                                        <div class="provider-model-row">
+                                            <input type="text" id="provider-custom-model"
+                                                placeholder="e.g. llama3:8b, mistral:7b"
+                                                data-i18n="config.providersUi.placeholders.customModel"
+                                                data-i18n-attr="placeholder">
+                                            <button type="button" class="validate-api-btn"
+                                                id="validateCustomProvider" data-provider="custom"
+                                                title="Test connection"
+                                                data-i18n="config.providersUi.testConnection"
+                                                data-i18n-attr="title">
+                                                <span class="validate-icon">&#10003;</span>
+                                                <span class="validate-text"
+                                                    data-i18n="config.providersUi.testConnection">Test connection</span>
+                                            </button>
+                                        </div>
                                         <span class="label-description" data-i18n="config.providersUi.customHint">
                                             For Ollama, LM Studio, LocalAI, or any OpenAI-compatible API.
-                                            Leave API key empty if not required.
+                                            Leave API key empty if not required. Testing sends one small request.
                                         </span>
                                     </div>
                                 </div>

@@ -9168,6 +9168,11 @@ label:has(#subToolboxEnabled:disabled) {
     min-width: 0;
 }
 
+.provider-model-row > input {
+    flex: 1;
+    min-width: 0;
+}
+
 .provider-model-row .validate-api-btn {
     flex-shrink: 0;
 }

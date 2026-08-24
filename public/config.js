@@ -947,6 +947,19 @@ Translate to {target_language}.`;
     const GEMINI_31_FLASH_LITE_MODEL = 'gemini-3.1-flash-lite';
     const GEMINI_FLASH_LATEST_MODEL = 'gemini-flash-latest';
     const DEFAULT_GEMINI_MODEL = 'gemini-flash-lite-latest';
+    const DEPRECATED_GEMINI_MODEL_REPLACEMENTS = Object.freeze({
+        'gemini-2.5-flash-lite': GEMINI_31_FLASH_LITE_MODEL,
+        'gemini-2.5-flash-lite-preview-09-2025': GEMINI_31_FLASH_LITE_MODEL,
+        'gemini-2.5-flash-lite-09-2025': GEMINI_31_FLASH_LITE_MODEL,
+        'gemini-2.5-flash': 'gemini-3.6-flash',
+        'gemini-2.5-flash-preview-09-2025': 'gemini-3.6-flash',
+        'gemini-2.5-flash-latest': 'gemini-3.6-flash',
+        'gemini-2.5-pro': 'gemini-3.1-pro-preview',
+        'gemini-2.5-pro-preview-05-06': 'gemini-3.1-pro-preview',
+        'gemini-2.5-pro-latest': 'gemini-3.1-pro-preview',
+        'gemini-3-flash-preview': 'gemini-3.6-flash',
+        'gemini-pro-latest': 'gemini-3.1-pro-preview'
+    });
 
     function normalizeGeminiModelName(modelName) {
         const normalized = typeof modelName === 'string' ? modelName.trim().replace(/^models\//, '') : '';
@@ -959,7 +972,13 @@ Translate to {target_language}.`;
         if (normalized === GEMINI_FLASH_LATEST_MODEL) {
             return DEFAULT_GEMINI_MODEL;
         }
-        return normalized;
+        return DEPRECATED_GEMINI_MODEL_REPLACEMENTS[normalized] || normalized;
+    }
+
+    function isDeprecatedGeminiModelName(modelName) {
+        const normalized = typeof modelName === 'string' ? modelName.trim().replace(/^models\//, '') : '';
+        return Object.prototype.hasOwnProperty.call(DEPRECATED_GEMINI_MODEL_REPLACEMENTS, normalized)
+            || normalized === 'gemini-2.0-flash-exp';
     }
 
     function isGemini3ModelName(modelName) {
@@ -977,26 +996,6 @@ Translate to {target_language}.`;
 
     const MODEL_SPECIFIC_DEFAULTS = {
 
-        'gemini-2.5-flash-lite': {
-            thinkingBudget: 0,
-            thinkingLevel: '',
-            temperature: 0.8
-        },
-        'gemini-2.5-flash-lite-preview-09-2025': {
-            thinkingBudget: 0,
-            thinkingLevel: '',
-            temperature: 0.8
-        },
-        'gemini-2.5-flash': {
-            thinkingBudget: -1,
-            thinkingLevel: '',
-            temperature: 0.5
-        },
-        'gemini-3-flash-preview': {
-            thinkingBudget: -1,
-            thinkingLevel: 'high',
-            temperature: 0.5
-        },
         'gemini-3.1-flash-lite': {
             thinkingBudget: 0,
             thinkingLevel: 'minimal',
@@ -1026,11 +1025,6 @@ Translate to {target_language}.`;
             thinkingBudget: 0,
             thinkingLevel: 'minimal',
             temperature: 0.8
-        },
-        'gemini-2.5-pro': {
-            thinkingBudget: 1000,
-            thinkingLevel: '',
-            temperature: 0.5
         },
         'gemini-3.1-pro-preview': {
             thinkingBudget: 1000,
@@ -1129,12 +1123,6 @@ Translate to {target_language}.`;
 
     function normalizeGeminiModelForBaseSelect(modelName) {
         let normalized = typeof modelName === 'string' ? modelName.trim() : '';
-        if (normalized === 'gemini-2.5-pro-preview-05-06') {
-            normalized = 'gemini-2.5-pro';
-        }
-        if (normalized === 'gemini-2.5-flash-preview-09-2025') {
-            normalized = 'gemini-2.5-flash';
-        }
         normalized = normalizeGeminiModelName(normalized);
 
         const optionValues = getGeminiModelSelectOptionValues();
@@ -7738,14 +7726,20 @@ Translate to {target_language}.`;
             const apiKeyInput = document.getElementById(`provider-${key}-key`);
             if (apiKeyInput) {
                 apiKeyInput.addEventListener('blur', debounce(() => {
-                    if (document.getElementById(`provider-${key}-enabled`)?.checked) {
+                    if (key !== 'custom' && document.getElementById(`provider-${key}-enabled`)?.checked) {
                         fetchProviderModels(key, { silent: true });
                     }
                 }, 400));
             }
             const loadBtn = document.querySelector(`.provider-block[data-provider="${key}"] .validate-api-btn`);
             if (loadBtn) {
-                loadBtn.addEventListener('click', () => fetchProviderModels(key));
+                loadBtn.addEventListener('click', () => {
+                    if (key === 'custom') {
+                        validateCustomProviderConfiguration();
+                    } else {
+                        fetchProviderModels(key);
+                    }
+                });
             }
             const modelSelect = document.getElementById(`provider-${key}-model`);
             if (modelSelect) {
@@ -7754,6 +7748,18 @@ Translate to {target_language}.`;
                     currentConfig.providers[key].model = e.target.value;
                 });
             }
+        });
+
+        const customProviderInputs = [
+            document.getElementById('provider-custom-baseUrl'),
+            document.getElementById('provider-custom-key'),
+            document.getElementById('provider-custom-model')
+        ].filter(Boolean);
+        customProviderInputs.forEach(input => {
+            input.addEventListener('input', () => {
+                customProviderInputs.forEach(item => item.classList.remove('valid', 'invalid'));
+                document.getElementById('validateCustomProvider')?.classList.remove('success', 'error');
+            });
         });
 
         const mainProviderSelect = document.getElementById('mainProviderSelect');
@@ -8623,6 +8629,99 @@ Translate to {target_language}.`;
                 showAlert(tConfig('config.alerts.loadModelsFailed', { provider: PROVIDERS[providerKey]?.label || providerKey, reason: err.message }, `Failed to load models for ${PROVIDERS[providerKey]?.label || providerKey}: ${err.message}`), 'error', 'config.alerts.loadModelsFailed', { provider: PROVIDERS[providerKey]?.label || providerKey, reason: err.message });
             }
         }
+    }
+
+    async function validateCustomProviderConfiguration() {
+        const baseUrlInput = document.getElementById('provider-custom-baseUrl');
+        const apiKeyInput = document.getElementById('provider-custom-key');
+        const modelInput = document.getElementById('provider-custom-model');
+        const btn = document.getElementById('validateCustomProvider');
+        if (!baseUrlInput || !apiKeyInput || !modelInput || !btn) return;
+
+        const baseUrl = baseUrlInput.value.trim();
+        const apiKey = apiKeyInput.value.trim();
+        const model = modelInput.value.trim();
+
+        baseUrlInput.classList.remove('invalid');
+        modelInput.classList.remove('invalid');
+
+        if (!baseUrl) {
+            baseUrlInput.classList.add('invalid');
+            baseUrlInput.focus();
+            showAlert(tConfig('config.alerts.missingCustomBaseUrl', {}, 'Enter a base URL for the custom provider'), 'warning');
+            return;
+        }
+        if (!model) {
+            modelInput.classList.add('invalid');
+            modelInput.focus();
+            showAlert(tConfig('config.validation.customProviderModelRequired', {}, 'Enter a model for the custom provider'), 'warning');
+            return;
+        }
+
+        const iconEl = btn.querySelector('.validate-icon');
+        const textEl = btn.querySelector('.validate-text');
+        const originalIcon = iconEl?.textContent || '✓';
+        const resetText = tConfig('config.providersUi.testConnection', {}, 'Test connection');
+
+        btn.classList.add('validating');
+        btn.classList.remove('success', 'error');
+        btn.disabled = true;
+        baseUrlInput.disabled = true;
+        apiKeyInput.disabled = true;
+        modelInput.disabled = true;
+        if (iconEl) iconEl.textContent = '⟳';
+        if (textEl) textEl.textContent = tConfig('config.validation.testing', {}, 'Testing...');
+
+        try {
+            const response = await fetch('/api/validate-custom-provider', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ baseUrl, apiKey, model })
+            });
+            const rawBody = await response.text();
+            let result = {};
+            try {
+                result = rawBody ? JSON.parse(rawBody) : {};
+            } catch (_) {
+                result = { valid: false, error: rawBody || response.statusText };
+            }
+
+            btn.classList.remove('validating');
+            btn.disabled = false;
+            baseUrlInput.disabled = false;
+            apiKeyInput.disabled = false;
+            modelInput.disabled = false;
+
+            if (response.ok && result.valid === true) {
+                btn.classList.add('success');
+                if (iconEl) iconEl.textContent = '✓';
+                if (textEl) textEl.textContent = tConfig('config.validation.valid', {}, 'Valid');
+                baseUrlInput.classList.add('valid');
+                modelInput.classList.add('valid');
+                showAlert(result.message || tConfig('config.validation.customProviderValid', {}, 'Custom provider configuration is valid'), 'success');
+            } else {
+                btn.classList.add('error');
+                if (iconEl) iconEl.textContent = '✗';
+                if (textEl) textEl.textContent = tConfig('config.validation.invalid', {}, 'Invalid');
+                showAlert(result.error || tConfig('config.validation.customProviderTestFailed', {}, 'Could not validate the custom provider configuration'), 'error');
+            }
+        } catch (_) {
+            btn.classList.remove('validating');
+            btn.classList.add('error');
+            btn.disabled = false;
+            baseUrlInput.disabled = false;
+            apiKeyInput.disabled = false;
+            modelInput.disabled = false;
+            if (iconEl) iconEl.textContent = '✗';
+            if (textEl) textEl.textContent = tConfig('config.validation.error', {}, 'Error');
+            showAlert(tConfig('config.validation.connectionError', {}, 'Connection error. Please try again.'), 'error');
+        }
+
+        setTimeout(() => {
+            btn.classList.remove('success', 'error');
+            if (iconEl) iconEl.textContent = originalIcon;
+            if (textEl) textEl.textContent = resetText;
+        }, 4000);
     }
 
     function validateGeminiApiKey(showNotification = false) {
@@ -9929,10 +10028,6 @@ Translate to {target_language}.`;
             { name: 'gemini-3.6-flash', displayName: 'Gemini 3.6 Flash (beta)' },
             { name: 'gemini-3.5-flash', displayName: 'Gemini 3.5 Flash (beta)' },
             { name: 'gemini-3.5-flash-lite', displayName: 'Gemini 3.5 Flash-Lite (beta)' },
-            { name: 'gemini-2.5-flash-lite', displayName: 'Gemini 2.5 Flash-Lite' },
-            { name: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' },
-            { name: 'gemini-3-flash-preview', displayName: 'Gemini 3.0 Flash (beta)' },
-            { name: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro (beta)' },
             { name: 'gemini-3.1-pro-preview', displayName: 'Gemini 3.1 Pro (beta)' }
         ];
 
@@ -9955,7 +10050,7 @@ Translate to {target_language}.`;
 
         // Add API-fetched models (avoid duplicates)
         models.forEach(model => {
-            if (!addedModels.has(model.name)) {
+            if (!isDeprecatedGeminiModelName(model.name) && !addedModels.has(model.name)) {
                 const option = document.createElement('option');
                 option.value = model.name;
                 option.textContent = `${model.displayName}`;

@@ -51,6 +51,22 @@
         "apiKeyRequired": "La clave API es obligatoria",
         "invalidSessionToken": "Token de sesión no válido o expirado",
         "modelsFailed": "Error al obtener los modelos: {reason}",
+        "baseUrlRequired": "La URL base es obligatoria para el proveedor personalizado",
+        "customProviderModelRequired": "El modelo es obligatorio para el proveedor personalizado",
+        "customProviderFieldsTooLong": "La configuración del proveedor personalizado contiene un campo demasiado largo",
+        "customProviderModelInvalid": "El modelo del proveedor personalizado contiene caracteres no válidos",
+        "customProviderApiKeyInvalid": "La clave API del proveedor personalizado contiene caracteres no válidos",
+        "customProviderUnavailable": "No se pudo inicializar la configuración del proveedor personalizado",
+        "customProviderAuthFailed": "Error de autenticación. Comprueba la clave API del proveedor personalizado.",
+        "customProviderNotFound": "No se encontró la URL base o el modelo del proveedor personalizado.",
+        "customProviderRejected": "El proveedor rechazó la solicitud de prueba. Comprueba la URL base y el modelo.",
+        "customProviderRateLimited": "El proveedor personalizado está limitando las solicitudes. Inténtalo más tarde.",
+        "customProviderServerError": "El proveedor personalizado devolvió un error del servidor.",
+        "customProviderTimeout": "La prueba del proveedor personalizado agotó el tiempo de espera.",
+        "customProviderDnsFailed": "No se pudo resolver el nombre de host del proveedor personalizado.",
+        "customProviderConnectionFailed": "No se pudo conectar con el proveedor personalizado.",
+        "customProviderBlocked": "El endpoint del proveedor personalizado fue bloqueado por la política de seguridad del servidor.",
+        "customProviderTestFailed": "No se pudo validar la configuración del proveedor personalizado.",
         "cloudflareTokenRequired": "Se requiere el token de Cloudflare Workers AI",
         "cloudflareAccountRequired": "Se requiere el ID de cuenta de Cloudflare Workers AI. Usa ACCOUNT_ID|TOKEN.",
         "cloudflareCredentialsMissing": "Faltan credenciales de Cloudflare Workers AI. Usa ACCOUNT_ID|TOKEN.",
@@ -131,7 +147,8 @@
         "apiError": "Error de API: {reason}",
         "apiKeyValid": "La clave API es válida",
         "apiKeyAppearsValid": "La clave API parece válida",
-        "credentialsValid": "Las credenciales son válidas"
+        "credentialsValid": "Las credenciales son válidas",
+        "customProviderValid": "La configuración del proveedor personalizado es válida"
       },
       "sync": {
         "saveSuccess": "Subtítulo sincronizado guardado correctamente"
@@ -1078,7 +1095,10 @@
         "geminiKeysRequired": "Se requiere al menos una clave API para la rotación",
         "geminiKeysFillEmpty": "Completa todos los campos de clave API antes de añadir una nueva",
         "apiKeyInvalid": "Clave API inválida",
-        "apiError": "Error de API: {reason}"
+        "apiError": "Error de API: {reason}",
+        "customProviderModelRequired": "Introduce un modelo para el proveedor personalizado",
+        "customProviderValid": "La configuración del proveedor personalizado es válida",
+        "customProviderTestFailed": "No se pudo validar la configuración del proveedor personalizado"
       },
       "alerts": {
         "sessionLost": "Se perdió la sesión de configuración. Vuelve a configurar y guarda para crear una nueva sesión.",
@@ -1209,7 +1229,7 @@
         "googleWeb": "web (fijo)",
         "googleHint": "Usa el endpoint público de Google Translate (puede ser inestable).",
         "testConnection": "Probar conexión",
-        "customHint": "Para Ollama, LM Studio, LocalAI o cualquier API compatible con OpenAI. Deja la clave vacía si no es necesaria.",
+        "customHint": "Para Ollama, LM Studio, LocalAI o cualquier API compatible con OpenAI. Deja la clave vacía si no es necesaria. La prueba envía una solicitud pequeña.",
         "title": "AI Translation API Keys",
         "apiKey": {
           "label": "Gemini API Key",

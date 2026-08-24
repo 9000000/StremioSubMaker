@@ -51,6 +51,22 @@
         "apiKeyRequired": "مفتاح API مطلوب",
         "invalidSessionToken": "رمز الجلسة غير صالح أو منتهي الصلاحية",
         "modelsFailed": "فشل جلب النماذج: {reason}",
+        "baseUrlRequired": "عنوان URL الأساسي مطلوب للمزود المخصص",
+        "customProviderModelRequired": "النموذج مطلوب للمزود المخصص",
+        "customProviderFieldsTooLong": "يحتوي إعداد المزود المخصص على حقل طويل جدًا",
+        "customProviderModelInvalid": "يحتوي نموذج المزود المخصص على أحرف غير صالحة",
+        "customProviderApiKeyInvalid": "يحتوي مفتاح API للمزود المخصص على أحرف غير صالحة",
+        "customProviderUnavailable": "تعذر تهيئة إعداد المزود المخصص",
+        "customProviderAuthFailed": "فشلت المصادقة. تحقق من مفتاح API للمزود المخصص.",
+        "customProviderNotFound": "لم يتم العثور على عنوان URL الأساسي أو نموذج المزود المخصص.",
+        "customProviderRejected": "رفض المزود طلب الاختبار. تحقق من عنوان URL الأساسي والنموذج.",
+        "customProviderRateLimited": "يفرض المزود المخصص حدًا على الطلبات. حاول مرة أخرى لاحقًا.",
+        "customProviderServerError": "أعاد المزود المخصص خطأ من الخادم.",
+        "customProviderTimeout": "انتهت مهلة اختبار المزود المخصص.",
+        "customProviderDnsFailed": "تعذر حل اسم مضيف المزود المخصص.",
+        "customProviderConnectionFailed": "تعذر الاتصال بالمزود المخصص.",
+        "customProviderBlocked": "حظرت سياسة أمان الخادم نقطة نهاية المزود المخصص.",
+        "customProviderTestFailed": "تعذر التحقق من إعداد المزود المخصص.",
         "cloudflareTokenRequired": "رمز Cloudflare Workers AI مطلوب",
         "cloudflareAccountRequired": "معرف حساب Cloudflare Workers AI مطلوب. قدم مفتاح API بصيغة ACCOUNT_ID|TOKEN.",
         "cloudflareCredentialsMissing": "بيانات اعتماد Cloudflare Workers AI مفقودة. استخدم الصيغة ACCOUNT_ID|TOKEN.",
@@ -131,7 +147,8 @@
         "apiError": "خطأ API: {reason}",
         "apiKeyValid": "مفتاح API صالح",
         "apiKeyAppearsValid": "يبدو أن مفتاح API صالح",
-        "credentialsValid": "بيانات الاعتماد صالحة"
+        "credentialsValid": "بيانات الاعتماد صالحة",
+        "customProviderValid": "إعداد المزود المخصص صالح"
       },
       "sync": {
         "saveSuccess": "تم حفظ الترجمة المتزامنة بنجاح"
@@ -1078,7 +1095,10 @@
         "geminiKeysRequired": "مطلوب مفتاح API واحد على الأقل للتدوير",
         "geminiKeysFillEmpty": "يُرجى ملء جميع حقول مفاتيح API قبل إضافة مفتاح جديد",
         "apiKeyInvalid": "مفتاح API غير صالح",
-        "apiError": "خطأ في API: {reason}"
+        "apiError": "خطأ في API: {reason}",
+        "customProviderModelRequired": "أدخل نموذجًا للمزود المخصص",
+        "customProviderValid": "إعداد المزود المخصص صالح",
+        "customProviderTestFailed": "تعذر التحقق من إعداد المزود المخصص"
       },
       "alerts": {
         "sessionLost": "تم فقدان جلسة التكوين. يرجى إعادة التكوين والحفظ لإنشاء جلسة جديدة.",
@@ -1209,7 +1229,7 @@
         "googleWeb": "ويب (ثابت)",
         "googleHint": "يستخدم نقطة نهاية الويب العامة لترجمة Google (قد تكون غير مستقرة).",
         "testConnection": "اختبار الاتصال",
-        "customHint": "لـ Ollama أو LM Studio أو LocalAI أو أي واجهة برمجة تطبيقات متوافقة مع OpenAI. اترك المفتاح فارغاً إذا لم يكن مطلوباً.",
+        "customHint": "لـ Ollama أو LM Studio أو LocalAI أو أي واجهة برمجة تطبيقات متوافقة مع OpenAI. اترك المفتاح فارغاً إذا لم يكن مطلوباً. يرسل الاختبار طلبًا صغيرًا واحدًا.",
         "title": "AI Translation API Keys",
         "apiKey": {
           "label": "Gemini API Key",

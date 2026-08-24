@@ -70,7 +70,6 @@ const NON_CACHEABLE_ASSETS = new Set([
     '/js/combobox-init.js',
     '/js/config-page-state.js',
     '/js/config-loader.js',
-    '/js/ui-widgets.js',
     '/js/theme-toggle.js',
     '/js/sw-register.js',
     '/js/quick-setup.js',

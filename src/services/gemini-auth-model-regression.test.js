@@ -8,6 +8,11 @@ const axios = require('axios');
 const GeminiService = require('./gemini');
 const { createTranslationProvider } = require('./translationProviderFactory');
 const { sanitizeApiKeyForHeader } = require('../utils/security');
+const {
+  cacheProviderAuthFailure,
+  getProviderAuthFailureCacheKey,
+  resetProviderAuthFailureCache
+} = require('../utils/providerAuthFailureCache');
 const { generateFileTranslationPage } = require('../utils/fileUploadPageGenerator');
 const {
   generateEmbeddedSubtitlePage,
@@ -22,7 +27,7 @@ const {
 
 const projectRoot = path.resolve(__dirname, '..', '..');
 
-test('AQ authorization keys are preserved and sent through the runtime v1beta model client', async () => {
+test('AQ authorization keys bypass stale auth failures during explicit validation', async () => {
   const authKey = 'AQ.Ab8RN6_example-auth-key.with.dots_and-symbols';
   const originalGet = axios.get;
   let request = null;
@@ -44,17 +49,28 @@ test('AQ authorization keys are preserved and sent through the runtime v1beta mo
   try {
     assert.equal(sanitizeApiKeyForHeader(`  ${authKey}\r\n`), authKey);
     const service = new GeminiService(`  ${authKey}  `, 'gemini-3.7-flash');
-    const models = await service.getAvailableModels({ silent: true, throwOnError: true });
+    await cacheProviderAuthFailure(getProviderAuthFailureCacheKey('gemini', authKey));
+
+    const cachedModels = await service.getAvailableModels({ silent: true, throwOnError: true });
+    assert.deepEqual(cachedModels, []);
+    assert.equal(request, null);
+
+    const models = await service.getAvailableModels({
+      silent: true,
+      throwOnError: true,
+      bypassAuthFailureCache: true
+    });
 
     assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/models');
     assert.equal(request.options.headers['x-goog-api-key'], authKey);
     assert.deepEqual(models.map(model => model.name), ['gemini-3.7-flash']);
 
     const serverSource = fs.readFileSync(path.join(projectRoot, 'index.js'), 'utf8');
-    assert.match(serverSource, /new GeminiService\(geminiApiKey\)[\s\S]{0,200}getAvailableModels\(\{ silent: true, throwOnError: true \}\)/);
+    assert.match(serverSource, /new GeminiService\(geminiApiKey\)[\s\S]{0,400}bypassAuthFailureCache: true/);
     assert.doesNotMatch(serverSource, /generativelanguage\.googleapis\.com\/v1\/models/);
   } finally {
     axios.get = originalGet;
+    resetProviderAuthFailureCache();
   }
 });
 
@@ -149,13 +165,17 @@ test('saved model IDs and Gemini 3.x defaults normalize without breaking old con
   assert.equal(normalizeGeminiModelName(' models/gemini-3.7-flash '), 'gemini-3.7-flash');
   assert.equal(normalizeGeminiModelName('gemini-3.1-flash-lite-preview'), 'gemini-3.1-flash-lite');
   assert.equal(normalizeGeminiModelName('gemini-3-pro-preview'), 'gemini-flash-lite-latest');
+  assert.equal(normalizeGeminiModelName('gemini-2.5-flash-lite'), 'gemini-3.1-flash-lite');
+  assert.equal(normalizeGeminiModelName('gemini-2.5-flash'), 'gemini-3.6-flash');
+  assert.equal(normalizeGeminiModelName('gemini-2.5-pro'), 'gemini-3.1-pro-preview');
+  assert.equal(normalizeGeminiModelName('gemini-3-flash-preview'), 'gemini-3.6-flash');
 
   const defaults = getDefaultConfig('gemini-3.6-flash');
   assert.equal(defaults.geminiModel, 'gemini-3.6-flash');
   assert.equal(defaults.advancedSettings.thinkingBudget, -1);
   assert.equal(defaults.advancedSettings.thinkingLevel, 'high');
 
-  const oldFlashDefaults = getModelSpecificDefaults('gemini-3-flash-preview');
+  const oldFlashDefaults = getModelSpecificDefaults('gemini-3.6-flash');
   for (const model of ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash-preview']) {
     assert.deepEqual(getModelSpecificDefaults(model), oldFlashDefaults);
   }
@@ -177,6 +197,17 @@ test('saved model IDs and Gemini 3.x defaults normalize without breaking old con
   assert.equal(normalized.geminiModel, 'gemini-3.5-flash-lite');
   assert.equal(normalized.advancedSettings.geminiModel, 'gemini-3.7-flash');
   assert.equal(normalized.advancedSettings.thinkingLevel, 'high');
+
+  const migratedLegacy = normalizeConfig({
+    geminiApiKey: 'legacy-key',
+    geminiModel: 'gemini-2.5-flash-lite',
+    advancedSettings: {
+      enabled: true,
+      geminiModel: 'gemini-2.5-flash'
+    }
+  });
+  assert.equal(migratedLegacy.geminiModel, 'gemini-3.1-flash-lite');
+  assert.equal(migratedLegacy.advancedSettings.geminiModel, 'gemini-3.6-flash');
 });
 
 test('base-model selections apply their cloned runtime defaults without enabling advanced overrides', async () => {
@@ -195,18 +226,15 @@ test('base-model selections apply their cloned runtime defaults without enabling
   legacyFlashConfig.advancedSettings.enabled = false;
 
   const legacyFlash = await createTranslationProvider(legacyFlashConfig);
-  assert.equal(legacyFlash.provider.model, 'gemini-2.5-flash');
+  assert.equal(legacyFlash.provider.model, 'gemini-3.6-flash');
   assert.equal(legacyFlash.provider.thinkingBudget, -1);
-  assert.equal(legacyFlash.provider.thinkingLevel, '');
+  assert.equal(legacyFlash.provider.thinkingLevel, 'high');
   assert.equal(legacyFlash.provider.temperature, 0.5);
 });
 
 test('Configure and Toolbox pages expose current Gemini choices and model-aware controls', async () => {
   const html = fs.readFileSync(path.join(projectRoot, 'public', 'partials', 'main.html'), 'utf8');
   const requiredModels = [
-    'gemini-2.5-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-3-flash-preview',
     'gemini-3.1-flash-lite',
     'gemini-3.5-flash-lite',
     'gemini-3.5-flash',
@@ -218,7 +246,11 @@ test('Configure and Toolbox pages expose current Gemini choices and model-aware 
     assert.match(html, new RegExp(`value=["']${model}["']`));
   }
   assert.match(html, /id="advancedThinkingLevel"/);
-  assert.doesNotMatch(html, /value="gemini-3-pro-preview"/);
+  for (const retiredModel of ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-3-flash-preview', 'gemini-3-pro-preview']) {
+    assert.doesNotMatch(html, new RegExp(`value=["']${retiredModel}["']`));
+  }
+  const configUi = fs.readFileSync(path.join(projectRoot, 'public', 'config.js'), 'utf8');
+  assert.match(configUi, /!isDeprecatedGeminiModelName\(model\.name\)/);
 
   const uploadPage = generateFileTranslationPage(
     'tt-test',

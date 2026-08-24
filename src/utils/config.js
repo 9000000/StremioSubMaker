@@ -224,6 +224,22 @@ const OVERRIDE_DEPRECATED_MODELS = true;
 const GEMINI_31_FLASH_LITE_MODEL = 'gemini-3.1-flash-lite';
 const GEMINI_FLASH_LATEST_MODEL = 'gemini-flash-latest';
 const DEFAULT_GEMINI_MODEL = 'gemini-flash-lite-latest';
+const DEPRECATED_GEMINI_MODEL_REPLACEMENTS = Object.freeze({
+  // Gemini 2.5 is no longer provisioned for every new project and is scheduled
+  // for shutdown. Keep saved configurations working by moving them to Google's
+  // recommended current model family before any runtime request is constructed.
+  'gemini-2.5-flash-lite': GEMINI_31_FLASH_LITE_MODEL,
+  'gemini-2.5-flash-lite-preview-09-2025': GEMINI_31_FLASH_LITE_MODEL,
+  'gemini-2.5-flash-lite-09-2025': GEMINI_31_FLASH_LITE_MODEL,
+  'gemini-2.5-flash': 'gemini-3.6-flash',
+  'gemini-2.5-flash-preview-09-2025': 'gemini-3.6-flash',
+  'gemini-2.5-flash-latest': 'gemini-3.6-flash',
+  'gemini-2.5-pro': 'gemini-3.1-pro-preview',
+  'gemini-2.5-pro-preview-05-06': 'gemini-3.1-pro-preview',
+  'gemini-2.5-pro-latest': 'gemini-3.1-pro-preview',
+  'gemini-3-flash-preview': 'gemini-3.6-flash',
+  'gemini-pro-latest': 'gemini-3.1-pro-preview'
+});
 
 function normalizeGeminiModelName(modelName) {
   const normalized = typeof modelName === 'string' ? modelName.trim().replace(/^models\//, '') : '';
@@ -236,7 +252,7 @@ function normalizeGeminiModelName(modelName) {
   if (normalized === GEMINI_FLASH_LATEST_MODEL) {
     return DEFAULT_GEMINI_MODEL;
   }
-  return normalized;
+  return DEPRECATED_GEMINI_MODEL_REPLACEMENTS[normalized] || normalized;
 }
 
 /**
@@ -244,13 +260,7 @@ function normalizeGeminiModelName(modelName) {
  * This prevents old saved configs from using outdated or experimental models
  */
 const DEPRECATED_MODEL_NAMES = [
-  'gemini-2.0-flash-exp',
-  'gemini-2.5-flash-lite-09-2025', // Old name before preview version
-  GEMINI_FLASH_LATEST_MODEL,
-  'gemini-2.5-flash-latest',
-  'gemini-pro-latest',
-  'gemini-2.5-pro-latest',
-  'gemini-2.5-flash-preview-09-2025' // Renamed to gemini-2.5-flash
+  'gemini-2.0-flash-exp'
 ];
 
 /**
@@ -1101,26 +1111,6 @@ const MODEL_SPECIFIC_DEFAULTS = {
     thinkingLevel: '',
     temperature: 0.7        // Balanced temperature for Gemma
   },
-  'gemini-2.5-flash-lite': {
-    thinkingBudget: 0,      // No thinking for lite model
-    thinkingLevel: '',
-    temperature: 0.8        // Higher temperature for creativity
-  },
-  'gemini-2.5-flash-lite-preview-09-2025': {
-    thinkingBudget: 0,      // No thinking for lite model
-    thinkingLevel: '',
-    temperature: 0.8        // Higher temperature for creativity
-  },
-  'gemini-2.5-flash': {
-    thinkingBudget: -1,     // Dynamic thinking for flash model
-    thinkingLevel: '',
-    temperature: 0.5        // Lower temperature for consistency
-  },
-  'gemini-3-flash-preview': {
-    thinkingBudget: -1,     // Dynamic thinking for flash model
-    thinkingLevel: 'high',
-    temperature: 0.5        // Lower temperature for consistency
-  },
   'gemini-3.1-flash-lite': {
     thinkingBudget: 0,      // No thinking for lite model
     thinkingLevel: 'minimal',
@@ -1150,11 +1140,6 @@ const MODEL_SPECIFIC_DEFAULTS = {
     thinkingBudget: 0,      // No thinking for lite model (latest alias)
     thinkingLevel: 'minimal',
     temperature: 0.8        // Higher temperature for creativity
-  },
-  'gemini-2.5-pro': {
-    thinkingBudget: 1000,   // Fixed thinking budget for pro model
-    thinkingLevel: '',
-    temperature: 0.5        // Lower temperature for consistency
   },
   'gemini-3.1-pro-preview': {
     thinkingBudget: 1000,   // Fixed thinking budget for pro model

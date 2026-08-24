@@ -40,14 +40,10 @@
 
     const QUICK_SETUP_MODEL_LABEL_FALLBACKS = {
         'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
-        'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite',
-        'gemini-2.5-flash': 'Gemini 2.5 Flash',
-        'gemini-3-flash-preview': 'Gemini 3.0 Flash (beta)',
         'gemini-3.5-flash-lite': 'Gemini 3.5 Flash-Lite (beta)',
         'gemini-3.5-flash': 'Gemini 3.5 Flash (beta)',
         'gemini-3.6-flash': 'Gemini 3.6 Flash (beta)',
         'gemini-3.7-flash': 'Gemini 3.7 Flash (beta)',
-        'gemini-2.5-pro': 'Gemini 2.5 Pro (beta)',
         'gemini-3.1-pro-preview': 'Gemini 3.1 Pro (beta)',
         'gemini-flash-lite-latest': 'Gemini Flash Lite Latest'
     };
@@ -174,20 +170,12 @@
         }
 
         switch (normalizedModel) {
-            case 'gemini-2.5-flash':
-                return { thinkingBudget: -1, thinkingLevel: '', temperature: 0.5 };
-            case 'gemini-3-flash-preview':
-                return { thinkingBudget: -1, thinkingLevel: 'high', temperature: 0.5 };
             case 'gemini-3.5-flash':
             case 'gemini-3.6-flash':
             case 'gemini-3.7-flash':
                 return { thinkingBudget: -1, thinkingLevel: 'high', temperature: 0.5 };
-            case 'gemini-2.5-pro':
-                return { thinkingBudget: 1000, thinkingLevel: '', temperature: 0.5 };
             case 'gemini-3.1-pro-preview':
                 return { thinkingBudget: 1000, thinkingLevel: 'high', temperature: 0.5 };
-            case 'gemini-2.5-flash-lite':
-                return { thinkingBudget: 0, thinkingLevel: '', temperature: 0.8 };
             case 'gemini-3.1-flash-lite':
             case 'gemini-3.5-flash-lite':
             case 'gemini-flash-lite-latest':

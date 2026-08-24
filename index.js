@@ -46,7 +46,7 @@ const { pipeline } = require('stream/promises');
 const { parseConfig, getDefaultConfig, buildManifest, normalizeConfig, getLanguageSelectionLimits, getDefaultProviderParameters, mergeProviderParameters, selectGeminiApiKey, getEffectiveGeminiModel } = require('./src/utils/config');
 const { parseSRT, toSRT, sanitizeSubtitleText, srtPairToWebVTT, ensureSRTForTranslation, detectASSFormat } = require('./src/utils/subtitle');
 const { version } = require('./src/utils/version');
-const { redactToken } = require('./src/utils/security');
+const { redactToken, sanitizeApiKeyForHeader } = require('./src/utils/security');
 const { getAllLanguages, getAllTranslationLanguages, getLanguageName, toISO6392, findISO6391ByName, canonicalSyncLanguageCode } = require('./src/utils/languages');
 const { generateCacheKeys } = require('./src/utils/cacheKeys');
 const { getCached: getDownloadCached, saveCached: saveDownloadCached, getCacheStats: getDownloadCacheStats } = require('./src/utils/downloadCache');
@@ -75,7 +75,6 @@ const { deriveStreamHashFromUrl } = require('./src/utils/streamUrlIdentity');
 const { registerFileUploadRoutes } = require('./src/routes/fileUploadRoutes');
 const {
     getProviderAuthFailureCacheKey,
-    hasCachedProviderAuthFailure,
     cacheProviderAuthFailure,
     clearCachedProviderAuthFailure
 } = require('./src/utils/providerAuthFailureCache');
@@ -2186,6 +2185,7 @@ app.use((req, res, next) => {
         '/api/validate-wyzie',
         '/api/validate-opensubtitles',
         '/api/validate-subsro',
+        '/api/validate-custom-provider',
         // Stream metadata endpoints for tool pages
         '/api/stream-activity',
         '/api/resolve-linked-title',
@@ -2404,7 +2404,6 @@ app.use((req, res, next) => {
         '/js/combobox-init.js',
         '/js/config-page-state.js',
         '/js/config-loader.js',
-        '/js/ui-widgets.js',
         '/js/theme-toggle.js',
         '/js/sw-register.js',
         '/js/quick-setup.js',
@@ -3124,6 +3123,118 @@ app.post('/api/models/:provider', async (req, res) => {
     }
 });
 
+// Validate a custom OpenAI-compatible provider through the same server-side
+// request path used for real translations. The small probe checks the base URL,
+// optional credentials, and selected model together.
+app.post('/api/validate-custom-provider', validationLimiter, async (req, res) => {
+    setNoStore(res);
+
+    const t = res.locals?.t || getTranslatorFromRequest(req, res);
+    const rawBaseUrl = typeof req.body?.baseUrl === 'string' ? req.body.baseUrl.trim() : '';
+    const rawApiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+    const rawModel = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
+
+    if (!rawBaseUrl) {
+        return res.status(400).json({
+            valid: false,
+            error: t('server.errors.baseUrlRequired', {}, 'Base URL is required for custom provider')
+        });
+    }
+    if (!rawModel) {
+        return res.status(400).json({
+            valid: false,
+            error: t('server.errors.customProviderModelRequired', {}, 'Model is required for custom provider')
+        });
+    }
+    if (rawBaseUrl.length > 2048 || rawApiKey.length > 8192 || rawModel.length > 512) {
+        return res.status(400).json({
+            valid: false,
+            error: t('server.errors.customProviderFieldsTooLong', {}, 'Custom provider configuration contains an overlong field')
+        });
+    }
+    if (/[\x00-\x1F\x7F]/.test(rawModel)) {
+        return res.status(400).json({
+            valid: false,
+            error: t('server.errors.customProviderModelInvalid', {}, 'Custom provider model contains invalid characters')
+        });
+    }
+
+    const sanitizedApiKey = rawApiKey ? sanitizeApiKeyForHeader(rawApiKey) : '';
+    if (rawApiKey && sanitizedApiKey !== rawApiKey) {
+        return res.status(400).json({
+            valid: false,
+            error: t('server.errors.customProviderApiKeyInvalid', {}, 'Custom provider API key contains invalid characters')
+        });
+    }
+
+    try {
+        const { validateCustomBaseUrl } = require('./src/utils/ssrfProtection');
+        const baseUrlValidation = await validateCustomBaseUrl(rawBaseUrl);
+        if (!baseUrlValidation.valid) {
+            return res.status(400).json({ valid: false, error: baseUrlValidation.error });
+        }
+
+        const provider = await createProviderInstance(
+            'custom',
+            {
+                apiKey: sanitizedApiKey || '',
+                model: rawModel,
+                baseUrl: baseUrlValidation.sanitized
+            },
+            {
+                temperature: 0,
+                topP: 1,
+                maxOutputTokens: 16,
+                translationTimeout: 15,
+                maxRetries: 0
+            }
+        );
+
+        if (!provider || typeof provider.validateConfiguration !== 'function') {
+            return res.status(400).json({
+                valid: false,
+                error: t('server.errors.customProviderUnavailable', {}, 'Custom provider configuration could not be initialized')
+            });
+        }
+
+        await provider.validateConfiguration();
+        return res.json({
+            valid: true,
+            message: t('server.validation.customProviderValid', {}, 'Custom provider configuration is valid')
+        });
+    } catch (error) {
+        const upstream = error?.originalError || error;
+        const status = Number(upstream?.response?.status || error?.statusCode || 0);
+        const code = String(upstream?.code || error?.code || '').toUpperCase();
+        let message;
+
+        if (status === 401 || status === 403) {
+            message = t('server.errors.customProviderAuthFailed', {}, 'Authentication failed. Check the custom provider API key.');
+        } else if (status === 404) {
+            message = t('server.errors.customProviderNotFound', {}, 'The custom provider base URL or model was not found.');
+        } else if (status === 400 || status === 405 || status === 415 || status === 422) {
+            message = t('server.errors.customProviderRejected', {}, 'The provider rejected the test request. Check the base URL and model.');
+        } else if (status === 429) {
+            message = t('server.errors.customProviderRateLimited', {}, 'The custom provider is rate limiting requests. Try again later.');
+        } else if (status >= 500) {
+            message = t('server.errors.customProviderServerError', {}, 'The custom provider returned a server error.');
+        } else if (code === 'ECONNABORTED' || code === 'ETIMEDOUT') {
+            message = t('server.errors.customProviderTimeout', {}, 'The custom provider test timed out.');
+        } else if (code === 'ENOTFOUND') {
+            message = t('server.errors.customProviderDnsFailed', {}, 'The custom provider hostname could not be resolved.');
+        } else if (code === 'ECONNREFUSED' || code === 'ECONNRESET') {
+            message = t('server.errors.customProviderConnectionFailed', {}, 'Could not connect to the custom provider.');
+        } else if (code === 'ESSRF_INTERNAL_IP') {
+            message = t('server.errors.customProviderBlocked', {}, 'The custom provider endpoint was blocked by server security policy.');
+        } else {
+            message = t('server.errors.customProviderTestFailed', {}, 'Could not validate the custom provider configuration.');
+        }
+
+        log.warn(() => `[API] Custom provider validation failed (status=${status || 'none'}, code=${code || 'none'})`);
+        return res.json({ valid: false, error: message });
+    }
+});
+
 app.post('/api/validate-subsource', validationLimiter, async (req, res) => {
     // CRITICAL: Prevent caching to avoid cross-user config contamination (user credentials in request body)
     setNoStore(res);
@@ -3394,20 +3505,20 @@ app.post('/api/validate-gemini', validationLimiter, async (req, res) => {
         }
 
         const geminiAuthFailureCacheKey = getProviderAuthFailureCacheKey('gemini', geminiApiKey);
-        if (await hasCachedProviderAuthFailure(geminiAuthFailureCacheKey)) {
-            return res.json({
-                valid: false,
-                error: t('server.errors.invalidApiKeyAuth', {}, 'Invalid API key - authentication failed'),
-                cached: true
-            });
-        }
 
         try {
             // Validate through the same v1beta client and x-goog-api-key header used
             // for model discovery and translation. This also supports Google's new
             // authorization keys (AQ.) without assuming any key prefix or shape.
+            // An explicit user validation must always recheck upstream so a stale
+            // negative cache entry from an older release or key provisioning delay
+            // cannot keep a now-valid key marked invalid for the full cache TTL.
             const gemini = new GeminiService(geminiApiKey);
-            await gemini.getAvailableModels({ silent: true, throwOnError: true });
+            await gemini.getAvailableModels({
+                silent: true,
+                throwOnError: true,
+                bypassAuthFailureCache: true
+            });
 
             await clearCachedProviderAuthFailure(geminiAuthFailureCacheKey);
 
