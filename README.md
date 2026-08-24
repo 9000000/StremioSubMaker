@@ -229,7 +229,7 @@ Nothing is paywalled, and support does not buy priority or promise a release sch
 
 ### **[Help keep SubMaker in sync →](https://xtremexq.github.io/StremioSubMaker/support/)**
 
-The support page includes one-time, recurring, and privacy-friendly options plus an opt-in public thank-you list.
+The support page offers prefilled one-time and monthly support through GitHub Sponsors.
 
 ---
 

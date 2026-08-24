@@ -9,19 +9,16 @@
     "currency": "USD",
     "locale": "en-US",
     "suggestedAmounts": [3, 5, 10, 20],
-    "defaultAmount": 5,
+    "defaultAmount": 3,
     "minimumAmount": 1,
-    "maximumAmount": 1000,
-    "recognitionFormUrl": "https://forms.example.com/REPLACE_WITH_YOUR_FORM",
-    "recognitionUsernameParameter": "username",
-    "anonymousSupportCount": 0
+    "maximumAmount": 1000
   },
   "paymentMethods": [
     {
       "id": "github",
       "label": "GitHub Sponsors",
       "shortLabel": "GitHub",
-      "description": "One-time · amount prefilled",
+      "description": "One-time or monthly · amount prefilled",
       "badge": "Recommended",
       "enabled": true,
       "url": "https://github.com/sponsors/xtremexq",
@@ -33,12 +30,13 @@
       "id": "crypto",
       "label": "Crypto",
       "shortLabel": "Crypto",
-      "description": "BTC, XMR & 300+ assets",
-      "badge": "Low fees",
+      "description": "Another option will be added later",
+      "badge": "",
       "enabled": false,
-      "url": "https://nowpayments.io/donation/YOUR_DONATION_ID",
-      "amountMode": "provider"
+      "url": "",
+      "amountMode": "provider",
+      "disabledDescription": "Another option will be added later",
+      "disabledBadge": "Unavailable"
     }
-  ],
-  "supporters": []
+  ]
 }

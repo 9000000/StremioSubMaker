@@ -37,23 +37,11 @@
 
   <main class="page-shell">
     <section class="support-card" aria-labelledby="pageTitle">
-      <nav class="tabs" role="tablist" aria-label="Support information">
-        <button class="tab is-active" id="supportTab" type="button" role="tab" aria-selected="true" aria-controls="supportPanel" data-tab="support">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"></path></svg>
-          Support
-        </button>
-        <button class="tab" id="thanksTab" type="button" role="tab" aria-selected="false" aria-controls="thanksPanel" tabindex="-1" data-tab="thanks">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="4"></circle><path d="M2 21a7 7 0 0 1 14 0M17 11a4 4 0 0 1 0 8"></path></svg>
-          Thanks
-        </button>
-      </nav>
-
-      <div class="tab-panel is-active" id="supportPanel" role="tabpanel" tabindex="0" aria-labelledby="supportTab" data-panel="support">
-        <div class="support-layout">
+      <div class="support-layout">
           <div class="support-copy">
             <p class="eyebrow">OPTIONAL · NO PAYWALLS</p>
             <h1 id="pageTitle">Keep SubMaker <span>in sync.</span></h1>
-            <p class="lead">Enjoying subtitles that finally feel right? Help keep SubMaker updated, tested, and ready for whatever you watch next.</p>
+            <p class="lead mobile-lead">Enjoying subtitles that finally feel right? Help keep SubMaker updated, tested, and ready for whatever you watch next.</p>
 
             <aside class="honesty-note">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-4"></path></svg>
@@ -62,9 +50,13 @@
           </div>
 
           <div class="support-controls">
+            <p class="controls-lead">Enjoying subtitles that finally feel right? Help keep SubMaker updated, tested, and ready for whatever you watch next.</p>
             <div class="field-heading">
               <span>Choose an amount</span>
-              <small id="amountHint">USD · one-time suggestion</small>
+              <div class="frequency-toggle" id="frequencyToggle" role="group" aria-label="Sponsorship frequency" data-frequency="one-time" hidden>
+                <button class="frequency-option is-active" type="button" data-frequency="one-time" aria-pressed="true">One-time</button>
+                <button class="frequency-option" type="button" data-frequency="recurring" aria-pressed="false">Monthly</button>
+              </div>
             </div>
             <div class="amount-picker" id="amountPicker" role="group" aria-label="Suggested contribution amount"></div>
             <label class="custom-amount" id="customAmountWrap">
@@ -78,18 +70,6 @@
             </div>
             <div class="method-picker" id="methodPicker" role="radiogroup" aria-label="Payment method"></div>
 
-            <label class="privacy-choice" for="anonymousChoice">
-              <input id="anonymousChoice" type="checkbox" checked>
-              <span class="toggle-track" aria-hidden="true"><i></i></span>
-              <span><strong>Keep me anonymous</strong><small>Default. This only controls the public thank-you list.</small></span>
-            </label>
-
-            <div class="username-field" id="usernameField" hidden>
-              <label for="supporterUsername">Username for the Thanks page</label>
-              <input id="supporterUsername" type="text" maxlength="40" autocomplete="nickname" placeholder="Your username" aria-describedby="usernameHint">
-              <small id="usernameHint">You’ll confirm this username through the short recognition form after checkout.</small>
-            </div>
-
             <button class="primary-cta" id="supportCta" type="button" disabled>
               <span id="supportCtaText">Choose a payment method</span>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
@@ -100,33 +80,7 @@
               <strong>Preview mode</strong>
               <span>Add your payment links in <code>support-data.json</code> to activate checkout.</span>
             </div>
-
-            <div class="after-checkout" id="afterCheckout" role="status" aria-live="polite" hidden>
-              <strong>Checkout opened in a new tab.</strong>
-              <span id="recognitionMessage">You chose to stay anonymous, so there is nothing else to submit.</span>
-              <a id="recognitionFormLink" href="#" target="_blank" rel="noreferrer" hidden>Share my public credit preference →</a>
-            </div>
           </div>
-        </div>
-      </div>
-
-      <div class="tab-panel" id="thanksPanel" role="tabpanel" tabindex="0" aria-labelledby="thanksTab" data-panel="thanks" hidden>
-        <div class="panel-heading thanks-heading">
-          <div>
-            <p class="eyebrow">CREDITS</p>
-            <h2>People keeping the words on screen.</h2>
-          </div>
-          <p><span id="anonymousCount">0</span> anonymous supporters</p>
-        </div>
-
-        <div class="supporter-grid" id="supporterGrid"></div>
-        <div class="empty-state thanks-empty" id="supportersEmpty" hidden>
-          <span aria-hidden="true">♡</span>
-          <strong>The credits are ready</strong>
-          <p>Public names appear here only with explicit permission. Anonymous supporters are still counted without being identified.</p>
-        </div>
-
-        <p class="privacy-disclosure">Public recognition is opt-in. A nickname is enough; email addresses, payment references, wallet addresses, and legal names are never shown here.</p>
       </div>
     </section>
 

@@ -5,27 +5,22 @@
   var placeholderPattern = /(YOUR_|REPLACE_|example\.com)/i;
   var state = {
     data: null,
-    amount: 5,
-    method: null
+    amount: 3,
+    method: null,
+    frequency: 'one-time'
   };
 
   var elements = {
     amountPicker: byId('amountPicker'),
-    amountHint: byId('amountHint'),
     customAmount: byId('customAmount'),
     customAmountWrap: byId('customAmountWrap'),
     currencySymbol: byId('currencySymbol'),
+    frequencyToggle: byId('frequencyToggle'),
     methodPicker: byId('methodPicker'),
-    anonymousChoice: byId('anonymousChoice'),
-    usernameField: byId('usernameField'),
-    supporterUsername: byId('supporterUsername'),
     supportCta: byId('supportCta'),
     supportCtaText: byId('supportCtaText'),
     providerNote: byId('providerNote'),
     setupNotice: byId('setupNotice'),
-    afterCheckout: byId('afterCheckout'),
-    recognitionMessage: byId('recognitionMessage'),
-    recognitionFormLink: byId('recognitionFormLink'),
     amountToast: byId('amountToast')
   };
 
@@ -97,10 +92,10 @@
 
   function renderAmounts() {
     var settings = state.data.settings;
-    var amounts = Array.isArray(settings.suggestedAmounts) ? settings.suggestedAmounts : [3, 5, 10, 25];
+    var amounts = Array.isArray(settings.suggestedAmounts) ? settings.suggestedAmounts : [3, 5, 10, 20];
     var fragment = document.createDocumentFragment();
     elements.amountPicker.replaceChildren();
-    state.amount = Number(settings.defaultAmount) || amounts[0] || 5;
+    state.amount = Number(settings.defaultAmount) || amounts[0] || 3;
 
     amounts.forEach(function (amount) {
       var button = document.createElement('button');
@@ -117,7 +112,6 @@
 
     var currency = settings.currency || 'USD';
     elements.currencySymbol.textContent = currencySymbol(currency);
-    elements.amountHint.textContent = currency + ' · one-time suggestion';
     elements.customAmount.min = settings.minimumAmount || 1;
     elements.customAmount.max = settings.maximumAmount || 1000;
   }
@@ -138,6 +132,17 @@
       : String(method.shortLabel || method.label || '?').slice(0, 2).toUpperCase());
   }
 
+  function setFrequency(frequency) {
+    state.frequency = frequency === 'recurring' ? 'recurring' : 'one-time';
+    elements.frequencyToggle.dataset.frequency = state.frequency;
+    Array.prototype.forEach.call(elements.frequencyToggle.querySelectorAll('.frequency-option'), function (button) {
+      var active = button.dataset.frequency === state.frequency;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    updateCta();
+  }
+
   function selectMethod(method) {
     if (!paymentMethodReady(method)) return;
     state.method = method;
@@ -146,7 +151,10 @@
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-checked', String(active));
     });
-    elements.afterCheckout.hidden = true;
+    elements.frequencyToggle.hidden = method.amountMode !== 'github-sponsors';
+    if (!elements.frequencyToggle.hidden) {
+      setFrequency(state.frequency || method.frequency);
+    }
     updateCta();
   }
 
@@ -162,11 +170,11 @@
 
       var button = document.createElement('button');
       button.type = 'button';
-      button.className = 'method-button' + (ready ? '' : ' is-setup');
+      button.className = 'method-button' + (ready ? '' : ' is-unavailable');
       button.dataset.method = method.id;
       button.setAttribute('role', 'radio');
       button.setAttribute('aria-checked', 'false');
-      button.setAttribute('aria-label', ready ? method.label : method.label + ' (setup required)');
+      button.setAttribute('aria-label', ready ? method.label : method.label + ' (unavailable)');
       button.disabled = !ready;
 
       var icon = document.createElement('span');
@@ -178,11 +186,11 @@
       var label = document.createElement('strong');
       label.textContent = method.shortLabel || method.label;
       var description = document.createElement('small');
-      description.textContent = ready ? method.description : 'Add link to activate';
+      description.textContent = ready ? method.description : (method.disabledDescription || 'Unavailable for now');
       copy.append(label, description);
       button.append(icon, copy);
 
-      var badgeText = ready ? method.badge : 'Setup';
+      var badgeText = ready ? method.badge : (method.disabledBadge || 'Unavailable');
       if (badgeText) {
         var badge = document.createElement('span');
         badge.className = 'method-badge';
@@ -210,12 +218,9 @@
       githubUrl.pathname = '/sponsors/' + encodeURIComponent(sponsor) + '/sponsorships';
       githubUrl.search = '';
       githubUrl.searchParams.set('sponsor', sponsor);
-      githubUrl.searchParams.set('frequency', method.frequency === 'recurring' ? 'recurring' : 'one-time');
+      githubUrl.searchParams.set('frequency', state.frequency);
       githubUrl.searchParams.set('amount', String(state.amount));
       return githubUrl.toString();
-    }
-    if (method.amountMode === 'paypal-me') {
-      return method.url.replace(/\/$/, '') + '/' + state.amount + (state.data.settings.currency || 'USD');
     }
     return method.url;
   }
@@ -229,23 +234,11 @@
     if (!ready) {
       elements.providerNote.textContent = 'No payment details are collected by this page.';
     } else if (method.amountMode === 'github-sponsors') {
-      elements.providerNote.textContent = 'GitHub will open with ' + formatMoney(state.amount) + ' one time. Choose Public or Private there, then confirm.';
-    } else if (method.amountMode === 'paypal-me') {
-      elements.providerNote.textContent = 'PayPal will open with ' + formatMoney(state.amount) + ' requested. Confirm before sending.';
+      var frequencyLabel = state.frequency === 'recurring' ? 'monthly' : 'one time';
+      elements.providerNote.textContent = 'GitHub will open with ' + formatMoney(state.amount) + ' ' + frequencyLabel + '. Choose Public or Private there, then confirm.';
     } else {
       elements.providerNote.textContent = formatMoney(state.amount) + ' is a suggestion. Choose and confirm the final amount with ' + method.label + '.';
     }
-  }
-
-  function recognitionFormReady() {
-    return validHttpsUrl(state.data.settings.recognitionFormUrl);
-  }
-
-  function recognitionFormUrl(username) {
-    var url = new URL(state.data.settings.recognitionFormUrl);
-    var parameter = String(state.data.settings.recognitionUsernameParameter || '').trim();
-    if (parameter) url.searchParams.set(parameter, username);
-    return url.toString();
   }
 
   function openCheckout() {
@@ -258,61 +251,7 @@
 
     var url = paymentUrl(state.method);
     if (!url) return;
-
-    var username = elements.supporterUsername.value.trim();
-    if (!elements.anonymousChoice.checked && !username) {
-      elements.supporterUsername.setCustomValidity('Enter the username you want shown on the Thanks page.');
-      elements.supporterUsername.reportValidity();
-      return;
-    }
-    elements.supporterUsername.setCustomValidity('');
-    elements.supporterUsername.value = username;
-
     window.open(url, '_blank', 'noopener,noreferrer');
-    elements.afterCheckout.hidden = false;
-
-    if (elements.anonymousChoice.checked) {
-      elements.recognitionMessage.textContent = 'You chose to stay anonymous, so there is nothing else to submit.';
-      elements.recognitionFormLink.hidden = true;
-    } else if (recognitionFormReady()) {
-      elements.recognitionMessage.textContent = 'Submit “' + username + '” through the short form to add it to the Thanks page.';
-      elements.recognitionFormLink.href = recognitionFormUrl(username);
-      elements.recognitionFormLink.hidden = false;
-    } else {
-      elements.recognitionMessage.textContent = 'Public recognition is selected, but the maintainer still needs to configure the recognition form.';
-      elements.recognitionFormLink.hidden = true;
-    }
-  }
-
-  function supporterInitials(name) {
-    return String(name || '?').trim().split(/\s+/).slice(0, 2).map(function (part) { return part.charAt(0); }).join('').toUpperCase() || '?';
-  }
-
-  function renderSupporters() {
-    var supporters = (Array.isArray(state.data.supporters) ? state.data.supporters : []).filter(function (supporter) {
-      return supporter && supporter.public !== false && supporter.name;
-    });
-    var grid = byId('supporterGrid');
-    var empty = byId('supportersEmpty');
-    byId('anonymousCount').textContent = String(Math.max(0, Number(state.data.settings.anonymousSupportCount) || 0));
-    grid.replaceChildren();
-    empty.hidden = supporters.length > 0;
-
-    supporters.forEach(function (supporter) {
-      var card = document.createElement('article');
-      card.className = 'supporter-card';
-      var avatar = document.createElement('span');
-      avatar.className = 'supporter-avatar';
-      avatar.textContent = supporterInitials(supporter.name);
-      var copy = document.createElement('div');
-      var name = document.createElement('strong');
-      name.textContent = supporter.name;
-      var detail = document.createElement('small');
-      detail.textContent = supporter.note || (supporter.since ? 'Supporting since ' + supporter.since : 'SubMaker supporter');
-      copy.append(name, detail);
-      card.append(avatar, copy);
-      grid.appendChild(card);
-    });
   }
 
   function configureProjectLinks() {
@@ -324,37 +263,6 @@
       byId('hostingSponsorLink').href = project.hostingSponsorUrl;
       byId('hostingSponsorLink').textContent = project.hostingSponsorName || 'the hosting sponsor';
     }
-  }
-
-  function configureTabs() {
-    var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
-    var panels = Array.prototype.slice.call(document.querySelectorAll('[role="tabpanel"]'));
-
-    function activate(tab) {
-      tabs.forEach(function (candidate) {
-        var active = candidate === tab;
-        candidate.classList.toggle('is-active', active);
-        candidate.setAttribute('aria-selected', String(active));
-        candidate.tabIndex = active ? 0 : -1;
-      });
-      panels.forEach(function (panel) {
-        var active = panel.dataset.panel === tab.dataset.tab;
-        panel.hidden = !active;
-        panel.classList.toggle('is-active', active);
-      });
-    }
-
-    tabs.forEach(function (tab, index) {
-      tab.addEventListener('click', function () { activate(tab); });
-      tab.addEventListener('keydown', function (event) {
-        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-        event.preventDefault();
-        var direction = event.key === 'ArrowRight' ? 1 : -1;
-        var next = tabs[(index + direction + tabs.length) % tabs.length];
-        activate(next);
-        next.focus();
-      });
-    });
   }
 
   function configureTheme() {
@@ -377,21 +285,10 @@
       }
       setAmount(elements.customAmount.value, true);
     });
+    Array.prototype.forEach.call(elements.frequencyToggle.querySelectorAll('.frequency-option'), function (button) {
+      button.addEventListener('click', function () { setFrequency(button.dataset.frequency); });
+    });
     elements.supportCta.addEventListener('click', openCheckout);
-  }
-
-  function configureRecognitionChoice() {
-    elements.anonymousChoice.addEventListener('change', function () {
-      elements.afterCheckout.hidden = true;
-      elements.usernameField.hidden = elements.anonymousChoice.checked;
-      elements.supporterUsername.required = !elements.anonymousChoice.checked;
-      elements.supporterUsername.setCustomValidity('');
-      if (!elements.anonymousChoice.checked) elements.supporterUsername.focus();
-    });
-    elements.supporterUsername.addEventListener('input', function () {
-      elements.supporterUsername.setCustomValidity('');
-      elements.afterCheckout.hidden = true;
-    });
   }
 
   function init(data) {
@@ -400,13 +297,10 @@
     configureProjectLinks();
     renderAmounts();
     renderMethods();
-    renderSupporters();
     configureEvents();
   }
 
-  configureTabs();
   configureTheme();
-  configureRecognitionChoice();
 
   fetch('./support-data.json', { cache: 'no-store' })
     .then(function (response) {
