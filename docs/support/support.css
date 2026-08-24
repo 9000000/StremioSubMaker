@@ -502,7 +502,7 @@ h2 {
 
 .method-picker {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
 }
 
@@ -533,6 +533,12 @@ h2 {
   font-size: .7rem;
   font-weight: 900;
   letter-spacing: -.03em;
+}
+
+.method-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 .method-copy {

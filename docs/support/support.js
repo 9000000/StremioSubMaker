@@ -123,10 +123,19 @@
   }
 
   function methodIcon(method) {
-    if (method.id === 'github') return 'GH';
-    if (method.id === 'paypal') return 'P';
-    if (method.id === 'crypto') return '₿';
-    return String(method.shortLabel || method.label || '?').slice(0, 2).toUpperCase();
+    if (method.id === 'github') {
+      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.setAttribute('focusable', 'false');
+      path.setAttribute('d', 'M12 .7a11.3 11.3 0 0 0-3.57 22.03c.57.1.77-.25.77-.55v-2.17c-3.14.68-3.8-1.33-3.8-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.68.08-.68 1.13.08 1.72 1.16 1.72 1.16 1 1.72 2.64 1.22 3.29.93.1-.73.4-1.22.72-1.5-2.5-.28-5.13-1.25-5.13-5.58 0-1.23.44-2.24 1.16-3.03-.12-.28-.5-1.43.11-2.99 0 0 .95-.3 3.11 1.16A10.8 10.8 0 0 1 12 6.15c.96 0 1.93.13 2.83.38 2.16-1.46 3.1-1.16 3.1-1.16.62 1.56.23 2.71.12 2.99.72.79 1.16 1.8 1.16 3.03 0 4.34-2.64 5.29-5.15 5.57.4.35.76 1.03.76 2.08v3.14c0 .3.2.66.78.55A11.3 11.3 0 0 0 12 .7Z');
+      svg.appendChild(path);
+      return svg;
+    }
+    return document.createTextNode(method.id === 'crypto'
+      ? '₿'
+      : String(method.shortLabel || method.label || '?').slice(0, 2).toUpperCase());
   }
 
   function selectMethod(method) {
@@ -162,7 +171,7 @@
 
       var icon = document.createElement('span');
       icon.className = 'method-icon';
-      icon.textContent = methodIcon(method);
+      icon.appendChild(methodIcon(method));
 
       var copy = document.createElement('span');
       copy.className = 'method-copy';
@@ -194,6 +203,17 @@
 
   function paymentUrl(method) {
     if (!paymentMethodReady(method)) return null;
+    if (method.amountMode === 'github-sponsors') {
+      var sponsor = String(method.sponsor || '').trim();
+      if (!sponsor) return null;
+      var githubUrl = new URL(method.url);
+      githubUrl.pathname = '/sponsors/' + encodeURIComponent(sponsor) + '/sponsorships';
+      githubUrl.search = '';
+      githubUrl.searchParams.set('sponsor', sponsor);
+      githubUrl.searchParams.set('frequency', method.frequency === 'recurring' ? 'recurring' : 'one-time');
+      githubUrl.searchParams.set('amount', String(state.amount));
+      return githubUrl.toString();
+    }
     if (method.amountMode === 'paypal-me') {
       return method.url.replace(/\/$/, '') + '/' + state.amount + (state.data.settings.currency || 'USD');
     }
@@ -208,6 +228,8 @@
 
     if (!ready) {
       elements.providerNote.textContent = 'No payment details are collected by this page.';
+    } else if (method.amountMode === 'github-sponsors') {
+      elements.providerNote.textContent = 'GitHub will open with ' + formatMoney(state.amount) + ' one time. Choose Public or Private there, then confirm.';
     } else if (method.amountMode === 'paypal-me') {
       elements.providerNote.textContent = 'PayPal will open with ' + formatMoney(state.amount) + ' requested. Confirm before sending.';
     } else {
@@ -227,6 +249,13 @@
   }
 
   function openCheckout() {
+    if (state.method && state.method.amountMode === 'github-sponsors' && !Number.isInteger(state.amount)) {
+      elements.customAmount.setCustomValidity('GitHub Sponsors accepts whole-dollar amounts.');
+      elements.customAmount.reportValidity();
+      return;
+    }
+    elements.customAmount.setCustomValidity('');
+
     var url = paymentUrl(state.method);
     if (!url) return;
 
