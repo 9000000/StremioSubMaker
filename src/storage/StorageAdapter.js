@@ -25,7 +25,11 @@ function positiveByteLimit(env, name, fallback) {
 function resolveSizeLimits(env = process.env) {
   const preserveElfHostedBudgets = env?.ELFHOSTED === 'true';
   const defaults = preserveElfHostedBudgets
-    ? {
+      ? {
+        // Preserve the managed deployment's existing unbounded session-byte
+        // profile. Operators can opt in with SESSION_STORAGE_MAX_BYTES after
+        // measuring their live namespace and Redis headroom.
+        session: null,
         translation: 1.5 * GIBIBYTE,
         bypass: 0.5 * GIBIBYTE,
         partial: 0.5 * GIBIBYTE,
@@ -36,9 +40,11 @@ function resolveSizeLimits(env = process.env) {
         provider_meta: 250 * MEBIBYTE,
         smdb: 2 * GIBIBYTE
       }
-    : {
-        // 2.5 GiB total: leaves 1.5 GiB (37.5%) of the bundled 4 GiB Redis
-        // for sessions, metadata/indexes, fragmentation and Redis overhead.
+      : {
+        // 3 GiB total including a 512 MiB hard session-payload quota. This
+        // leaves 1 GiB (25%) of the bundled 4 GiB Redis for metadata/indexes,
+        // allocator fragmentation and Redis persistence/replication overhead.
+        session: 512 * MEBIBYTE,
         translation: 768 * MEBIBYTE,
         bypass: 128 * MEBIBYTE,
         partial: 128 * MEBIBYTE,
@@ -57,7 +63,7 @@ function resolveSizeLimits(env = process.env) {
     sync: positiveByteLimit(env, 'CACHE_LIMIT_SYNC', defaults.sync),
     autosub: positiveByteLimit(env, 'CACHE_LIMIT_AUTOSUB', defaults.autosub),
     embedded: positiveByteLimit(env, 'CACHE_LIMIT_EMBEDDED', defaults.embedded),
-    session: null,
+    session: positiveByteLimit(env, 'SESSION_STORAGE_MAX_BYTES', defaults.session),
     history: positiveByteLimit(env, 'CACHE_LIMIT_HISTORY', defaults.history),
     provider_meta: positiveByteLimit(env, 'CACHE_LIMIT_PROVIDER_META', defaults.provider_meta),
     smdb: positiveByteLimit(env, 'CACHE_LIMIT_SMDB', defaults.smdb)
@@ -98,6 +104,28 @@ class StorageAdapter {
    */
   async set(key, value, cacheType, ttl = null) {
     throw new Error('Method set() must be implemented');
+  }
+
+  /**
+   * Atomically admit and persist a new session under count and byte limits.
+   * Implementations must not evict an existing session to make room.
+   *
+   * @param {string} key - New session token
+   * @param {any} value - Serialized session wrapper
+   * @param {number|null} ttl - Time to live in seconds
+   * @param {{maxSessions?: number, maxBytes?: number}} limits - Hard admission limits
+   * @returns {Promise<{ok: boolean, reason?: string, current?: number, limit?: number}>}
+   */
+  async createSession(key, value, ttl = null, limits = {}) {
+    throw new Error('Method createSession() must be implemented');
+  }
+
+  /**
+   * Persist an existing session while preserving the hard byte quota.
+   * @returns {Promise<{ok: boolean, reason?: string, current?: number, limit?: number}>}
+   */
+  async updateSession(key, value, ttl = null, limits = {}) {
+    throw new Error('Method updateSession() must be implemented');
   }
 
   /**
@@ -201,22 +229,25 @@ StorageAdapter.CACHE_TYPES = {
   SYNC: 'sync',                    // Synced subtitles
   AUTOSUB: 'autosub',              // AutoSubs outputs (separate from manual sync cache)
   EMBEDDED: 'embedded',            // Extracted/translated embedded subtitles
-  SESSION: 'session',              // Session persistence (bounded by count/age, not bytes)
+  SESSION: 'session',              // Session persistence (hard count cap; optional hard serialized-byte cap)
   HISTORY: 'history',              // Translation history
   PROVIDER_METADATA: 'provider_meta', // Provider-specific metadata (IMDB→movieId, etc.)
   SMDB: 'smdb'                     // SubMaker Database community subtitle cache
 };
 
 // Cache size limits in bytes
-// Redis enforces these limits atomically. Filesystem storage treats them as soft
-// limits enforced by cleanup routines.
+// Redis enforces these limits atomically. Filesystem storage enforces the
+// session limit before writes and treats ordinary cache limits as soft cleanup
+// thresholds.
 //
-// Ordinary self-hosted default: 2.5 GiB total. This deliberately leaves 1.5 GiB
-// of the bundled 4 GiB Redis for sessions, metadata/indexes, fragmentation and
-// Redis persistence/replication overhead. ELFHOSTED=true preserves the existing
-// managed-deployment budgets; it does not trigger cache eviction during upgrade.
+// Ordinary self-hosted default: 3 GiB total, including a 512 MiB serialized
+// session-payload quota. This leaves 1 GiB of the bundled 4 GiB Redis for
+// metadata/indexes, allocator fragmentation and persistence/replication overhead.
+// ELFHOSTED=true preserves the existing managed-deployment budgets and session
+// byte behavior unless SESSION_STORAGE_MAX_BYTES is explicitly configured.
 //
 // Environment variables to override:
+// - SESSION_STORAGE_MAX_BYTES (self-hosted default: 512 MiB; ElfHosted: unset)
 // - CACHE_LIMIT_TRANSLATION (default: 768 MiB)
 // - CACHE_LIMIT_BYPASS (default: 128 MiB)
 // - CACHE_LIMIT_PARTIAL (default: 128 MiB)

@@ -60,8 +60,9 @@ services:
     # Note: To enable password authentication, uncomment the line below and set REDIS_PASSWORD in .env
     # - Add this line after redis-server: --requirepass ${REDIS_PASSWORD}
     # - Update healthcheck to: ["CMD", "redis-cli", "--raw", "incr", "ping"]
-    # SubMaker's default non-session quotas total 2.5 GiB. The remaining
-    # 1.5 GiB is reserved for sessions, indexes, fragmentation and overhead.
+    # SubMaker's default quotas total 3 GiB: 2.5 GiB of disposable caches plus
+    # a hard 512 MiB session-payload quota. The remaining 1 GiB is reserved for
+    # session metadata/indexes, allocator fragmentation and Redis overhead.
     # Keep noeviction so Redis never removes persistent session keys globally.
     command: >
       sh -c '

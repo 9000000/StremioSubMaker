@@ -87,6 +87,21 @@ test('addon subtitle searches are rate limited before SDK router fan-out', () =>
   assert.match(limiterSource, /json\(\{ subtitles: \[\] \}\)/);
 });
 
+test('toolbox provider searches and embedded delivery conversion are rate limited', () => {
+  const source = readWorkspaceFile('index.js');
+
+  assert.match(
+    source,
+    /app\.get\('\/api\/subtitle-sync\/subtitles', searchLimiter, async \(req, res\) =>/
+  );
+  assert.match(source, /const embeddedDeliveryLimiter = rateLimit\(\{/);
+  assert.match(source, /createRateLimitRedisStore\('rl:embeddeddelivery:'\)/);
+  assert.match(
+    source,
+    /app\.post\('\/api\/prepare-embedded-track-delivery', embeddedDeliveryLimiter, async \(req, res\) =>/
+  );
+});
+
 test('API-key subtitle providers are skipped before fan-out when unconfigured', () => {
   const handlerSource = readWorkspaceFile('src/handlers/subtitles.js');
   const configSource = readWorkspaceFile('src/utils/config.js');
@@ -124,4 +139,58 @@ test('configuration service worker versioning does not normally depend on sessio
   assert.match(source, /if \(registeredVersion\) return registeredVersion/);
   assert.match(source, /VERSION_LOOKUP_TIMEOUT_MS = 3000/);
   assert.match(source, /signal: controller\.signal/);
+});
+
+test('session creation is confined to the limited POST endpoint', () => {
+  const source = readWorkspaceFile('index.js');
+  const configSource = readWorkspaceFile('public/config.js');
+  const quickSetupSource = readWorkspaceFile('public/js/quick-setup.js');
+
+  const createStart = source.indexOf("app.post('/api/create-session'");
+  const updateStart = source.indexOf("app.post('/api/update-session/:token'");
+  const getStart = source.indexOf("app.get('/api/get-session/:token'");
+  const getEnd = source.indexOf('// API endpoint to translate uploaded subtitle file', getStart);
+  const errorStart = source.indexOf("app.get('/addon/:config/error-subtitle/:errorType.srt'");
+  const errorEnd = source.indexOf('// Custom route: Perform translation', errorStart);
+
+  assert.notEqual(createStart, -1);
+  assert.notEqual(updateStart, -1);
+  assert.notEqual(getStart, -1);
+  assert.notEqual(getEnd, -1);
+  assert.notEqual(errorStart, -1);
+  assert.notEqual(errorEnd, -1);
+
+  assert.match(source.slice(createStart, updateStart), /sessionCreationLimiter/);
+  assert.match(source.slice(createStart, updateStart), /sessionManager\.createSession\(config\)/);
+  assert.doesNotMatch(source.slice(updateStart, getStart), /sessionManager\.createSession/);
+  assert.match(source.slice(updateStart, getStart), /status\(404\)/);
+  assert.doesNotMatch(source.slice(getStart, getEnd), /createSession|regenerateDefaultConfig|autoRegenerate/);
+  assert.doesNotMatch(source.slice(errorStart, errorEnd), /sessionManager\.createSession|regenerateDefaultConfig|allowRegenerate/);
+  assert.doesNotMatch(source, /function regenerateDefaultConfig/);
+  assert.doesNotMatch(configSource, /autoRegenerate=true/);
+
+  assert.match(quickSetupSource, /resp\.status === 404 \|\| resp\.status === 410/);
+  assert.match(quickSetupSource, /fetch\('\/api\/create-session'/);
+});
+
+test('session creation persists before populating the bounded memory cache', () => {
+  const source = readWorkspaceFile('src/utils/sessionManager.js');
+  const createStart = source.indexOf('async createSession(config)');
+  const createEnd = source.indexOf('/**\n     * Get a session by token', createStart);
+  const createSource = source.slice(createStart, createEnd);
+
+  const durableAdmission = createSource.indexOf('await adapter.createSession(');
+  const memoryAdmission = createSource.indexOf('this.cache.set(token, sessionData)');
+
+  assert.ok(durableAdmission >= 0, 'new sessions must use storage admission');
+  assert.ok(memoryAdmission > durableAdmission, 'storage admission must happen before memory LRU insertion');
+  assert.doesNotMatch(createSource, /verification = await adapter\.get/);
+});
+
+test('session capacity handling cannot purge live sessions or add ElfHosted byte bookkeeping', () => {
+  const source = readWorkspaceFile('src/utils/sessionManager.js');
+
+  assert.doesNotMatch(source, /purgeOldestSessions/);
+  assert.match(source, /const storageBytes = this\.storageMaxBytes\s*\? await adapter\.size/);
+  assert.match(source, /indexedCount !== actualCount \|\| this\.storageMaxBytes/);
 });

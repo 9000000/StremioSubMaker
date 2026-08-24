@@ -21,6 +21,8 @@ local ttl = tonumber(ARGV[5]) or 0
 local sizeLimit = tonumber(ARGV[6]) or 0
 local member = ARGV[7]
 local isSession = ARGV[8] == '1'
+local maxEntries = tonumber(ARGV[9]) or 0
+local createOnly = ARGV[10] == '1'
 
 local currentSize = tonumber(redis.call('GET', KEYS[4]) or '0') or 0
 if currentSize < 0 then
@@ -40,8 +42,24 @@ if projectedSize < 0 then
   projectedSize = 0
 end
 
+local entryCount = 0
+if isSession then
+  entryCount = tonumber(redis.call('SCARD', KEYS[5]) or '0') or 0
+end
+
+-- A random session token must never replace an existing entry. More
+-- importantly, count admission and the write happen in this same script, so
+-- concurrent application replicas cannot all pass a stale preflight count.
+if createOnly and redis.call('EXISTS', KEYS[1]) == 1 then
+  return {-2, currentSize, oldSize, projectedSize, entryCount}
+end
+
+if isSession and createOnly and maxEntries > 0 and entryCount >= maxEntries then
+  return {-1, currentSize, oldSize, projectedSize, entryCount}
+end
+
 if sizeLimit > 0 and projectedSize > sizeLimit then
-  return {0, currentSize, oldSize, projectedSize}
+  return {0, currentSize, oldSize, projectedSize, entryCount}
 end
 
 local createdAt = redis.call('HGET', KEYS[2], 'createdAt') or now
@@ -76,7 +94,7 @@ if sizeLimit > 0 then
   redis.call('SET', KEYS[4], projectedSize)
 end
 
-return {1, projectedSize, oldSize, projectedSize}
+return {1, projectedSize, oldSize, projectedSize, entryCount + (createOnly and 1 or 0)}
 `;
 
 // Deleting content, metadata, the LRU/index member and its byte count is also a
@@ -899,7 +917,23 @@ class RedisStorageAdapter extends StorageAdapter {
   /**
    * Set a value in Redis
    */
-  async set(key, value, cacheType, ttl = null) {
+  async createSession(key, value, ttl = null, limits = {}) {
+    return this.set(key, value, StorageAdapter.CACHE_TYPES.SESSION, ttl, {
+      createOnly: true,
+      maxBytes: limits.maxBytes,
+      maxEntries: limits.maxSessions,
+      returnDetails: true
+    });
+  }
+
+  async updateSession(key, value, ttl = null, limits = {}) {
+    return this.set(key, value, StorageAdapter.CACHE_TYPES.SESSION, ttl, {
+      maxBytes: limits.maxBytes,
+      returnDetails: true
+    });
+  }
+
+  async set(key, value, cacheType, ttl = null, writeOptions = {}) {
     if (!this.initialized) {
       throw new StorageUnavailableError('Storage adapter not initialized', { operation: 'set' });
     }
@@ -911,14 +945,32 @@ class RedisStorageAdapter extends StorageAdapter {
         const lruKey = this._getLruKey(cacheType);
         const sizeKey = this._getSizeKey(cacheType);
         const sessionIndexKey = this.getSessionIndexKey();
+        const isSessionToken = cacheType === StorageAdapter.CACHE_TYPES.SESSION
+          && /^[a-f0-9]{32}$/.test(key);
 
         // Serialize value
         const content = typeof value === 'string' ? value : JSON.stringify(value);
         const contentSize = Buffer.byteLength(content, 'utf8');
-        const sizeLimit = this._getSizeLimit(cacheType) || 0;
+        // A few internal TTL locks share the session cache type. They are not
+        // user sessions and must not consume session count/byte capacity.
+        const configuredSizeLimit = cacheType === StorageAdapter.CACHE_TYPES.SESSION && !isSessionToken
+          ? 0
+          : (this._getSizeLimit(cacheType) || 0);
+        const requestedSizeLimit = Number(writeOptions.maxBytes);
+        const sizeLimit = Number.isFinite(requestedSizeLimit) && requestedSizeLimit > 0
+          ? requestedSizeLimit
+          : configuredSizeLimit;
+        const requestedEntryLimit = Number(writeOptions.maxEntries);
+        const maxEntries = Number.isFinite(requestedEntryLimit) && requestedEntryLimit > 0
+          ? Math.floor(requestedEntryLimit)
+          : 0;
+        const createOnly = writeOptions.createOnly === true;
+        const returnDetails = writeOptions.returnDetails === true;
         if (sizeLimit > 0 && contentSize > sizeLimit) {
           log.warn(() => `[RedisStorage] Refused ${cacheType} entry larger than its entire cache quota (${contentSize} > ${sizeLimit} bytes)`);
-          return false;
+          return returnDetails
+            ? { ok: false, reason: 'bytes', current: contentSize, limit: sizeLimit }
+            : false;
         }
 
         const now = Date.now();
@@ -945,18 +997,39 @@ class RedisStorageAdapter extends StorageAdapter {
             ttl && ttl > 0 ? ttl : 0,
             sizeLimit,
             key,
-            cacheType === StorageAdapter.CACHE_TYPES.SESSION ? 1 : 0
+            isSessionToken ? 1 : 0,
+            maxEntries,
+            createOnly ? 1 : 0
           );
 
           if (Array.isArray(result) && Number(result[0]) === 1) {
-            if (cacheType === StorageAdapter.CACHE_TYPES.SESSION) {
+            if (isSessionToken) {
               log.debug(() => `[RedisStorage] Session persisted to Redis: ${key.substring(0, 8)}...${key.substring(key.length - 4)} (ttl=${ttl || 'none'})`);
             }
-            return true;
+            return returnDetails ? { ok: true } : true;
+          }
+
+          if (Array.isArray(result) && Number(result[0]) === -1) {
+            return returnDetails
+              ? { ok: false, reason: 'count', current: Number(result[4]) || 0, limit: maxEntries }
+              : false;
+          }
+
+          if (Array.isArray(result) && Number(result[0]) === -2) {
+            return returnDetails ? { ok: false, reason: 'exists' } : false;
+          }
+
+          // Persistent sessions are never LRU-evicted to admit another write.
+          // A full session namespace must reject the request and preserve every
+          // existing user's configuration.
+          if (isSessionToken) {
+            return returnDetails
+              ? { ok: false, reason: 'bytes', current: Number(result?.[3]) || contentSize, limit: sizeLimit }
+              : false;
           }
 
           if (!sizeLimit || !Array.isArray(result)) {
-            return false;
+            return returnDetails ? { ok: false, reason: 'storage' } : false;
           }
 
           if (attempt === maxWriteAttempts - 1) {
@@ -972,7 +1045,7 @@ class RedisStorageAdapter extends StorageAdapter {
         }
 
         log.warn(() => `[RedisStorage] Could not make space for ${cacheType} key within its configured quota`);
-        return false;
+        return returnDetails ? { ok: false, reason: 'bytes', limit: sizeLimit } : false;
       });
     } catch (error) {
       if (error instanceof StorageUnavailableError) {
@@ -997,6 +1070,11 @@ class RedisStorageAdapter extends StorageAdapter {
         const metaKey = this._getMetadataKey(key, cacheType);
         const lruKey = this._getLruKey(cacheType);
         const sizeKey = this._getSizeKey(cacheType);
+        const isSessionToken = cacheType === StorageAdapter.CACHE_TYPES.SESSION
+          && /^[a-f0-9]{32}$/.test(key);
+        const tracksPayloadBytes = cacheType === StorageAdapter.CACHE_TYPES.SESSION
+          ? isSessionToken && !!this._getSizeLimit(cacheType)
+          : !!this._getSizeLimit(cacheType);
         await this.client.submakerAtomicCacheDelete(
           redisKey,
           metaKey,
@@ -1004,8 +1082,8 @@ class RedisStorageAdapter extends StorageAdapter {
           sizeKey,
           this.getSessionIndexKey(),
           key,
-          this._getSizeLimit(cacheType) ? 1 : 0,
-          cacheType === StorageAdapter.CACHE_TYPES.SESSION ? 1 : 0
+          tracksPayloadBytes ? 1 : 0,
+          isSessionToken ? 1 : 0
         );
         return true;
       });
@@ -1050,6 +1128,11 @@ class RedisStorageAdapter extends StorageAdapter {
         if (!migrationClient) return 0;
 
         let deleted = 0;
+        const isSessionToken = cacheType === StorageAdapter.CACHE_TYPES.SESSION
+          && /^[a-f0-9]{32}$/.test(key);
+        const tracksPayloadBytes = cacheType === StorageAdapter.CACHE_TYPES.SESSION
+          ? isSessionToken && !!this._getSizeLimit(cacheType)
+          : !!this._getSizeLimit(cacheType);
 
         for (const altPrefix of altPrefixes) {
           if (altPrefix === canonicalPrefix) continue;
@@ -1068,8 +1151,8 @@ class RedisStorageAdapter extends StorageAdapter {
             sizeKey,
             indexKey,
             key,
-            this._getSizeLimit(cacheType) ? 1 : 0,
-            cacheType === StorageAdapter.CACHE_TYPES.SESSION ? 1 : 0
+            tracksPayloadBytes ? 1 : 0,
+            isSessionToken ? 1 : 0
           );
           if (Array.isArray(result)) {
             deleted += (Number(result[0]) || 0) + (Number(result[1]) || 0);
@@ -1204,17 +1287,69 @@ class RedisStorageAdapter extends StorageAdapter {
     const chunkSize = 500;
 
     return this._executeWithRetry('reset session index', async () => {
-      const pipeline = this.client.pipeline();
-      pipeline.del(indexKey);
+      // Reconcile instead of DEL + rebuild. A destructive rebuild can erase a
+      // membership concurrently added by createSession(), making the atomic
+      // admission count under-report and allowing the hard cap to be crossed.
+      const expected = new Set(tokens);
+      const indexed = [];
+      let cursor = '0';
+      do {
+        const [nextCursor, members] = await this.client.sscan(indexKey, cursor, 'COUNT', 500);
+        cursor = nextCursor;
+        indexed.push(...members);
+      } while (cursor !== '0');
 
-      if (tokens.length > 0) {
-        for (let i = 0; i < tokens.length; i += chunkSize) {
-          const chunk = tokens.slice(i, i + chunkSize);
-          pipeline.sadd(indexKey, ...chunk);
+      for (let i = 0; i < tokens.length; i += chunkSize) {
+        const chunk = tokens.slice(i, i + chunkSize);
+        if (chunk.length > 0) await this.client.sadd(indexKey, ...chunk);
+      }
+
+      const stale = indexed.filter(token => !expected.has(token));
+      for (let i = 0; i < stale.length; i += chunkSize) {
+        const chunk = stale.slice(i, i + chunkSize);
+        if (chunk.length === 0) continue;
+
+        // A session can be created after the storage SCAN that produced
+        // `tokens` but before this reconciliation reads the index. Never remove
+        // such a concurrent admission: verify its content key still does not
+        // exist immediately before pruning the stale membership.
+        const existsPipeline = this.client.pipeline();
+        for (const token of chunk) {
+          existsPipeline.exists(this._getKey(token, StorageAdapter.CACHE_TYPES.SESSION));
+        }
+        const existence = await existsPipeline.exec();
+        const confirmedStale = chunk.filter((_, offset) => {
+          const [error, exists] = existence[offset] || [];
+          return !error && Number(exists) === 0;
+        });
+        if (confirmedStale.length > 0) {
+          await this.client.srem(indexKey, ...confirmedStale);
         }
       }
 
-      await pipeline.exec();
+      // Releases before session byte quotas did not maintain size:session.
+      // Rebuild it from Redis' actual serialized content lengths. Writes racing
+      // this scan are conservatively added as a positive delta; deletions and
+      // shrinkage can only make the counter temporarily high, never unsafe-low.
+      if (this._getSizeLimit(StorageAdapter.CACHE_TYPES.SESSION)) {
+        const sizeKey = this._getSizeKey(StorageAdapter.CACHE_TYPES.SESSION);
+        const startSize = Math.max(0, Number(await this.client.get(sizeKey)) || 0);
+        let observedSize = 0;
+        for (let i = 0; i < tokens.length; i += chunkSize) {
+          const chunk = tokens.slice(i, i + chunkSize);
+          const pipeline = this.client.pipeline();
+          for (const token of chunk) {
+            pipeline.strlen(this._getKey(token, StorageAdapter.CACHE_TYPES.SESSION));
+          }
+          const results = await pipeline.exec();
+          for (const [error, length] of results) {
+            if (!error) observedSize += Math.max(0, Number(length) || 0);
+          }
+        }
+        const endSize = Math.max(0, Number(await this.client.get(sizeKey)) || 0);
+        const concurrentGrowth = Math.max(0, endSize - startSize);
+        await this.client.set(sizeKey, observedSize + concurrentGrowth);
+      }
     });
   }
 
@@ -1312,6 +1447,12 @@ class RedisStorageAdapter extends StorageAdapter {
   async _enforceLimit(cacheType, requiredSpace = 0, protectedKey = null) {
     const sizeLimit = this._getSizeLimit(cacheType);
     if (!sizeLimit) {
+      return { deleted: 0, bytesFreed: 0 };
+    }
+
+    if (cacheType === StorageAdapter.CACHE_TYPES.SESSION) {
+      // Sessions are user state, not disposable cache entries. Admission is
+      // rejected by the atomic write instead of deleting an older session.
       return { deleted: 0, bytesFreed: 0 };
     }
 

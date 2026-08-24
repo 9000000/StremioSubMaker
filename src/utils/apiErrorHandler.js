@@ -167,6 +167,14 @@ function parseApiError(error, serviceName = 'API', options = {}) {
     parsed.userMessage = translate('apiErrors.serviceUnavailable', { service: serviceLabel }, 'Service temporarily unavailable. Please try again in a few minutes.');
     return parsed;
   }
+  if (parsed.type === 'unsupported_location') {
+    parsed.userMessage = translate(
+      'apiErrors.geminiUnsupportedLocation',
+      {},
+      'Gemini rejected this server network location. Your API key may still be valid; ask the host to use eligible Gemini egress and paid access where required.'
+    );
+    return parsed;
+  }
 
   if (isResponseTooLargeError(error)) {
     parsed.type = 'response_too_large';

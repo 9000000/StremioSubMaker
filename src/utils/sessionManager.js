@@ -5,12 +5,18 @@ const path = require('path');
 const crypto = require('crypto');
 const Redis = require('ioredis');
 const { StorageFactory, StorageAdapter } = require('../storage');
-const { StorageUnavailableError } = require('../storage/errors');
+const { SessionCapacityError, StorageUnavailableError } = require('../storage/errors');
 const log = require('./logger');
 const { shutdownLogger } = require('./logger');
 const sentry = require('./sentry');
 const { handleCaughtError } = require('./errorClassifier');
-const { encryptUserConfig, decryptUserConfig, normalizeSensitiveInputsForStorage, getDecryptionWarnings } = require('./encryption');
+const {
+    encryptUserConfig,
+    decryptUserConfig,
+    findEncryptedSensitiveInputPaths,
+    getEncryptionKey,
+    getDecryptionWarnings
+} = require('./encryption');
 const { redactToken } = require('./security');
 const { getRedisPassword } = require('./redisHelper');
 const { MAX_SESSION_BRIEF_BATCH, SESSION_BRIEF_LOOKUP_CONCURRENCY, normalizeSessionBriefTokens } = require('./sessionBriefBatch');
@@ -48,6 +54,8 @@ const INTERNAL_FLAGS = [
     '__decryptionWarningFields',
     '__nestedEncryptionRecovered',
     '__nestedEncryptionRecoveredFields',
+    '__plaintextSensitiveFieldsDetected',
+    '__plaintextSensitiveFieldsDetectedFields',
     '__credentialDecryptionFailed',  // Added by normalizeConfig() when credentials look encrypted
     '__credentialDecryptionFailedFields',
     '__credentialWarningEntry',      // Added by subtitles handler for UI warning
@@ -59,7 +67,7 @@ const INTERNAL_FLAGS = [
     '__historyUserHash',    // Added from stable session metadata for history namespacing
     '__needsSessionPersist', // Added by normalizeConfig() for auto-correction
     '__persistReason',
-    '__regenerated',        // Added by regenerateDefaultConfig()
+    '__regenerated',        // Legacy client flag (never persisted)
     '__regeneratedAt',
     '__fetchedAt',          // Added during config resolution
     '__invalidSession'      // Added when session is invalid
@@ -148,12 +156,9 @@ function buildHistoryIndexKey(userHash) {
     return `histidx__${safeHash}`;
 }
 
-// Prevent cache/key collisions from silently serving another user's config by
-// binding stored payloads to both the token and the config fingerprint.  If a
-// different payload is ever returned for the same token (e.g., due to shared
-// Redis keyspace or proxy cache mix-ups), the integrity check will fail and the
-// session will be discarded instead of leaking the other user's data.
-function computeIntegrityHash(token, fingerprint) {
+// Legacy releases used this public SHA-256 truncation. It remains verification-
+// only so existing sessions keep working without a storage migration.
+function computeLegacyIntegrityHash(token, fingerprint) {
     try {
         return crypto
             .createHash('sha256')
@@ -163,9 +168,100 @@ function computeIntegrityHash(token, fingerprint) {
             .digest('hex')
             .slice(0, 24);
     } catch (err) {
-        log.warn(() => ['[SessionManager] Failed to compute integrity hash:', err?.message || String(err)]);
+        log.warn(() => ['[SessionManager] Failed to compute legacy integrity hash:', err?.message || String(err)]);
         return 'integrity_error';
     }
+}
+
+function canonicalSerializeForIntegrity(value) {
+    if (value === null) return 'null';
+    if (typeof value === 'string' || typeof value === 'boolean') {
+        return JSON.stringify(value);
+    }
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? JSON.stringify(value) : 'null';
+    }
+    if (Array.isArray(value)) {
+        return `[${value.map((entry) => {
+            const serialized = canonicalSerializeForIntegrity(entry);
+            return serialized === undefined ? 'null' : serialized;
+        }).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+        const entries = [];
+        for (const key of Object.keys(value).sort()) {
+            const serialized = canonicalSerializeForIntegrity(value[key]);
+            if (serialized !== undefined) {
+                entries.push(`${JSON.stringify(key)}:${serialized}`);
+            }
+        }
+        return `{${entries.join(',')}}`;
+    }
+    // Match JSON.stringify semantics for undefined/functions/symbols in objects.
+    return undefined;
+}
+
+// Bind newly written wrappers to the encryption secret, format version, token,
+// config fingerprint, canonical field placement, and exact stored ciphertext.
+// This adds whole-config authenticated binding without changing the AES-GCM
+// ciphertext format or rewriting any existing session.
+function computeIntegrityHash(token, fingerprint, encryptedConfig) {
+    try {
+        const integrityKey = crypto
+            .createHmac('sha256', getEncryptionKey())
+            .update('submaker/session-integrity/key/v1')
+            .digest();
+        const tag = crypto
+            .createHmac('sha256', integrityKey)
+            .update('submaker/session-wrapper/v1\0')
+            .update(String(token || ''))
+            .update('\0')
+            .update(String(fingerprint || ''))
+            .update('\0')
+            .update(canonicalSerializeForIntegrity(encryptedConfig || {}))
+            .digest('hex');
+        return `h1:${tag}`;
+    } catch (err) {
+        log.warn(() => ['[SessionManager] Failed to compute keyed integrity tag:', err?.message || String(err)]);
+        return 'integrity_error';
+    }
+}
+
+function timingSafeStringEqual(left, right) {
+    if (typeof left !== 'string' || typeof right !== 'string') return false;
+    const leftBuffer = Buffer.from(left, 'utf8');
+    const rightBuffer = Buffer.from(right, 'utf8');
+    return leftBuffer.length === rightBuffer.length
+        && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function verifyIntegrityHash(actual, token, fingerprint, encryptedConfig) {
+    if (typeof actual !== 'string' || !actual) return false;
+    const expected = actual.startsWith('h1:')
+        ? computeIntegrityHash(token, fingerprint, encryptedConfig)
+        : computeLegacyIntegrityHash(token, fingerprint);
+    return expected !== 'integrity_error' && timingSafeStringEqual(actual, expected);
+}
+
+function getSessionIntegrityStatus(sessionData, token) {
+    if (!sessionData?.fingerprint) return 'missing';
+    if (sessionData.integrityHmac) {
+        return verifyIntegrityHash(
+            sessionData.integrityHmac,
+            token,
+            sessionData.fingerprint,
+            sessionData.config
+        ) ? 'keyed_ok' : 'keyed_mismatch';
+    }
+    if (sessionData.integrity) {
+        return verifyIntegrityHash(
+            sessionData.integrity,
+            token,
+            sessionData.fingerprint,
+            sessionData.config
+        ) ? 'legacy_ok' : 'legacy_mismatch';
+    }
+    return 'missing';
 }
 
 // Clone config and stamp session metadata before encryption. The fingerprint
@@ -246,6 +342,16 @@ function cloneConfig(config) {
     }
 }
 
+function assertNoEncryptedSensitiveInputs(config) {
+    const encryptedPaths = findEncryptedSensitiveInputPaths(config);
+    if (encryptedPaths.length === 0) return;
+
+    const error = new Error('Encrypted credential values are not accepted as session input');
+    error.code = 'ENCRYPTED_SENSITIVE_INPUT';
+    error.rejectedFieldCount = encryptedPaths.length;
+    throw error;
+}
+
 // Validate stored session metadata against the requested token to detect cross-user bleed
 // Returns a status describing mismatches or missing safety fields
 function ensureTokenMetadata(sessionData, token) {
@@ -292,7 +398,8 @@ function validateEncryptedSessionPayload(sessionData) {
 
     const isEncrypted = config._encrypted === true;
     const hasFingerprint = typeof sessionData.fingerprint === 'string' && sessionData.fingerprint.length > 0;
-    const hasIntegrity = typeof sessionData.integrity === 'string' && sessionData.integrity.length > 0;
+    const hasIntegrity = (typeof sessionData.integrityHmac === 'string' && sessionData.integrityHmac.length > 0)
+        || (typeof sessionData.integrity === 'string' && sessionData.integrity.length > 0);
 
     return {
         valid: true, // Legacy/partially-upgraded payloads are allowed; callers can backfill.
@@ -539,6 +646,11 @@ class SessionManager extends EventEmitter {
         this.storageMaxSessions = (Number.isFinite(options.storageMaxSessions) && options.storageMaxSessions > 0)
             ? options.storageMaxSessions
             : null; // Default: 60k from index.js
+        this.storageMaxBytes = (Number.isFinite(options.storageMaxBytes) && options.storageMaxBytes > 0)
+            ? options.storageMaxBytes
+            : (options.storageMaxBytes === null
+                ? null
+                : StorageAdapter.SIZE_LIMITS[StorageAdapter.CACHE_TYPES.SESSION]);
         this.storageMaxAge = options.storageMaxAge || 90 * 24 * 60 * 60 * 1000; // 90 days default
 
         // Session monitoring and alerting
@@ -986,7 +1098,8 @@ class SessionManager extends EventEmitter {
      * @returns {string} Session token
      */
     async createSession(config) {
-        const normalizedConfig = normalizeSensitiveInputsForStorage(stripInternalFlags(cloneConfig(config)));
+        const normalizedConfig = stripInternalFlags(cloneConfig(config));
+        assertNoEncryptedSensitiveInputs(normalizedConfig);
         const token = this.generateToken();
 
         const tokenFingerprint = computeTokenFingerprint(token);
@@ -996,7 +1109,8 @@ class SessionManager extends EventEmitter {
         const fingerprint = computeConfigFingerprint(normalizedConfig);
         const configWithMetadata = embedSessionMetadata(normalizedConfig, token, fingerprint);
         const encryptedConfig = encryptUserConfig(configWithMetadata);
-        const integrity = computeIntegrityHash(token, fingerprint);
+        const integrity = computeLegacyIntegrityHash(token, fingerprint);
+        const integrityHmac = computeIntegrityHash(token, fingerprint, encryptedConfig);
 
         const now = Date.now();
         const sessionData = {
@@ -1010,53 +1124,48 @@ class SessionManager extends EventEmitter {
             disabled: false,
             disabledAt: null,
             fingerprint,
-            integrity
+            integrity,
+            integrityHmac
         };
-
-        this.cache.set(token, sessionData);
-        const configForCache = cloneConfig(normalizedConfig);
-        configForCache.__historyUserHash = sessionData.historyUserHash;
-        this.decryptedCache.set(token, configForCache);
-        this.dirty = true;
 
         try {
             const adapter = await getStorageAdapter();
             // Set sliding persistence TTL equal to maxAge (if TTL is enabled)
             // When TTL is disabled, sessions persist indefinitely in Redis
             const ttlSeconds = this._calculateTtlSeconds();
-            const persisted = await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
+            const admission = await adapter.createSession(token, sessionData, ttlSeconds, {
+                maxSessions: this.storageMaxSessions,
+                maxBytes: this.storageMaxBytes
+            });
 
-            if (!persisted) {
-                // Avoid returning a token that only lives in memory (would vanish on restart)
-                this.cache.delete(token);
-                this.decryptedCache.delete(token);
+            if (!admission?.ok) {
+                if (admission?.reason === 'count' || admission?.reason === 'bytes') {
+                    throw new SessionCapacityError(
+                        admission.reason === 'count'
+                            ? 'Session storage count limit reached'
+                            : 'Session storage byte limit reached',
+                        admission
+                    );
+                }
                 throw new Error('Failed to persist new session to storage');
             }
         } catch (err) {
-            // CRITICAL: Clear in-memory cache to prevent "ghost" sessions that only exist
-            // in memory on this pod when Redis is down. Without this, the session appears
-            // to work on this instance but vanishes on restart or when other pods try to
-            // access it, causing cross-pod inconsistency and data loss.
-            this.cache.delete(token);
-            this.decryptedCache.delete(token);
-
             log.error(() => ['[SessionManager] Failed to persist new session:', err?.message || String(err)]);
             // Bubble up StorageUnavailableError so callers can respond with 503 instead of
             // silently regenerating or returning 500. This prevents data loss during Redis hiccups.
             throw err;
         }
 
-        // DEBUG: Verify session was actually written by reading it back
-        try {
-            const adapter = await getStorageAdapter();
-            const verification = await adapter.get(token, StorageAdapter.CACHE_TYPES.SESSION);
-            if (!verification) {
-                log.error(() => `[SessionManager] CRITICAL: Session ${redactToken(token)} was NOT found in Redis immediately after creation!`);
-            } else {
-                log.debug(() => `[SessionManager] Session ${redactToken(token)} verified in Redis after creation`);
-            }
-        } catch (verifyErr) {
-            log.error(() => `[SessionManager] Verification read failed for ${redactToken(token)}: ${verifyErr?.message}`);
+        // Only populate memory after durable admission succeeds. A rejected
+        // creation therefore cannot churn the bounded LRU and evict a real
+        // user's hot session before its own temporary token is discarded.
+        this.cache.set(token, sessionData);
+        const configForCache = cloneConfig(normalizedConfig);
+        configForCache.__historyUserHash = sessionData.historyUserHash;
+        this.decryptedCache.set(token, configForCache);
+        this.dirty = true;
+        if (this.storageCountCache.ts > 0) {
+            this.storageCountCache.value += 1;
         }
 
         this.emit('sessionCreated', { token, source: 'local' });
@@ -1126,6 +1235,19 @@ class SessionManager extends EventEmitter {
             return null;
         }
 
+        const initialIntegrityStatus = getSessionIntegrityStatus(sessionData, token);
+        if (initialIntegrityStatus === 'keyed_mismatch') {
+            log.warn(() => `[SessionManager] Keyed integrity mismatch for ${redactToken(token)} - keeping stored session for retry in case this replica has the wrong encryption key`);
+            this.cache.delete(token);
+            this.decryptedCache.delete(token);
+            return null;
+        }
+        if (initialIntegrityStatus === 'legacy_mismatch') {
+            log.warn(() => `[SessionManager] Legacy integrity mismatch for ${redactToken(token)} - discarding contaminated session`);
+            this.deleteSession(token);
+            return null;
+        }
+
         if (!sessionData.historyUserHash) {
             sessionData.historyUserHash = computeHistoryUserHash(token);
             markNeedsPersist('history identity backfill');
@@ -1187,10 +1309,18 @@ class SessionManager extends EventEmitter {
         let metadata = {};
         let nestedEncryptionRecovered = false;
         let nestedRecoveredFields = [];
+        let plaintextSensitiveFieldsDetected = false;
+        let plaintextSensitiveFields = [];
+        let hasDecryptionWarnings = false;
+        let decryptionWarningFields = [];
         try {
             const rawDecrypted = decryptUserConfig(sessionData.config);
             nestedEncryptionRecovered = rawDecrypted?.__nestedEncryptionRecovered === true;
             nestedRecoveredFields = rawDecrypted?.__nestedEncryptionRecoveredFields || [];
+            plaintextSensitiveFieldsDetected = rawDecrypted?.__plaintextSensitiveFieldsDetected === true;
+            plaintextSensitiveFields = rawDecrypted?.__plaintextSensitiveFieldsDetectedFields || [];
+            hasDecryptionWarnings = rawDecrypted?.__decryptionWarning === true;
+            decryptionWarningFields = rawDecrypted?.__decryptionWarningFields || [];
             const result = stripSessionMetadata(rawDecrypted);
             decryptedConfig = result.config;
             metadata = result.metadata || {};
@@ -1213,26 +1343,33 @@ class SessionManager extends EventEmitter {
         }
 
         const fingerprint = computeConfigFingerprint(decryptedConfig);
-        const sessionPayloadNormalizedOnRead = nestedEncryptionRecovered || payloadValidation.unencryptedConfig;
+        const shouldHealSensitiveFields = !hasDecryptionWarnings
+            && (nestedEncryptionRecovered || plaintextSensitiveFieldsDetected);
+        const sessionPayloadNormalizedOnRead = shouldHealSensitiveFields
+            || (!hasDecryptionWarnings && payloadValidation.unencryptedConfig);
 
-        if (nestedEncryptionRecovered) {
+        if (shouldHealSensitiveFields) {
             sessionData.fingerprint = fingerprint;
-            sessionData.integrity = computeIntegrityHash(token, fingerprint);
             sessionData.config = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, fingerprint));
-            markNeedsPersist('nested encryption heal');
-            log.warn(() => `[SessionManager] Healed nested encryption for ${redactToken(token)} - fields: ${nestedRecoveredFields.join(', ') || 'unknown'}. Session will be re-saved in normalized form.`);
+            sessionData.integrity = computeLegacyIntegrityHash(token, fingerprint);
+            sessionData.integrityHmac = computeIntegrityHash(token, fingerprint, sessionData.config);
+            if (nestedEncryptionRecovered) {
+                markNeedsPersist('nested encryption heal');
+                log.warn(() => `[SessionManager] Healed nested encryption for ${redactToken(token)} - fields: ${nestedRecoveredFields.join(', ') || 'unknown'}. Session will be re-saved in normalized form.`);
+            }
+            if (plaintextSensitiveFieldsDetected) {
+                markNeedsPersist('plaintext sensitive-field encryption upgrade');
+                log.warn(() => `[SessionManager] Encrypted legacy plaintext fields for ${redactToken(token)} - fields: ${plaintextSensitiveFields.join(', ') || 'unknown'}. Session will be re-saved in normalized form.`);
+            }
+        } else if (hasDecryptionWarnings && (nestedEncryptionRecovered || plaintextSensitiveFieldsDetected)) {
+            log.warn(() => `[SessionManager] Skipping sensitive-field encryption upgrade for ${redactToken(token)} because other credentials could not be decrypted. Stored credentials remain unchanged for recovery.`);
         }
 
         // Check if decryption had warnings (indicates encryption key mismatch between server instances)
         // If so, skip fingerprint validation since the fingerprint was computed from decrypted config
         // which may contain encrypted (undecrypted) values due to key mismatch
-        const hasDecryptionWarnings = decryptedConfig.__decryptionWarning === true;
         if (hasDecryptionWarnings) {
-            const warningFields = decryptedConfig.__decryptionWarningFields || [];
-            log.warn(() => `[SessionManager] getSession: Decryption warnings detected for ${redactToken(token)} - fields: ${warningFields.join(', ')}. Skipping fingerprint validation. User may need to re-enter credentials.`);
-            // Clean up warning flags before returning
-            delete decryptedConfig.__decryptionWarning;
-            delete decryptedConfig.__decryptionWarningFields;
+            log.warn(() => `[SessionManager] getSession: Decryption warnings detected for ${redactToken(token)} - fields: ${decryptionWarningFields.join(', ')}. Skipping fingerprint validation. User may need to re-enter credentials.`);
         }
 
         // DISABLED: Fingerprint validation causes false positives when config schema changes
@@ -1252,17 +1389,18 @@ class SessionManager extends EventEmitter {
             markNeedsPersist('config fingerprint backfill');
         }
         if (!sessionData.integrity) {
-            sessionData.integrity = computeIntegrityHash(token, sessionData.fingerprint);
+            sessionData.integrity = computeLegacyIntegrityHash(token, sessionData.fingerprint);
             markNeedsPersist('integrity backfill');
         }
 
         // Upgrade legacy payloads that lack encryption marker by re-wrapping and encrypting
-        if (payloadValidation.unencryptedConfig) {
+        if (payloadValidation.unencryptedConfig && !hasDecryptionWarnings) {
             try {
                 sessionData.fingerprint = fingerprint;
-                sessionData.integrity = computeIntegrityHash(token, fingerprint);
                 const upgradedConfig = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, fingerprint));
                 sessionData.config = upgradedConfig;
+                sessionData.integrity = computeLegacyIntegrityHash(token, fingerprint);
+                sessionData.integrityHmac = computeIntegrityHash(token, fingerprint, sessionData.config);
                 markNeedsPersist('legacy payload upgrade');
                 log.warn(() => `[SessionManager] Upgraded legacy unencrypted session payload for ${redactToken(token)}`);
             } catch (upgradeErr) {
@@ -1273,31 +1411,6 @@ class SessionManager extends EventEmitter {
             }
         }
 
-        // Defense-in-depth: ensure the stored integrity tag matches the token + stored fingerprint.
-        // IMPORTANT: Use stored fingerprint only (not recomputed) because recomputed fingerprint
-        // may differ due to schema changes. Integrity check still validates token binding.
-        if (sessionData.fingerprint) {
-            const expectedIntegrity = computeIntegrityHash(token, sessionData.fingerprint);
-            if (sessionData.integrity && sessionData.integrity !== expectedIntegrity) {
-                log.warn(() => `[SessionManager] Integrity mismatch for ${redactToken(token)} - discarding contaminated session`);
-                this.deleteSession(token);
-                return null;
-            }
-            // Backfill missing integrity using stored fingerprint
-            if (!sessionData.integrity) {
-                sessionData.integrity = expectedIntegrity;
-                this.cache.set(token, sessionData);
-                this.dirty = true;
-                this._trackPersistence(Promise.resolve().then(async () => {
-                    const adapter = await getStorageAdapter();
-                    const ttlSeconds = this._calculateTtlSeconds();
-                    await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
-                }).catch(err => {
-                    log.error(() => ['[SessionManager] Failed to persist integrity backfill:', err?.message || String(err)]);
-                }));
-            }
-        }
-
         // Backfill missing fingerprint for legacy sessions
         if (!sessionData.fingerprint) {
             sessionData.fingerprint = fingerprint;
@@ -1305,7 +1418,7 @@ class SessionManager extends EventEmitter {
             this.dirty = true;
 
             // Backfill integrity so future checks can detect contamination
-            sessionData.integrity = computeIntegrityHash(token, fingerprint);
+            sessionData.integrity = computeLegacyIntegrityHash(token, fingerprint);
 
             this._trackPersistence(Promise.resolve().then(async () => {
                 const adapter = await getStorageAdapter();
@@ -1367,7 +1480,8 @@ class SessionManager extends EventEmitter {
     async updateSession(token, config) {
         if (!token) return false;
 
-        const normalizedConfig = normalizeSensitiveInputsForStorage(stripInternalFlags(cloneConfig(config)));
+        const normalizedConfig = stripInternalFlags(cloneConfig(config));
+        assertNoEncryptedSensitiveInputs(normalizedConfig);
         let sessionData = this.cache.get(token);
 
         // If not in cache, try loading from storage (Redis/filesystem)
@@ -1409,12 +1523,26 @@ class SessionManager extends EventEmitter {
             return false;
         }
 
+        const integrityStatus = getSessionIntegrityStatus(sessionData, token);
+        if (integrityStatus === 'keyed_mismatch') {
+            log.warn(() => `[SessionManager] Keyed integrity mismatch during update for ${redactToken(token)} - refusing the write without deleting the stored recovery copy`);
+            this.cache.delete(token);
+            this.decryptedCache.delete(token);
+            return false;
+        }
+        if (integrityStatus === 'legacy_mismatch') {
+            log.warn(() => `[SessionManager] Legacy integrity mismatch during update for ${redactToken(token)} - deleting contaminated session`);
+            this.deleteSession(token);
+            return false;
+        }
+
         // Encrypt sensitive fields in config before storing, stamping metadata to
         // detect cross-session contamination even when wrapper objects look valid.
         const fingerprint = computeConfigFingerprint(normalizedConfig);
         const configWithMetadata = embedSessionMetadata(normalizedConfig, token, fingerprint);
         const encryptedConfig = encryptUserConfig(configWithMetadata);
-        const integrity = computeIntegrityHash(token, fingerprint);
+        const integrity = computeLegacyIntegrityHash(token, fingerprint);
+        const integrityHmac = computeIntegrityHash(token, fingerprint, encryptedConfig);
         const tokenFingerprint = computeTokenFingerprint(token);
 
         // Update config but keep creation time
@@ -1424,6 +1552,7 @@ class SessionManager extends EventEmitter {
         sessionData.updatedAt = now;
         sessionData.fingerprint = fingerprint;
         sessionData.integrity = integrity;
+        sessionData.integrityHmac = integrityHmac;
         sessionData.tokenFingerprint = tokenFingerprint;
         if (!sessionData.historyUserHash) {
             sessionData.historyUserHash = computeHistoryUserHash(token);
@@ -1439,8 +1568,13 @@ class SessionManager extends EventEmitter {
         try {
             const adapter = await getStorageAdapter();
             const ttlSeconds = this._calculateTtlSeconds();
-            const persisted = await adapter.set(token, sessionData, StorageAdapter.CACHE_TYPES.SESSION, ttlSeconds);
-            if (!persisted) {
+            const persistence = await adapter.updateSession(token, sessionData, ttlSeconds, {
+                maxBytes: this.storageMaxBytes
+            });
+            if (!persistence?.ok) {
+                if (persistence?.reason === 'bytes') {
+                    throw new SessionCapacityError('Session storage byte limit reached', persistence);
+                }
                 throw new Error('Failed to persist updated session to storage');
             }
             // Notify other instances to invalidate their cache
@@ -1755,6 +1889,12 @@ class SessionManager extends EventEmitter {
     async getStats() {
         const storageType = process.env.STORAGE_TYPE || 'redis';
         const storageCount = await this.getStorageSessionCount();
+        const adapter = await getStorageAdapter();
+        // Do not introduce session-byte bookkeeping reads for deployments that
+        // intentionally retain the historical unbounded byte profile.
+        const storageBytes = this.storageMaxBytes
+            ? await adapter.size(StorageAdapter.CACHE_TYPES.SESSION)
+            : null;
 
         return {
             activeSessions: this.cache.size,
@@ -1762,6 +1902,9 @@ class SessionManager extends EventEmitter {
             storageSessionCount: storageCount,
             storageMaxSessions: this.storageMaxSessions || null,
             storageUtilization: this.storageMaxSessions ? (storageCount / this.storageMaxSessions * 100).toFixed(2) + '%' : 'N/A',
+            storageSessionBytes: storageBytes,
+            storageMaxBytes: this.storageMaxBytes || null,
+            storageByteUtilization: this.storageMaxBytes ? (storageBytes / this.storageMaxBytes * 100).toFixed(2) + '%' : 'N/A',
             maxAge: this.maxAge,
             storageMaxAge: this.storageMaxAge,
             storageType: storageType,
@@ -1876,6 +2019,19 @@ class SessionManager extends EventEmitter {
                 return null;
             }
 
+            const integrityStatus = getSessionIntegrityStatus(stored, token);
+            if (integrityStatus === 'keyed_mismatch') {
+                log.warn(() => `[SessionManager] loadSessionFromStorage: keyed integrity mismatch for ${redactToken(token)} - keeping storage unchanged for retry on a correctly keyed replica`);
+                this.cache.delete(token);
+                this.decryptedCache.delete(token);
+                return null;
+            }
+            if (integrityStatus === 'legacy_mismatch') {
+                log.warn(() => `[SessionManager] loadSessionFromStorage: legacy integrity mismatch for ${redactToken(token)} - deleting contaminated session`);
+                await deleteFromStorage();
+                return null;
+            }
+
             if (!stored.historyUserHash) {
                 stored.historyUserHash = computeHistoryUserHash(token);
                 needsPersist = true;
@@ -1910,6 +2066,10 @@ class SessionManager extends EventEmitter {
                 const rawDecrypted = decryptUserConfig(stored.config);
                 const nestedEncryptionRecovered = rawDecrypted?.__nestedEncryptionRecovered === true;
                 const nestedRecoveredFields = rawDecrypted?.__nestedEncryptionRecoveredFields || [];
+                const plaintextSensitiveFieldsDetected = rawDecrypted?.__plaintextSensitiveFieldsDetected === true;
+                const plaintextSensitiveFields = rawDecrypted?.__plaintextSensitiveFieldsDetectedFields || [];
+                const hasDecryptionWarnings = rawDecrypted?.__decryptionWarning === true;
+                const decryptionWarningFields = rawDecrypted?.__decryptionWarningFields || [];
                 const { config: decryptedConfig, metadata } = stripSessionMetadata(rawDecrypted);
 
                 if (!decryptedConfig) {
@@ -1920,26 +2080,32 @@ class SessionManager extends EventEmitter {
                 }
 
                 const fingerprint = computeConfigFingerprint(decryptedConfig);
-                const sessionPayloadNormalizedOnRead = nestedEncryptionRecovered || payloadValidation.unencryptedConfig;
+                const shouldHealSensitiveFields = !hasDecryptionWarnings
+                    && (nestedEncryptionRecovered || plaintextSensitiveFieldsDetected);
+                const sessionPayloadNormalizedOnRead = shouldHealSensitiveFields
+                    || (!hasDecryptionWarnings && payloadValidation.unencryptedConfig);
 
-                if (nestedEncryptionRecovered) {
+                if (shouldHealSensitiveFields) {
                     stored.fingerprint = fingerprint;
-                    stored.integrity = computeIntegrityHash(token, fingerprint);
                     stored.config = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, fingerprint));
+                    stored.integrity = computeLegacyIntegrityHash(token, fingerprint);
+                    stored.integrityHmac = computeIntegrityHash(token, fingerprint, stored.config);
                     needsPersist = true;
-                    log.warn(() => `[SessionManager] loadSessionFromStorage: healed nested encryption for ${redactToken(token)} - fields: ${nestedRecoveredFields.join(', ') || 'unknown'}. Session will be re-saved in normalized form.`);
+                    if (nestedEncryptionRecovered) {
+                        log.warn(() => `[SessionManager] loadSessionFromStorage: healed nested encryption for ${redactToken(token)} - fields: ${nestedRecoveredFields.join(', ') || 'unknown'}. Session will be re-saved in normalized form.`);
+                    }
+                    if (plaintextSensitiveFieldsDetected) {
+                        log.warn(() => `[SessionManager] loadSessionFromStorage: encrypted legacy plaintext fields for ${redactToken(token)} - fields: ${plaintextSensitiveFields.join(', ') || 'unknown'}. Session will be re-saved in normalized form.`);
+                    }
+                } else if (hasDecryptionWarnings && (nestedEncryptionRecovered || plaintextSensitiveFieldsDetected)) {
+                    log.warn(() => `[SessionManager] loadSessionFromStorage: skipping sensitive-field encryption upgrade for ${redactToken(token)} because other credentials could not be decrypted. Stored credentials remain unchanged for recovery.`);
                 }
 
                 // Check if decryption had warnings (indicates encryption key mismatch between server instances)
                 // If so, skip fingerprint validation since the fingerprint was computed from decrypted config
                 // which may contain encrypted (undecrypted) values due to key mismatch
-                const hasDecryptionWarnings = decryptedConfig.__decryptionWarning === true;
                 if (hasDecryptionWarnings) {
-                    const warningFields = decryptedConfig.__decryptionWarningFields || [];
-                    log.warn(() => `[SessionManager] loadSessionFromStorage: Decryption warnings detected for ${redactToken(token)} - fields: ${warningFields.join(', ')}. Skipping fingerprint validation to preserve session. User may need to re-enter credentials.`);
-                    // Clean up warning flags before returning
-                    delete decryptedConfig.__decryptionWarning;
-                    delete decryptedConfig.__decryptionWarningFields;
+                    log.warn(() => `[SessionManager] loadSessionFromStorage: Decryption warnings detected for ${redactToken(token)} - fields: ${decryptionWarningFields.join(', ')}. Skipping fingerprint validation to preserve session. User may need to re-enter credentials.`);
                 }
 
                 if (metadata?.token && metadata.token !== token) {
@@ -1962,34 +2128,23 @@ class SessionManager extends EventEmitter {
                     log.debug(() => `[SessionManager] Fingerprint mismatch (stored) on storage load for ${redactToken(token)} - stored=${stored.fingerprint}, computed=${fingerprint}. Session preserved (fingerprint validation disabled).`);
                     // Don't delete - continue with session
                 }
-                // Integrity check uses stored fingerprint only (not recomputed) for backwards compatibility
-                if (stored.fingerprint && stored.integrity) {
-                    const expectedIntegrity = computeIntegrityHash(token, stored.fingerprint);
-                    if (stored.integrity !== expectedIntegrity) {
-                        log.warn(() => `[SessionManager] Integrity mismatch on storage load for ${redactToken(token)} - removing contaminated session`);
-                        await deleteFromStorage();
-                        this.cache.delete(token);
-                        this.decryptedCache.delete(token);
-                        return null;
-                    }
-                }
-
                 if (!stored.fingerprint) {
                     stored.fingerprint = fingerprint;
                     needsPersist = true;
                 }
                 if (!stored.integrity) {
-                    stored.integrity = computeIntegrityHash(token, stored.fingerprint);
+                    stored.integrity = computeLegacyIntegrityHash(token, stored.fingerprint);
                     needsPersist = true;
                 }
 
                 // Upgrade legacy sessions that lacked encryption markers by re-encrypting with embedded metadata
-                if (payloadValidation.unencryptedConfig) {
+                if (payloadValidation.unencryptedConfig && !hasDecryptionWarnings) {
                     try {
                         stored.fingerprint = fingerprint;
-                        stored.integrity = computeIntegrityHash(token, fingerprint);
                         const upgradedConfig = encryptUserConfig(embedSessionMetadata(decryptedConfig, token, fingerprint));
                         stored.config = upgradedConfig;
+                        stored.integrity = computeLegacyIntegrityHash(token, fingerprint);
+                        stored.integrityHmac = computeIntegrityHash(token, fingerprint, stored.config);
                         needsPersist = true;
                         log.warn(() => `[SessionManager] loadSessionFromStorage: upgrading unencrypted session payload for ${redactToken(token)}`);
                     } catch (upgradeErr) {
@@ -2289,102 +2444,39 @@ class SessionManager extends EventEmitter {
     }
 
     /**
-     * Purge oldest accessed sessions from storage
-     * @param {number} count - Number of sessions to purge
-     * @returns {Promise<number>} Number of sessions purged
-     */
-    async purgeOldestSessions(count = 100) {
-        try {
-            const adapter = await getStorageAdapter();
-            const keys = await adapter.list(StorageAdapter.CACHE_TYPES.SESSION, '*');
-
-            // Filter to valid session tokens only
-            const validTokens = keys.filter(token => /^[a-f0-9]{32}$/.test(token));
-
-            if (validTokens.length === 0) {
-                return 0;
-            }
-
-            // Load session metadata (lastAccessedAt) with bounded concurrency to avoid blocking
-            const sessionsWithMetadata = [];
-            const CONCURRENCY = 8;
-
-            let index = 0;
-            const worker = async () => {
-                while (index < validTokens.length) {
-                    const token = validTokens[index++];
-                    try {
-                        const sessionData = await adapter.get(token, StorageAdapter.CACHE_TYPES.SESSION);
-                        if (sessionData) {
-                            sessionsWithMetadata.push({
-                                token,
-                                lastAccessedAt: sessionData.lastAccessedAt || sessionData.createdAt || 0
-                            });
-                        }
-                    } catch (err) {
-                        log.debug(() => `[SessionManager] Failed to load session metadata for ${redactToken(token)}: ${err.message}`);
-                    }
-                }
-            };
-
-            await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-
-            // Sort by lastAccessedAt (oldest first)
-            sessionsWithMetadata.sort((a, b) => a.lastAccessedAt - b.lastAccessedAt);
-
-            // Purge the oldest N sessions
-            const toPurge = sessionsWithMetadata.slice(0, Math.min(count, sessionsWithMetadata.length));
-            let purged = 0;
-
-            for (const { token } of toPurge) {
-                try {
-                    await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION);
-                    // Also remove from memory cache if present
-                    this.cache.delete(token);
-                    purged++;
-                } catch (err) {
-                    log.error(() => [`[SessionManager] Failed to purge session ${token}:`, err.message]);
-                }
-            }
-
-            if (purged > 0) {
-                log.warn(() => `[SessionManager] Storage cleanup: purged ${purged} oldest accessed sessions`);
-            }
-
-            return purged;
-        } catch (err) {
-            log.error(() => ['[SessionManager] Failed to purge oldest sessions:', err.message]);
-            return 0;
-        }
-    }
-
-    /**
-     * Check storage session count and run cleanup if approaching limit
+     * Remove only expired storage bookkeeping and report hard-limit pressure.
+     * Live sessions are never evicted merely because utilization is high.
      * @returns {Promise<void>}
      */
     async checkStorageLimitAndCleanup() {
-        if (!this.storageMaxSessions) {
-            return; // No storage limit configured
-        }
-
         try {
-            const storageCount = await this.getStorageSessionCount();
-            const utilizationPercent = (storageCount / this.storageMaxSessions) * 100;
-
-            // Alert if approaching limit (>80%)
-            if (utilizationPercent > 80) {
-                log.warn(() => `[SessionManager] Storage session count approaching limit: ${storageCount} / ${this.storageMaxSessions} (${utilizationPercent.toFixed(1)}%)`);
+            const adapter = await getStorageAdapter();
+            if (this.storageMaxBytes) {
+                const maintenanceLock = await tryAcquireLock('maintenance:session-storage-cleanup', 55 * 60 * 1000);
+                if (!maintenanceLock.acquired) {
+                    log.debug(() => '[SessionManager] Session storage cleanup already running on another replica; skipping');
+                    return;
+                }
+                await adapter.cleanup(StorageAdapter.CACHE_TYPES.SESSION);
             }
 
-            // Run cleanup if at or above 90% of limit
-            if (utilizationPercent >= 90) {
-                const sessionsToRemove = Math.max(100, Math.floor(storageCount - (this.storageMaxSessions * 0.85))); // Target 85% utilization
-                log.warn(() => `[SessionManager] Storage limit reached (${utilizationPercent.toFixed(1)}%), purging ${sessionsToRemove} oldest sessions`);
-                const purged = await this.purgeOldestSessions(sessionsToRemove);
+            const storageCount = await this.getStorageSessionCount(!!this.storageMaxBytes);
+            const storageBytes = this.storageMaxBytes
+                ? await adapter.size(StorageAdapter.CACHE_TYPES.SESSION)
+                : 0;
+            const utilizationPercent = this.storageMaxSessions
+                ? (storageCount / this.storageMaxSessions) * 100
+                : 0;
+            const byteUtilizationPercent = this.storageMaxBytes
+                ? (storageBytes / this.storageMaxBytes) * 100
+                : 0;
 
-                if (purged < sessionsToRemove) {
-                    log.error(() => `[SessionManager] ALERT: Only purged ${purged} / ${sessionsToRemove} sessions - storage may be exhausted!`);
-                }
+            // Alert if approaching limit (>80%)
+            if (this.storageMaxSessions && utilizationPercent > 80) {
+                log.warn(() => `[SessionManager] Storage session count approaching limit: ${storageCount} / ${this.storageMaxSessions} (${utilizationPercent.toFixed(1)}%)`);
+            }
+            if (this.storageMaxBytes && byteUtilizationPercent > 80) {
+                log.warn(() => `[SessionManager] Storage session bytes approaching limit: ${storageBytes} / ${this.storageMaxBytes} (${byteUtilizationPercent.toFixed(1)}%)`);
             }
 
             // Track storage count changes for abnormal growth detection
@@ -2455,11 +2547,18 @@ class SessionManager extends EventEmitter {
             if (indexedCount !== actualCount) {
                 const logFn = SESSION_INDEX_MISMATCH_LOG_LEVEL === 'error' ? log.error : log.warn;
                 logFn(() => `[SessionManager] Session index mismatch: index=${indexedCount} storage=${actualCount}. Rebuilding index.`);
+            }
+
+            // Byte-limited deployments must also rebuild counters written by
+            // older releases even when the count index already matches. The
+            // existing ElfHosted byte profile retains its prior mismatch-only
+            // maintenance behavior.
+            if (indexedCount !== actualCount || this.storageMaxBytes) {
                 try {
                     await adapter.resetSessionIndex(validKeys);
                     this.storageCountCache = { value: actualCount, ts: Date.now() };
                 } catch (err) {
-                    log.error(() => ['[SessionManager] Failed to rebuild session index:', err.message]);
+                    log.error(() => ['[SessionManager] Failed to reconcile session accounting:', err.message]);
                 }
             }
         } catch (err) {
@@ -2719,7 +2818,10 @@ function getSessionManager(options = {}) {
 module.exports = {
     MAX_SESSION_BRIEF_BATCH,
     SessionManager,
+    computeIntegrityHash,
+    computeLegacyIntegrityHash,
     getSessionManager,
     normalizeSessionBriefTokens,
-    stripInternalFlags
+    stripInternalFlags,
+    verifyIntegrityHash
 };

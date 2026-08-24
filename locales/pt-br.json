@@ -37,6 +37,7 @@
     "server": {
       "errors": {
         "storageUnavailable": "Armazenamento de sessão temporariamente indisponível, por favor tente novamente.",
+        "sessionCapacityReached": "A capacidade de armazenamento de sessões foi atingida. Nenhuma sessão existente foi removida; entre em contato com o operador do servidor.",
         "configPayloadTooLarge": "Payload de configuração muito grande",
         "originNotAllowed": "Origem não permitida",
         "stremioOnly": "Acesso negado. Este addon deve ser acessado através do Stremio.",
@@ -75,6 +76,8 @@
         "invalidApiKeyAuth": "Chave da API inválida - falha na autenticação",
         "requestFailed": "Requisição falhou",
         "invalidApiKey": "Chave da API inválida",
+        "geminiUnsupportedLocation": "O Gemini rejeitou a localização de rede deste servidor. Sua chave de API ainda pode ser válida; o host precisa usar uma saída de rede qualificada para o Gemini e, quando exigido pelo Google, acesso pago à API do Gemini.",
+        "geminiRequestRejected": "O Gemini rejeitou a requisição: {reason}",
         "usernamePasswordRequired": "Nome de usuário e senha são obrigatórios",
         "noTokenReceived": "Nenhum token recebido - credenciais podem ser inválidas",
         "invalidCredentials": "Nome de usuário ou senha inválidos",
@@ -156,6 +159,7 @@
     },
     "apiErrors": {
       "geminiRateLimit": "Limite de uso do Gemini atingido. Verifique o uso/cota da sua chave de API ou use outra chave.",
+      "geminiUnsupportedLocation": "O Gemini rejeitou a localização de rede deste servidor. Sua chave de API ainda pode ser válida; peça ao host uma saída qualificada para o Gemini e acesso pago quando necessário.",
       "rateLimit": "Limite de taxa do {service} excedido. Por favor, aguarde alguns minutos e tente novamente.",
       "serviceUnavailable": "{service} temporariamente indisponível. Por favor, tente novamente em alguns minutos.",
       "databaseUnavailable": "Banco de dados do servidor de legendas temporariamente indisponível. Tentando a próxima legenda...",
@@ -625,6 +629,7 @@
       "translationFailed": "Tradução Falhou",
       "translationUnexpected": "Um erro inesperado ocorreu durante a tradução.",
       "translationRetry": "Um erro inesperado ocorreu.\\nClique nesta legenda novamente para tentar a tradução de novo.",
+      "translationGeminiLocation": "Falha na tradução: o Gemini rejeitou a localização do servidor",
       "translationAuth": "Tradução Falhou: Erro de Autenticação (403)",
       "translationAuthBody": "Sua chave da API Gemini é inválida ou foi rejeitada.\\nPor favor, verifique se sua chave da API está correta.",
       "translationAuthRetry": "Atualize sua chave da API Gemini na configuração do addon,\\ndepois reinstale o addon e tente novamente.",

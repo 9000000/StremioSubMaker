@@ -6264,6 +6264,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         liveLogSource: null,
         liveLogPoll: null,
         liveLogJobId: null,
+        liveLogToken: null,
         audioTracks: [],
         selectedAudioTrack: null,
         awaitingTrackChoice: false,
@@ -6816,6 +6817,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           state.liveLogPoll = null;
         }
         state.liveLogJobId = null;
+        state.liveLogToken = null;
       }
 
       function handleServerLogEntry(entry) {
@@ -6837,12 +6839,12 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         logs.forEach((entry) => handleServerLogEntry(entry));
       }
 
-      function startAssemblyLogPoll(jobId) {
-        if (!jobId) return () => { };
+      function startAssemblyLogPoll(jobId, logToken) {
+        if (!jobId || !logToken) return () => { };
         if (state.liveLogPoll) clearInterval(state.liveLogPoll);
         const poll = async () => {
           try {
-            const resp = await fetch('/api/auto-subtitles/logs?jobId=' + encodeURIComponent(jobId) + '&format=json&since=' + encodeURIComponent(state.lastServerLogTs || ''), { cache: 'no-store' });
+            const resp = await fetch('/api/auto-subtitles/logs?jobId=' + encodeURIComponent(jobId) + '&logToken=' + encodeURIComponent(logToken) + '&format=json&since=' + encodeURIComponent(state.lastServerLogTs || ''), { cache: 'no-store' });
             if (!resp.ok) return;
             const data = await resp.json().catch(() => null);
             if (data && Array.isArray(data.logs)) {
@@ -6861,12 +6863,13 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         };
       }
 
-      function startAssemblyLiveLogStream(jobId) {
+      function startAssemblyLiveLogStream(jobId, logToken) {
         stopAssemblyLiveLogs();
-        if (!jobId) return () => { };
+        if (!jobId || !logToken) return () => { };
         state.liveLogJobId = jobId;
+        state.liveLogToken = logToken;
         if (typeof EventSource === 'function') {
-          const source = new EventSource('/api/auto-subtitles/logs?jobId=' + encodeURIComponent(jobId) + '&replay=0');
+          const source = new EventSource('/api/auto-subtitles/logs?jobId=' + encodeURIComponent(jobId) + '&logToken=' + encodeURIComponent(logToken));
           state.liveLogSource = source;
           source.onmessage = (event) => {
             try {
@@ -6879,12 +6882,24 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           });
           source.onerror = () => {
             stopAssemblyLiveLogs();
-            startAssemblyLogPoll(jobId);
+            startAssemblyLogPoll(jobId, logToken);
           };
           return () => stopAssemblyLiveLogs();
         }
-        startAssemblyLogPoll(jobId);
+        startAssemblyLogPoll(jobId, logToken);
         return () => stopAssemblyLiveLogs();
+      }
+
+      function createAutoSubLogToken() {
+        try {
+          const bytes = new Uint8Array(16);
+          window.crypto.getRandomValues(bytes);
+          return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+        } catch (_) {
+          // Live logs are optional. Older webviews without Web Crypto still run
+          // the subtitle job and receive the final logTrail in its JSON response.
+          return '';
+        }
       }
 
       function clearLog() {
@@ -7747,6 +7762,10 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
           }
           payload.transcript = transcriptPayload;
         }
+        if (overrides.jobId && overrides.logToken) {
+          payload.jobId = String(overrides.jobId);
+          payload.logToken = String(overrides.logToken);
+        }
 
         const resp = await fetch('/api/auto-subtitles/run', {
           method: 'POST',
@@ -8013,13 +8032,18 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         setPillLabel('fetch', fetchLabel);
         setProgress(8);
 
-        const assemblyJobId = isAssembly ? ('autosub_' + Date.now() + '_' + Math.random().toString(16).slice(2, 10)) : '';
+        const assemblyJobNonce = isAssembly ? createAutoSubLogToken() : '';
+        const assemblyLogToken = isAssembly ? createAutoSubLogToken() : '';
+        // The timestamp fallback is used only to correlate extension messages;
+        // live logging remains disabled unless both 128-bit values were created.
+        const assemblyJobId = isAssembly
+          ? (assemblyJobNonce ? ('autosub_' + assemblyJobNonce) : ('autosub_' + Date.now()))
+          : '';
         let transcript = null;
         let serverLogs = [];
         let stopLiveLogs = () => { };
         try {
           if (isAssembly) {
-            stopLiveLogs = startAssemblyLiveLogStream(assemblyJobId);
             markStep('fetch', 'warn');
             markStep('transcribe', 'warn');
             const messageId = assemblyJobId || ('autosub_' + Date.now());
@@ -8063,13 +8087,18 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
             setPreview(transcript.srt || '');
             setStatus(tt('toolbox.autoSubs.status.transcriptionDone', {}, 'Transcription complete. Preparing downloads...'));
 
-            const { resp, data } = await submitTranscriptToServer(transcript, stream, targets, translateEnabled, {
+            const submission = submitTranscriptToServer(transcript, stream, targets, translateEnabled, {
               engine: 'assemblyai',
               assemblySpeechModel,
               sendFullVideo: els.assemblySendFullVideo?.checked === true,
               diarization: true,
-              jobId: assemblyJobId
+              jobId: assemblyJobId,
+              logToken: assemblyLogToken
             });
+            // Start streaming only once the authenticated server request is in
+            // flight; polling handles the brief channel-reservation race.
+            stopLiveLogs = startAssemblyLiveLogStream(assemblyJobId, assemblyLogToken);
+            const { resp, data } = await submission;
             serverLogs = Array.isArray(data?.logTrail) ? data.logTrail : [];
             if (!resp.ok || data.success !== true) {
               const msg = data?.error || data?.message || data?.details || `Request failed (${resp.status})`;

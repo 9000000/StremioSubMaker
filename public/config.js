@@ -1436,6 +1436,7 @@ Translate to {target_language}.`;
     let configDirty = false;
     let revealedInstallToken = '';
     let suppressDirtyTracking = true;
+    let modelDiscoveryTokenPromise = null;
 
     // Visual state cache keys that can be safely reset on version changes
     const VISUAL_STATE_KEYS = [
@@ -2329,6 +2330,8 @@ Translate to {target_language}.`;
         '__decryptionWarningFields',
         '__nestedEncryptionRecovered',
         '__nestedEncryptionRecoveredFields',
+        '__plaintextSensitiveFieldsDetected',
+        '__plaintextSensitiveFieldsDetectedFields',
         '__credentialDecryptionFailed',
         '__credentialDecryptionFailedFields',
         '__credentialWarningEntry',
@@ -2399,6 +2402,53 @@ Translate to {target_language}.`;
             throw error;
         } finally {
             clearTimeout(timeoutId);
+        }
+    }
+
+    async function ensureModelDiscoveryConfigToken() {
+        const activeToken = getActiveConfigRef();
+        if (isValidSessionToken(activeToken)) return activeToken;
+        if (modelDiscoveryTokenPromise) return modelDiscoveryTokenPromise;
+
+        // Discovery now requires a live session capability. Reserve the same
+        // token that the normal Save flow will later update, but persist only
+        // harmless defaults here so entering/testing a raw key does not save it.
+        modelDiscoveryTokenPromise = (async () => {
+            const provisionalConfig = getDefaultConfig();
+            provisionalConfig.uiLanguage = (currentConfig?.uiLanguage || locale.lang || navigator.language || 'en')
+                .toString()
+                .toLowerCase();
+
+            const response = await fetchWithTimeout('/api/create-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(provisionalConfig)
+            }, 10000);
+            const data = await response.json().catch(() => ({}));
+            const token = extractSessionTokenFromInput(data?.token);
+            if (!response.ok || !isValidSessionToken(token)) {
+                throw new Error(data?.error || response.statusText || 'Could not authorize model discovery');
+            }
+
+            try { localStorage.setItem(TOKEN_KEY, token); } catch (_) { }
+            setActiveSessionContext({
+                token,
+                provenance: 'provisional',
+                sourceLabel: 'Reserved for configuration checks',
+                message: 'Save to apply the settings currently shown on this page.',
+                session: data?.session || null,
+                recoveredFromToken: '',
+                regenerated: false
+            });
+            syncConfigUrlForToken(token);
+            updateTokenVaultButtonState();
+            return token;
+        })();
+
+        try {
+            return await modelDiscoveryTokenPromise;
+        } finally {
+            modelDiscoveryTokenPromise = null;
         }
     }
 
@@ -3908,7 +3958,7 @@ Translate to {target_language}.`;
         showLoading(true);
         try {
             const cacheBuster = `_cb=${Date.now()}`;
-            const response = await fetchWithTimeout(`/api/get-session/${encodeURIComponent(token)}?${cacheBuster}&autoRegenerate=true`, {
+            const response = await fetchWithTimeout(`/api/get-session/${encodeURIComponent(token)}?${cacheBuster}`, {
                 cache: 'no-store',
                 headers: {
                     'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -5515,7 +5565,7 @@ Translate to {target_language}.`;
 
             try {
                 const cacheBuster = `_cb=${Date.now()}`;
-                const resp = await fetchWithTimeout(`/api/get-session/${sessionToken}?${cacheBuster}&autoRegenerate=true`, {
+                const resp = await fetchWithTimeout(`/api/get-session/${sessionToken}?${cacheBuster}`, {
                     cache: 'no-store',
                     headers: {
                         'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -8592,6 +8642,7 @@ Translate to {target_language}.`;
         }
         try {
             const requestBody = { apiKey };
+            requestBody.configStr = await ensureModelDiscoveryConfigToken();
             // For custom provider, include the baseUrl for model fetching
             if (providerKey === 'custom') {
                 const baseUrlInput = document.getElementById('provider-custom-baseUrl');
@@ -9966,16 +10017,22 @@ Translate to {target_language}.`;
             statusDiv.className = 'model-status fetching';
         }
 
+        let timeoutId = null;
         try {
+            const configStr = await ensureModelDiscoveryConfigToken();
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+            timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
             const response = await fetch('/api/gemini-models', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ apiKey }),
+                body: JSON.stringify({
+                    apiKey,
+                    configStr
+                }),
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
+            timeoutId = null;
 
             if (!response.ok) {
                 throw new Error('Failed to fetch models');
@@ -10008,6 +10065,8 @@ Translate to {target_language}.`;
                     statusDiv.className = 'model-status';
                 }, 5000);
             }
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
         }
     }
 

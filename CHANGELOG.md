@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.93
+
+**Improvements:**
+
+- **Identified SubMaker on Gemini REST requests:** All Gemini REST calls now send the versioned `x-goog-api-client` header alongside `x-goog-api-key`, covering both current `AQ.` authorization keys and legacy `AIza` keys.
+
+- **Explicit trusted-egress fallback for Gemini API:** Self-hosters can set the HTTPS-only `GEMINI_API_FALLBACK_BASE` to a Gemini-compatible gateway they control. SubMaker retries through it once, and only when Google rejects the primary server location or region.
+
+**Bug Fixes:**
+
+- **Encrypted Cloudflare Workers credentials in every persisted user configuration:** The standalone `ACCOUNT_ID|TOKEN` value now uses the same AES-256-GCM encryption lifecycle as Gemini and AssemblyAI credentials instead of remaining plaintext in Redis, filesystem snapshots, and backups. Existing plaintext values are encrypted lazily on their next read, while decryption failures never overwrite recoverable stored credentials.
+
+- **Protected Sub Toolbox provider searches and embedded-track conversion from request bursts:** Subtitle Sync searches now use the existing configuration-scoped limiter, while embedded delivery preparation has a separate Redis-backed limiter so repeated conversion requests cannot monopolize server CPU. Requests without a usable configuration retain the existing IP-based fallback.
+
+- **Restored the published release and manual test commands:** `npm run test:release` and `npm run test:manual` no longer invoke the absent, gitignored `scripts/run-tests.js`. Fresh clones and CI can now run every advertised package test command.
+
+- **Stopped hosted Gemini location failures from being reported and cached as invalid API keys:** Gemini validation now distinguishes authentication, unsupported server location, rate limiting, invalid requests, upstream failures, and network failures. Only genuine authentication failures enter the negative credential cache, and model discovery now returns safe structured errors instead of an empty list.
+
+- **Identified Gemini egress failures inside Stremio:** Google's unsupported-location response now produces a concise localized subtitle identifying the rejected server location. Other Google 400 responses retain their sanitized reason instead of becoming a generic invalid-request message.
+
+**Security Fixes:**
+
+- **Bounded server-originated model discovery and AssemblyAI validation:** Gemini and generic-provider model discovery and AssemblyAI key validation now share the Redis-backed per-IP validation limiter. Model discovery also requires a live configuration token before inspecting credentials or performing provider network work, while first-time model loading remains supported without persisting an entered key.
+
+- **Added global and per-host concurrency ceilings for arbitrary custom endpoints:** Custom-provider model listing and connection tests now share non-queueing limits of 20 concurrent requests globally and four per hostname, returning `429` with `Retry-After` when saturated. Self-hosters can tune both limits, and `ALLOW_INTERNAL_CUSTOM_ENDPOINTS` remains supported.
+
+- **Hard-bounded the provider authentication-failure cache:** The negative credential cache is now a 5,000-entry TTL/LRU instead of an unbounded `Map`, retaining the ten-minute suppression window while evicting expired and excess entries. Model-discovery and unauthenticated validation probes can no longer fill it with arbitrary rejected keys.
+
+- **Closed the public session ciphertext decryption oracle without migrating stored sessions:** Session create and update requests now reject SubMaker-formatted ciphertext in encrypted credential fields before save logic can process it. Existing AES-256-GCM `1:` ciphertexts remain readable, so deployed and self-hosted sessions require no migration.
+
+- **Closed the unauthenticated AutoSubs live-log heap and socket denial-of-service path:** Live-log channels are now created only after a valid AutoSubs submission and require a browser-generated 128-bit capability. Rate limits, channel and listener ceilings, bounded history, backpressure handling, heartbeats, and connection timeouts protect the endpoint from resource exhaustion. Capability-authenticated polling remains available as a fallback, older clients still receive the final `logTrail`, and self-hosters can tune the documented `AUTOSUB_LOG_*` limits.
+
+- **Made versioned HMAC authentication authoritative for newly written session wrappers:** New and updated sessions use a domain-separated `h1:` HMAC derived from the installation encryption key and bound to the session token, format, configuration fingerprint, field placement, and stored ciphertext. Canonical serialization prevents JSON key ordering from invalidating sessions. The legacy SHA-256 field remains as a rollback-compatible mirror, existing sessions remain accepted without migration, and HMAC mismatches preserve the stored recovery copy.
+
+- **Confined every persistent session creation to the rate-limited POST endpoint:** Session GET routes are now strictly read-only, and updates to nonexistent tokens return `404` instead of creating a session. Configure, Token Vault, and Quick Setup retain recovery behavior through local drafts and the existing rate-limited `POST /api/create-session` endpoint.
+
+- **Made session count and byte capacity hard, atomic, and non-evicting:** Redis now checks the create-only token, session count, and optional `SESSION_STORAGE_MAX_BYTES` budget atomically before admitting a session; filesystem storage enforces equivalent limits under a creation lock. Capacity errors return localized `507` guidance without evicting live sessions. Bundled self-hosters receive a 512 MiB default, `ELFHOSTED=true` keeps its existing managed profile unless explicitly configured, and the new limit is exposed in session statistics and deployment documentation.
+
 ## SubMaker v1.4.92
 
 **Improvements:**

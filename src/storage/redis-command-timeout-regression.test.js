@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const RedisStorageAdapter = require('./RedisStorageAdapter');
+const FilesystemStorageAdapter = require('./FilesystemStorageAdapter');
 const StorageAdapter = require('./StorageAdapter');
 const { StorageUnavailableError } = require('./errors');
 
@@ -134,33 +138,40 @@ test('Redis cache metrics repair invalid negative size counters', async () => {
   assert.deepEqual(writes, [['size:session', 0]]);
 });
 
-test('self-hosted Redis cache defaults reserve 1.5 GiB of the bundled 4 GiB Redis', () => {
+test('self-hosted Redis defaults hard-cap session payloads and retain 1 GiB headroom', () => {
   const limits = StorageAdapter.getSizeLimits({});
   const total = Object.values(limits)
     .filter(Number.isFinite)
     .reduce((sum, value) => sum + value, 0);
+  const nonSessionTotal = Object.entries(limits)
+    .filter(([key, value]) => key !== 'session' && Number.isFinite(value))
+    .reduce((sum, [, value]) => sum + value, 0);
 
-  assert.equal(total, 2560 * MEBIBYTE);
-  assert.equal(limits.session, null);
+  assert.equal(total, 3072 * MEBIBYTE);
+  assert.equal(nonSessionTotal, 2560 * MEBIBYTE);
+  assert.equal(limits.session, 512 * MEBIBYTE);
   assert.equal(limits.translation, 768 * MEBIBYTE);
   assert.equal(limits.smdb, 640 * MEBIBYTE);
 });
 
-test('ElfHosted retains its exact pre-1.4.92 cache budgets unless explicitly overridden', () => {
+test('ElfHosted preserves its existing cache and session byte profile unless explicitly overridden', () => {
   const limits = StorageAdapter.getSizeLimits({ ELFHOSTED: 'true' });
-  const total = Object.values(limits)
-    .filter(Number.isFinite)
-    .reduce((sum, value) => sum + value, 0);
+  const nonSessionTotal = Object.entries(limits)
+    .filter(([key, value]) => key !== 'session' && Number.isFinite(value))
+    .reduce((sum, [, value]) => sum + value, 0);
 
-  assert.equal(total, 7778336768);
+  assert.equal(nonSessionTotal, 7778336768);
+  assert.equal(limits.session, null);
   assert.equal(limits.translation, 1.5 * 1024 * MEBIBYTE);
   assert.equal(limits.smdb, 2 * 1024 * MEBIBYTE);
 
   const overridden = StorageAdapter.getSizeLimits({
     ELFHOSTED: 'true',
-    CACHE_LIMIT_TRANSLATION: '123456'
+    CACHE_LIMIT_TRANSLATION: '123456',
+    SESSION_STORAGE_MAX_BYTES: '654321'
   });
   assert.equal(overridden.translation, 123456);
+  assert.equal(overridden.session, 654321);
 });
 
 test('Redis quota scripts declare every touched key and use cached EVALSHA commands', () => {
@@ -173,6 +184,8 @@ test('Redis quota scripts declare every touched key and use cached EVALSHA comma
 
   assert.equal(commands.get('submakerAtomicCacheWrite').numberOfKeys, 5);
   assert.match(commands.get('submakerAtomicCacheWrite').lua, /projectedSize > sizeLimit/);
+  assert.match(commands.get('submakerAtomicCacheWrite').lua, /entryCount >= maxEntries/);
+  assert.match(commands.get('submakerAtomicCacheWrite').lua, /createOnly and redis\.call\('EXISTS'/);
   assert.match(commands.get('submakerAtomicCacheWrite').lua, /redis\.call\('SET', KEYS\[4\], projectedSize\)/);
   assert.equal(commands.get('submakerAtomicCacheDelete').numberOfKeys, 5);
   assert.match(commands.get('submakerAtomicCacheDelete').lua, /nextSize < 0/);
@@ -222,9 +235,10 @@ test('periodic enforcement does not evict a healthy cache below its hard limit',
   );
 });
 
-test('Redis deletion does not create size counters for unlimited caches', async () => {
+test('Redis session deletion atomically updates byte and count accounting', async () => {
   const adapter = new RedisStorageAdapter({ host: '127.0.0.1', port: 6379 });
   const calls = [];
+  const token = 'a'.repeat(32);
 
   adapter.initialized = true;
   adapter.client = {
@@ -234,12 +248,129 @@ test('Redis deletion does not create size counters for unlimited caches', async 
     }
   };
 
-  await adapter.delete('test-token', StorageAdapter.CACHE_TYPES.SESSION);
+  await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION);
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0][5], 'test-token');
-  assert.equal(calls[0][6], 0, 'unlimited sessions must not update a size counter');
+  assert.equal(calls[0][5], token);
+  assert.equal(calls[0][6], 1, 'session payload bytes must be removed from the counter');
   assert.equal(calls[0][7], 1, 'session index membership must be removed');
+});
+
+test('Redis session deletion does not create byte accounting when the session byte profile is unbounded', async () => {
+  const adapter = new RedisStorageAdapter({
+    sizeLimits: { [StorageAdapter.CACHE_TYPES.SESSION]: null }
+  });
+  const calls = [];
+  const token = 'f'.repeat(32);
+
+  adapter.initialized = true;
+  adapter.client = {
+    submakerAtomicCacheDelete: async (...args) => {
+      calls.push(args);
+      return [1, 1, 39];
+    }
+  };
+
+  await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION);
+
+  assert.equal(calls[0][6], 0, 'unbounded deployments must not gain a session byte counter');
+  assert.equal(calls[0][7], 1, 'the atomic session-count index must still be maintained');
+});
+
+test('Redis session creation passes count and byte limits into one atomic write', async () => {
+  const adapter = new RedisStorageAdapter({
+    sizeLimits: { [StorageAdapter.CACHE_TYPES.SESSION]: 1000 }
+  });
+  const calls = [];
+  const token = 'b'.repeat(32);
+  adapter.initialized = true;
+  adapter.client = {
+    submakerAtomicCacheWrite: async (...args) => {
+      calls.push(args);
+      return [-1, 900, 0, 950, 3];
+    }
+  };
+
+  const result = await adapter.createSession(token, { ok: true }, 60, {
+    maxSessions: 3,
+    maxBytes: 1000
+  });
+
+  assert.deepEqual(result, { ok: false, reason: 'count', current: 3, limit: 3 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][10], 1000, 'ARGV[6] must carry the byte limit');
+  assert.equal(calls[0][12], 1, 'ARGV[8] must mark a real session token');
+  assert.equal(calls[0][13], 3, 'ARGV[9] must carry the count limit');
+  assert.equal(calls[0][14], 1, 'ARGV[10] must enforce create-only admission');
+});
+
+test('short-lived helper keys do not consume session capacity accounting', async () => {
+  const adapter = new RedisStorageAdapter({
+    sizeLimits: { [StorageAdapter.CACHE_TYPES.SESSION]: 1000 }
+  });
+  const calls = [];
+  adapter.initialized = true;
+  adapter.client = {
+    submakerAtomicCacheWrite: async (...args) => {
+      calls.push(args);
+      return [1, 0, 0, 0, 0];
+    }
+  };
+
+  assert.equal(await adapter.set('translation-lock:test', { ok: true }, StorageAdapter.CACHE_TYPES.SESSION, 60), true);
+  assert.equal(calls[0][10], 0);
+  assert.equal(calls[0][12], 0);
+});
+
+test('session-index reconciliation preserves a session admitted after its storage scan', async () => {
+  const adapter = new RedisStorageAdapter({ sizeLimits: {} });
+  const removed = [];
+  adapter.initialized = true;
+  adapter.client = {
+    sscan: async () => ['0', ['e'.repeat(32)]],
+    pipeline: () => {
+      const operations = [];
+      return {
+        exists: (...args) => operations.push(args),
+        exec: async () => operations.map(() => [null, 1])
+      };
+    },
+    sadd: async () => 0,
+    srem: async (...args) => removed.push(args)
+  };
+
+  await adapter.resetSessionIndex([]);
+  assert.deepEqual(removed, [], 'a concurrently persisted session must not be removed from the admission index');
+});
+
+test('filesystem session creation rejects hard limits without deleting live sessions', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'submaker-session-admission-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  const adapter = new FilesystemStorageAdapter({ baseDir: tempDir });
+  adapter.directories[StorageAdapter.CACHE_TYPES.SESSION] = tempDir;
+  adapter.initialized = true;
+
+  const firstToken = 'c'.repeat(32);
+  const secondToken = 'd'.repeat(32);
+  assert.deepEqual(
+    await adapter.createSession(firstToken, { config: { uiLanguage: 'en' } }, 60, { maxSessions: 1, maxBytes: 10000 }),
+    { ok: true }
+  );
+  assert.deepEqual(
+    await adapter.createSession(secondToken, { config: {} }, 60, { maxSessions: 1, maxBytes: 10000 }),
+    { ok: false, reason: 'count', current: 1, limit: 1 }
+  );
+  assert.equal(fs.existsSync(path.join(tempDir, `${firstToken}.json`)), true, 'existing session must remain intact');
+
+  await adapter.delete(firstToken, StorageAdapter.CACHE_TYPES.SESSION);
+  const byteResult = await adapter.createSession(secondToken, { config: { large: 'x'.repeat(500) } }, 60, {
+    maxSessions: 2,
+    maxBytes: 100
+  });
+  assert.equal(byteResult.ok, false);
+  assert.equal(byteResult.reason, 'bytes');
+  assert.equal(fs.existsSync(path.join(tempDir, `${secondToken}.json`)), false);
 });
 
 const integrationPort = Number(process.env.REDIS_INTEGRATION_PORT) || 0;
@@ -253,7 +384,10 @@ test('atomic quota scripts stay exact under concurrent writes on real Redis', {
     host: '127.0.0.1',
     port: integrationPort,
     keyPrefix: prefix,
-    sizeLimits: { [cacheType]: 100 }
+    sizeLimits: {
+      [cacheType]: 100,
+      [StorageAdapter.CACHE_TYPES.SESSION]: 1000
+    }
   });
 
   await adapter.initialize();
@@ -287,6 +421,20 @@ test('atomic quota scripts stay exact under concurrent writes on real Redis', {
     await adapter.cleanup(cacheType);
     assert.equal(await adapter.size(cacheType), 0, 'TTL cleanup must repair the byte counter');
     assert.equal(await adapter.metadata('expires', cacheType), null);
+
+    const sessionTokens = Array.from({ length: 20 }, (_, index) => index.toString(16).padStart(32, '0'));
+    const sessionResults = await Promise.all(sessionTokens.map(token => adapter.createSession(
+      token,
+      { config: { uiLanguage: 'en' } },
+      60,
+      { maxSessions: 5, maxBytes: 1000 }
+    )));
+    assert.equal(sessionResults.filter(result => result.ok).length, 5, 'atomic admission must enforce the exact session count under concurrency');
+    assert.equal(await adapter.getSessionCount(), 5);
+    assert.ok(await adapter.size(StorageAdapter.CACHE_TYPES.SESSION) <= 1000);
+    for (const token of sessionTokens) {
+      await adapter.delete(token, StorageAdapter.CACHE_TYPES.SESSION);
+    }
 
     assert.equal(await adapter.set('session-token', { ok: true }, StorageAdapter.CACHE_TYPES.SESSION, 60), true);
     assert.equal(await adapter.delete('session-token', StorageAdapter.CACHE_TYPES.SESSION), true);

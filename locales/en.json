@@ -37,6 +37,7 @@
     "server": {
       "errors": {
         "storageUnavailable": "Session storage temporarily unavailable, please retry.",
+        "sessionCapacityReached": "Session storage capacity has been reached. No existing sessions were removed; please contact the server operator.",
         "configPayloadTooLarge": "Configuration payload too large",
         "originNotAllowed": "Origin not allowed",
         "stremioOnly": "Access denied. This addon must be accessed through Stremio.",
@@ -75,6 +76,8 @@
         "invalidApiKeyAuth": "Invalid API key - authentication failed",
         "requestFailed": "Request failed",
         "invalidApiKey": "Invalid API key",
+        "geminiUnsupportedLocation": "Gemini rejected this server network location. Your API key may still be valid; the host must use eligible Gemini egress and, where Google requires it, paid Gemini API access.",
+        "geminiRequestRejected": "Gemini rejected the request: {reason}",
         "usernamePasswordRequired": "Username and password are required",
         "noTokenReceived": "No token received - credentials may be invalid",
         "invalidCredentials": "Invalid username or password",
@@ -156,6 +159,7 @@
     },
     "apiErrors": {
       "geminiRateLimit": "Gemini usage limit reached. Check your API key usage/quota or use another key.",
+      "geminiUnsupportedLocation": "Gemini rejected this server network location. Your API key may still be valid; ask the host to use eligible Gemini egress and paid access where required.",
       "rateLimit": "{service} rate limit exceeded. Please wait a few minutes and try again.",
       "serviceUnavailable": "{service} temporarily unavailable. Please try again in a few minutes.",
       "databaseUnavailable": "Subtitle server database temporarily unavailable. Trying next subtitle...",
@@ -625,6 +629,7 @@
       "translationFailed": "Translation Failed",
       "translationUnexpected": "An unexpected error occurred during translation.",
       "translationRetry": "An unexpected error occurred.\\nClick this subtitle again to retry translation.",
+      "translationGeminiLocation": "Translation Failed: Gemini Rejected Server Location",
       "translationAuth": "Translation Failed: Authentication Error (403)",
       "translationAuthBody": "Your Gemini API key is invalid or rejected.\\nPlease check that your API key is correct.",
       "translationAuthRetry": "Update your Gemini API key in the addon configuration,\\nthen reinstall the addon and try again.",

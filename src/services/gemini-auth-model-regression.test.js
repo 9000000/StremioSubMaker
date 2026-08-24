@@ -51,8 +51,10 @@ test('AQ authorization keys bypass stale auth failures during explicit validatio
     const service = new GeminiService(`  ${authKey}  `, 'gemini-3.7-flash');
     await cacheProviderAuthFailure(getProviderAuthFailureCacheKey('gemini', authKey));
 
-    const cachedModels = await service.getAvailableModels({ silent: true, throwOnError: true });
-    assert.deepEqual(cachedModels, []);
+    await assert.rejects(
+      service.getAvailableModels({ silent: true, throwOnError: true }),
+      error => error.statusCode === 401 && error.type === 'authentication'
+    );
     assert.equal(request, null);
 
     const models = await service.getAvailableModels({
@@ -63,13 +65,169 @@ test('AQ authorization keys bypass stale auth failures during explicit validatio
 
     assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/models');
     assert.equal(request.options.headers['x-goog-api-key'], authKey);
+    assert.match(request.options.headers['x-goog-api-client'], /^stremio-submaker\/1\.4\.\d+$/);
     assert.deepEqual(models.map(model => model.name), ['gemini-3.7-flash']);
 
     const serverSource = fs.readFileSync(path.join(projectRoot, 'index.js'), 'utf8');
     assert.match(serverSource, /new GeminiService\(geminiApiKey\)[\s\S]{0,400}bypassAuthFailureCache: true/);
+    assert.match(serverSource, /getGeminiPublicError\(apiError, t\)/);
+    assert.doesNotMatch(serverSource, /apiError\.response\?\.status === 400[\s\S]{0,500}invalidApiKey/);
     assert.doesNotMatch(serverSource, /generativelanguage\.googleapis\.com\/v1\/models/);
   } finally {
     axios.get = originalGet;
+    resetProviderAuthFailureCache();
+  }
+});
+
+test('Gemini location rejection is not treated as an invalid key and uses a trusted fallback once', async () => {
+  const originalGet = axios.get;
+  const originalFallback = process.env.GEMINI_API_FALLBACK_BASE;
+  const authKey = 'AQ.location-test-key.with-enough-characters';
+  const requests = [];
+  const locationError = Object.assign(new Error('Request failed with status code 400'), {
+    response: {
+      status: 400,
+      data: {
+        error: {
+          code: 400,
+          message: 'User location is not supported for the API use.',
+          status: 'FAILED_PRECONDITION'
+        }
+      }
+    }
+  });
+
+  process.env.GEMINI_API_FALLBACK_BASE = 'https://trusted-gemini-gateway.example/v1beta';
+  axios.get = async (url, options) => {
+    requests.push({ url, options });
+    if (url.startsWith('https://generativelanguage.googleapis.com/')) {
+      throw locationError;
+    }
+    return {
+      data: {
+        models: [{
+          name: 'models/gemini-3.6-flash',
+          supportedGenerationMethods: ['generateContent']
+        }]
+      }
+    };
+  };
+
+  try {
+    const info = GeminiService.getErrorInfo(locationError);
+    assert.equal(info.type, 'unsupported_location');
+    assert.equal(info.googleStatus, 'FAILED_PRECONDITION');
+    assert.equal(GeminiService.isAuthFailure(locationError), false);
+
+    const service = new GeminiService(authKey, 'gemini-3.6-flash');
+    const models = await service.getAvailableModels({
+      silent: true,
+      throwOnError: true,
+      bypassAuthFailureCache: true
+    });
+
+    assert.deepEqual(requests.map(request => request.url), [
+      'https://generativelanguage.googleapis.com/v1beta/models',
+      'https://trusted-gemini-gateway.example/v1beta/models'
+    ]);
+    assert.equal(requests[1].options.headers['x-goog-api-key'], authKey);
+    assert.match(requests[1].options.headers['x-goog-api-client'], /^stremio-submaker\/1\.4\.\d+$/);
+    assert.deepEqual(models.map(model => model.name), ['gemini-3.6-flash']);
+    assert.equal(service.baseUrl, 'https://trusted-gemini-gateway.example/v1beta');
+  } finally {
+    axios.get = originalGet;
+    if (originalFallback === undefined) delete process.env.GEMINI_API_FALLBACK_BASE;
+    else process.env.GEMINI_API_FALLBACK_BASE = originalFallback;
+    resetProviderAuthFailureCache();
+  }
+});
+
+test('Gemini location errors reach translation as a specific actionable failure', async () => {
+  const originalPost = axios.post;
+  const originalFallback = process.env.GEMINI_API_FALLBACK_BASE;
+  delete process.env.GEMINI_API_FALLBACK_BASE;
+
+  axios.post = async () => {
+    throw Object.assign(new Error('Request failed with status code 400'), {
+      response: {
+        status: 400,
+        data: {
+          error: {
+            code: 400,
+            message: 'User location is not supported for the API use.',
+            status: 'FAILED_PRECONDITION'
+          }
+        }
+      }
+    });
+  };
+
+  try {
+    const service = new GeminiService('AIza-location-test-key-with-enough-characters', 'gemini-3.6-flash', {
+      maxRetries: 0
+    });
+    service.getModelLimits = async () => ({ inputTokenLimit: 1048576, outputTokenLimit: 65536 });
+
+    await assert.rejects(
+      service.translateSubtitle('Hello', 'English', 'Portuguese'),
+      error => {
+        assert.equal(error.type, 'unsupported_location');
+        assert.equal(error.translationErrorType, 'GEMINI_UNSUPPORTED_LOCATION');
+        assert.match(error.message, /server network location/i);
+        return true;
+      }
+    );
+  } finally {
+    axios.post = originalPost;
+    if (originalFallback === undefined) delete process.env.GEMINI_API_FALLBACK_BASE;
+    else process.env.GEMINI_API_FALLBACK_BASE = originalFallback;
+  }
+});
+
+test('Gemini fallback is not used for an invalid legacy API key', async () => {
+  const originalGet = axios.get;
+  const originalFallback = process.env.GEMINI_API_FALLBACK_BASE;
+  const requests = [];
+  const invalidKey = 'AIza-invalid-test-key-with-enough-characters';
+  process.env.GEMINI_API_FALLBACK_BASE = 'https://trusted-gemini-gateway.example/v1beta';
+
+  axios.get = async url => {
+    requests.push(url);
+    throw Object.assign(new Error('Request failed with status code 400'), {
+      response: {
+        status: 400,
+        data: {
+          error: {
+            code: 400,
+            message: `API key not valid. Please pass a valid API key: ${invalidKey}`,
+            status: 'INVALID_ARGUMENT'
+          }
+        }
+      }
+    });
+  };
+
+  try {
+    const service = new GeminiService(invalidKey);
+    await assert.rejects(
+      service.getAvailableModels({
+        silent: true,
+        throwOnError: true,
+        bypassAuthFailureCache: true
+      }),
+      error => {
+        const info = GeminiService.getErrorInfo(error);
+        assert.equal(info.type, 'authentication');
+        assert.equal(info.message.includes(invalidKey), false);
+        assert.match(info.message, /\[REDACTED_API_KEY\]/);
+        return true;
+      }
+    );
+    assert.deepEqual(requests, ['https://generativelanguage.googleapis.com/v1beta/models']);
+  } finally {
+    axios.get = originalGet;
+    if (originalFallback === undefined) delete process.env.GEMINI_API_FALLBACK_BASE;
+    else process.env.GEMINI_API_FALLBACK_BASE = originalFallback;
     resetProviderAuthFailureCache();
   }
 });

@@ -38,6 +38,75 @@ class FilesystemStorageAdapter extends StorageAdapter {
     this.cacheSizes = {};
   }
 
+  _getSessionStorageUsage({ removeExpired = false } = {}) {
+    const dir = this.directories[StorageAdapter.CACHE_TYPES.SESSION];
+    if (!fs.existsSync(dir)) return { count: 0, bytes: 0 };
+
+    let count = 0;
+    let bytes = 0;
+    const now = Date.now();
+    for (const file of fs.readdirSync(dir)) {
+      if (!/^[a-f0-9]{32}\.json$/.test(file)) continue;
+      const filePath = path.join(dir, file);
+      try {
+        const stats = fs.statSync(filePath);
+        if (removeExpired) {
+          const wrapper = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+          if (wrapper?.expiresAt && now > wrapper.expiresAt) {
+            fs.unlinkSync(filePath);
+            continue;
+          }
+        }
+        count += 1;
+        bytes += stats.size;
+      } catch (_) {
+        // Unreadable/corrupt entries remain on disk but cannot be admitted as
+        // free space. Account their stat size when possible.
+        try {
+          bytes += fs.statSync(filePath).size;
+        } catch (_) { /* best effort */ }
+      }
+    }
+    return { count, bytes };
+  }
+
+  async _withSessionCreationLock(operation) {
+    const sessionDir = this.directories[StorageAdapter.CACHE_TYPES.SESSION];
+    const lockPath = path.join(sessionDir, '.session-create.lock');
+    const deadline = Date.now() + 2000;
+
+    while (Date.now() < deadline) {
+      let descriptor = null;
+      try {
+        descriptor = fs.openSync(lockPath, 'wx');
+        try {
+          return await operation();
+        } finally {
+          try { fs.closeSync(descriptor); } catch (_) { /* already closed */ }
+          try { fs.unlinkSync(lockPath); } catch (_) { /* best effort */ }
+        }
+      } catch (error) {
+        if (descriptor !== null) {
+          try { fs.closeSync(descriptor); } catch (_) { /* best effort */ }
+        }
+        if (error?.code !== 'EEXIST') throw error;
+
+        try {
+          const lockAge = Date.now() - fs.statSync(lockPath).mtimeMs;
+          if (lockAge > 30000) {
+            fs.unlinkSync(lockPath);
+            continue;
+          }
+        } catch (_) {
+          continue;
+        }
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    }
+
+    return { ok: false, reason: 'busy' };
+  }
+
   /**
    * Sanitize cache key to prevent path traversal attacks
    * @private
@@ -232,6 +301,9 @@ class FilesystemStorageAdapter extends StorageAdapter {
     try {
       const filePath = this._getFilePath(key, cacheType);
       const tempPath = `${filePath}.tmp`;
+      const previousSize = fs.existsSync(filePath) ? fs.statSync(filePath).size : 0;
+      const isSessionToken = cacheType === StorageAdapter.CACHE_TYPES.SESSION
+        && /^[a-f0-9]{32}$/.test(key);
 
       // Verify path is within allowed directory (throws on traversal attempt)
       this._verifyPath(filePath, cacheType);
@@ -259,11 +331,21 @@ class FilesystemStorageAdapter extends StorageAdapter {
         createdAt: preservedCreatedAt || now,
         expiresAt
       };
+      const jsonData = JSON.stringify(data, null, 2);
+
+      const sizeLimit = StorageAdapter.SIZE_LIMITS[cacheType];
+      if (isSessionToken && sizeLimit) {
+        const currentUsage = this._getSessionStorageUsage();
+        const projectedSize = currentUsage.bytes - previousSize + Buffer.byteLength(jsonData, 'utf8');
+        if (projectedSize > sizeLimit) {
+          log.warn(() => `[Filesystem] Refused session write above hard byte quota (${projectedSize} > ${sizeLimit})`);
+          return false;
+        }
+      }
 
       // Atomic write: write to temp then rename
       try {
         const fd = fs.openSync(tempPath, 'w');
-        const jsonData = JSON.stringify(data, null, 2);
         fs.writeSync(fd, jsonData);
 
         // Ensure data hits disk before rename
@@ -288,11 +370,10 @@ class FilesystemStorageAdapter extends StorageAdapter {
 
       // Update cache size
       const stats = fs.statSync(filePath);
-      this.cacheSizes[cacheType] = (this.cacheSizes[cacheType] || 0) + stats.size;
+      this.cacheSizes[cacheType] = Math.max(0, (this.cacheSizes[cacheType] || 0) - previousSize + stats.size);
 
       // Check if we need to enforce size limits
-      const sizeLimit = StorageAdapter.SIZE_LIMITS[cacheType];
-      if (sizeLimit && this.cacheSizes[cacheType] > sizeLimit) {
+      if (cacheType !== StorageAdapter.CACHE_TYPES.SESSION && sizeLimit && this.cacheSizes[cacheType] > sizeLimit) {
         // Don't await - run cleanup in background
         this._enforceLimit(cacheType).catch(err => {
           log.error(() => `[Filesystem] Background cleanup error:`, err);
@@ -304,6 +385,80 @@ class FilesystemStorageAdapter extends StorageAdapter {
       log.error(() => `[Filesystem] Failed to set key ${key}:`, error.message);
       return false;
     }
+  }
+
+  async createSession(key, value, ttl = null, limits = {}) {
+    if (!this.initialized) {
+      throw new Error('Storage adapter not initialized');
+    }
+
+    return this._withSessionCreationLock(async () => {
+      const filePath = this._getFilePath(key, StorageAdapter.CACHE_TYPES.SESSION);
+      this._verifyPath(filePath, StorageAdapter.CACHE_TYPES.SESSION);
+      if (fs.existsSync(filePath)) {
+        return { ok: false, reason: 'exists' };
+      }
+
+      const usage = this._getSessionStorageUsage({ removeExpired: true });
+      const maxSessions = Number(limits.maxSessions);
+      if (Number.isFinite(maxSessions) && maxSessions > 0 && usage.count >= maxSessions) {
+        return { ok: false, reason: 'count', current: usage.count, limit: maxSessions };
+      }
+
+      const maxBytes = Number(limits.maxBytes) > 0
+        ? Number(limits.maxBytes)
+        : StorageAdapter.SIZE_LIMITS[StorageAdapter.CACHE_TYPES.SESSION];
+      const now = Date.now();
+      const wrapper = {
+        key,
+        content: value,
+        createdAt: now,
+        expiresAt: ttl ? now + (ttl * 1000) : null
+      };
+      const newBytes = Buffer.byteLength(JSON.stringify(wrapper, null, 2), 'utf8');
+      if (maxBytes && usage.bytes + newBytes > maxBytes) {
+        return { ok: false, reason: 'bytes', current: usage.bytes + newBytes, limit: maxBytes };
+      }
+
+      const persisted = await this.set(key, value, StorageAdapter.CACHE_TYPES.SESSION, ttl);
+      return persisted ? { ok: true } : { ok: false, reason: 'storage' };
+    });
+  }
+
+  async updateSession(key, value, ttl = null, limits = {}) {
+    if (!this.initialized) {
+      throw new Error('Storage adapter not initialized');
+    }
+
+    const filePath = this._getFilePath(key, StorageAdapter.CACHE_TYPES.SESSION);
+    this._verifyPath(filePath, StorageAdapter.CACHE_TYPES.SESSION);
+    if (!fs.existsSync(filePath)) return { ok: false, reason: 'missing' };
+
+    const existingSize = fs.statSync(filePath).size;
+    let createdAt = Date.now();
+    try {
+      const existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      if (Number.isFinite(existing?.createdAt)) createdAt = existing.createdAt;
+    } catch (_) { /* set() will retain its normal recovery behavior */ }
+
+    const now = Date.now();
+    const wrapper = {
+      key,
+      content: value,
+      createdAt,
+      expiresAt: ttl ? now + (ttl * 1000) : null
+    };
+    const maxBytes = Number(limits.maxBytes) > 0
+      ? Number(limits.maxBytes)
+      : StorageAdapter.SIZE_LIMITS[StorageAdapter.CACHE_TYPES.SESSION];
+    const usage = this._getSessionStorageUsage();
+    const projectedSize = usage.bytes - existingSize + Buffer.byteLength(JSON.stringify(wrapper, null, 2), 'utf8');
+    if (maxBytes && projectedSize > maxBytes) {
+      return { ok: false, reason: 'bytes', current: projectedSize, limit: maxBytes };
+    }
+
+    const persisted = await this.set(key, value, StorageAdapter.CACHE_TYPES.SESSION, ttl);
+    return persisted ? { ok: true } : { ok: false, reason: 'storage' };
   }
 
   /**
@@ -471,6 +626,10 @@ class FilesystemStorageAdapter extends StorageAdapter {
   async _enforceLimit(cacheType) {
     const sizeLimit = StorageAdapter.SIZE_LIMITS[cacheType];
     if (!sizeLimit) {
+      return { deleted: 0, bytesFreed: 0 };
+    }
+
+    if (cacheType === StorageAdapter.CACHE_TYPES.SESSION) {
       return { deleted: 0, bytesFreed: 0 };
     }
 

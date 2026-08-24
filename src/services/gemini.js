@@ -1,6 +1,7 @@
 const axios = require('axios');
+const { version: PACKAGE_VERSION } = require('../../package.json');
 const { sanitizeApiKeyForHeader } = require('../utils/security');
-const { handleTranslationError, logApiError } = require('../utils/apiErrorHandler');
+const { handleTranslationError } = require('../utils/apiErrorHandler');
 const { httpAgent, httpsAgent } = require('../utils/httpAgents');
 const { MAX_AI_RESPONSE_BYTES } = require('../utils/resourceLimits');
 const log = require('../utils/logger');
@@ -15,7 +16,36 @@ const {
 
 // Keep discovery, metadata, token counting, and generation on Google's current
 // documented Gemini REST surface.
-const GEMINI_API_URL = process.env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com/v1beta';
+const DEFAULT_GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta';
+const GEMINI_CLIENT_HEADER = `stremio-submaker/${PACKAGE_VERSION}`;
+const MAX_GEMINI_ERROR_MESSAGE_CHARS = 500;
+
+function normalizeGeminiApiBase(value, options = {}) {
+  const raw = String(value || '').trim().replace(/\/+$/, '');
+  if (!raw) return options.fallback || null;
+
+  try {
+    const parsed = new URL(raw);
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+      return options.fallback || null;
+    }
+    if (options.httpsOnly && parsed.protocol !== 'https:') {
+      return options.fallback || null;
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return options.fallback || null;
+    }
+    return parsed.toString().replace(/\/+$/, '');
+  } catch (_) {
+    return options.fallback || null;
+  }
+}
+
+function redactGeminiSecrets(value) {
+  return String(value || '')
+    .replace(/\bAIza[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_API_KEY]')
+    .replace(/\bAQ\.[A-Za-z0-9._-]{16,}\b/g, '[REDACTED_AUTH_KEY]');
+}
 
 function normalizeGeminiModelId(model) {
   return String(model || '').trim().replace(/^models\//, '');
@@ -49,15 +79,30 @@ function normalizeTargetName(name) {
 function getGeminiErrorMessage(error) {
   const dataError = error?.response?.data?.error;
   if (typeof dataError === 'string') {
-    return dataError;
+    return redactGeminiSecrets(dataError).replace(/\s+/g, ' ').trim().slice(0, MAX_GEMINI_ERROR_MESSAGE_CHARS);
   }
   if (dataError && typeof dataError === 'object') {
-    return dataError.message || JSON.stringify(dataError);
+    return redactGeminiSecrets(dataError.message || '').replace(/\s+/g, ' ').trim().slice(0, MAX_GEMINI_ERROR_MESSAGE_CHARS);
   }
-  return String(error?.response?.data?.message || error?.message || '');
+  return redactGeminiSecrets(error?.response?.data?.message || error?.message || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_GEMINI_ERROR_MESSAGE_CHARS);
+}
+
+function isGeminiUnsupportedLocation(error) {
+  const message = getGeminiErrorMessage(error).toLowerCase();
+  return (
+    (message.includes('location') || message.includes('region') || message.includes('country') || message.includes('territor')) &&
+    (message.includes('not supported') || message.includes('unsupported') || message.includes('not available'))
+  );
 }
 
 function isGeminiAuthFailure(error) {
+  if (isGeminiUnsupportedLocation(error)) {
+    return false;
+  }
+
   const status = error?.response?.status || error?.statusCode;
   if (status === 401 || status === 403) {
     return true;
@@ -73,6 +118,71 @@ function isGeminiAuthFailure(error) {
     message.includes('permission') ||
     message.includes('authentication')
   );
+}
+
+function getGeminiErrorInfo(error) {
+  const statusCode = Number(error?.response?.status || error?.statusCode) || null;
+  const googleError = error?.response?.data?.error;
+  const googleStatus = typeof googleError === 'object' && googleError
+    ? String(googleError.status || '').trim().slice(0, 80)
+    : '';
+  const detailReason = Array.isArray(googleError?.details)
+    ? googleError.details
+      .map(detail => String(detail?.reason || '').trim())
+      .find(Boolean) || ''
+    : '';
+  const message = getGeminiErrorMessage(error) || 'Gemini request failed';
+
+  let type = 'upstream_error';
+  if (isGeminiUnsupportedLocation(error)) {
+    type = 'unsupported_location';
+  } else if (isGeminiAuthFailure(error)) {
+    type = 'authentication';
+  } else if (statusCode === 429) {
+    type = 'rate_limit';
+  } else if (statusCode === 400 || googleStatus === 'INVALID_ARGUMENT') {
+    type = 'invalid_request';
+  } else if (googleStatus === 'FAILED_PRECONDITION') {
+    type = 'failed_precondition';
+  } else if (statusCode && statusCode >= 500) {
+    type = 'server_error';
+  } else if (!statusCode) {
+    type = 'network_error';
+  }
+
+  return {
+    type,
+    statusCode,
+    googleStatus,
+    detailReason: redactGeminiSecrets(detailReason).slice(0, 120),
+    message
+  };
+}
+
+function decorateGeminiError(error) {
+  const info = getGeminiErrorInfo(error);
+  if (info.message) {
+    error.providerMessage = info.message;
+    error.message = info.message;
+  }
+  if (info.type === 'unsupported_location') {
+    error.type = 'unsupported_location';
+    error.isRetryable = false;
+    error.translationErrorType = 'GEMINI_UNSUPPORTED_LOCATION';
+  }
+  return info;
+}
+
+function logGeminiFailure(error, operation) {
+  const info = decorateGeminiError(error);
+  const metadata = [
+    `type=${info.type}`,
+    info.statusCode ? `http=${info.statusCode}` : '',
+    info.googleStatus ? `google=${info.googleStatus}` : '',
+    info.detailReason ? `reason=${info.detailReason}` : ''
+  ].filter(Boolean).join(', ');
+  log.warn(() => `[Gemini] ${operation} failed (${metadata || 'no status'}): ${info.message}`);
+  return info;
 }
 
 // Default translation prompt (base - thinking rules added conditionally)
@@ -98,7 +208,16 @@ class GeminiService {
     this.model = normalizeGeminiModelId(model || process.env.GEMINI_MODEL || 'gemini-flash-lite-latest');
     this.isGemmaModel = String(this.model).toLowerCase().includes('gemma');
     this.isGemini3Model = isGemini3Model(this.model);
-    this.baseUrl = GEMINI_API_URL;
+    this.primaryBaseUrl = normalizeGeminiApiBase(process.env.GEMINI_API_BASE, {
+      fallback: DEFAULT_GEMINI_API_URL
+    });
+    this.fallbackBaseUrl = normalizeGeminiApiBase(process.env.GEMINI_API_FALLBACK_BASE, {
+      httpsOnly: true
+    });
+    if (this.fallbackBaseUrl === this.primaryBaseUrl) {
+      this.fallbackBaseUrl = null;
+    }
+    this.baseUrl = this.primaryBaseUrl;
 
     // Advanced settings with environment variable fallbacks
     // Priority: advancedSettings param > environment variables > hardcoded defaults
@@ -159,6 +278,44 @@ class GeminiService {
 
     // JSON structured output mode (set by TranslationEngine when enabled)
     this.enableJsonOutput = advancedSettings.enableJsonOutput === true;
+  }
+
+  buildRequestHeaders(extraHeaders = {}) {
+    return {
+      'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '',
+      'x-goog-api-client': GEMINI_CLIENT_HEADER,
+      ...extraHeaders
+    };
+  }
+
+  async request(method, path, data, options = {}) {
+    const makeRequest = async baseUrl => {
+      const requestOptions = {
+        ...options,
+        headers: this.buildRequestHeaders(options.headers || {})
+      };
+      const url = `${baseUrl}${path}`;
+      return method === 'get'
+        ? axios.get(url, requestOptions)
+        : axios.post(url, data, requestOptions);
+    };
+
+    try {
+      return await makeRequest(this.baseUrl);
+    } catch (error) {
+      if (
+        this.fallbackBaseUrl &&
+        this.baseUrl !== this.fallbackBaseUrl &&
+        isGeminiUnsupportedLocation(error)
+      ) {
+        const info = getGeminiErrorInfo(error);
+        log.warn(() => `[Gemini] Primary API egress was rejected (${info.googleStatus || info.statusCode || 'unsupported location'}); retrying through the configured trusted fallback`);
+        const response = await makeRequest(this.fallbackBaseUrl);
+        this.baseUrl = this.fallbackBaseUrl;
+        return response;
+      }
+      throw error;
+    }
   }
 
   getEffectiveThinkingBudget() {
@@ -234,15 +391,21 @@ class GeminiService {
     const silent = !!options.silent;
     const throwOnError = options.throwOnError === true;
     const bypassAuthFailureCache = options.bypassAuthFailureCache === true;
+    const cacheAuthFailures = options.cacheAuthFailures !== false;
     if (!bypassAuthFailureCache && await hasCachedProviderAuthFailure(this.authFailureCacheKey)) {
       log.warn(() => '[Gemini] Fetch models blocked: cached invalid API key detected');
+      if (throwOnError) {
+        const cachedError = new Error('Gemini authentication was rejected recently; use explicit key validation to recheck it.');
+        cachedError.statusCode = 401;
+        cachedError.type = 'authentication';
+        cachedError.authError = true;
+        throw cachedError;
+      }
       return [];
     }
 
     try {
-      const response = await axios.get(`${this.baseUrl}/models`, {
-        // Use header form for API key to avoid query parsing/proxy quirks
-        headers: { 'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '' },
+      const response = await this.request('get', '/models', null, {
         timeout: 10000,
         httpAgent,
         httpsAgent,
@@ -266,12 +429,12 @@ class GeminiService {
       return models;
 
     } catch (error) {
-      if (isGeminiAuthFailure(error)) {
+      decorateGeminiError(error);
+      if (cacheAuthFailures && isGeminiAuthFailure(error)) {
         await cacheProviderAuthFailure(this.authFailureCacheKey);
       }
       if (!silent) {
-        // Log response details to help diagnose issues when not in config UI
-        logApiError(error, 'Gemini', 'Fetch models', { skipResponseData: true });
+        logGeminiFailure(error, 'Fetch models');
       }
       if (throwOnError) {
         throw error;
@@ -289,8 +452,7 @@ class GeminiService {
     }
 
     try {
-      const response = await axios.get(`${this.baseUrl}/models/${this.model}`, {
-        headers: { 'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '' },
+      const response = await this.request('get', `/models/${this.model}`, null, {
         timeout: 10000,
         httpAgent,
         httpsAgent,
@@ -323,7 +485,8 @@ class GeminiService {
       this._modelLimits = limits;
       return limits;
     } catch (error) {
-      log.warn(() => ['[Gemini] Could not fetch model limits, using conservative defaults:', error.message]);
+      logGeminiFailure(error, 'Fetch model limits');
+      log.warn(() => '[Gemini] Using conservative model limits after metadata lookup failure');
       const limits = {
         inputTokenLimit: undefined,
         outputTokenLimit: getFallbackOutputTokenLimit(this.model)
@@ -434,15 +597,15 @@ class GeminiService {
     const { userPrompt } = this.buildUserPrompt(subtitleContent, targetLanguage, customPrompt);
 
     try {
-      const response = await axios.post(
-        `${this.baseUrl}/models/${this.model}:countTokens`,
+      const response = await this.request(
+        'post',
+        `/models/${this.model}:countTokens`,
         {
           contents: [{
             parts: [{ text: userPrompt }]
           }]
         },
         {
-          headers: { 'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '' },
           timeout: 10000,
           httpAgent,
           httpsAgent,
@@ -457,7 +620,7 @@ class GeminiService {
       log.warn(() => '[Gemini] Token count response missing totalTokens, falling back to estimate');
       return null;
     } catch (error) {
-      logApiError(error, 'Gemini', 'Count tokens', { skipResponseData: true });
+      logGeminiFailure(error, 'Count tokens');
       return null;
     }
   }
@@ -525,8 +688,9 @@ class GeminiService {
         ];
 
         // Call Gemini API (use header auth for consistency and security)
-        const response = await axios.post(
-          `${this.baseUrl}/models/${this.model}:generateContent`,
+        const response = await this.request(
+          'post',
+          `/models/${this.model}:generateContent`,
           {
             contents: [{
               parts: [{
@@ -537,7 +701,6 @@ class GeminiService {
             safetySettings
           },
           {
-            headers: { 'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '' },
             timeout: this.timeout,
             httpAgent,
             httpsAgent,
@@ -632,6 +795,7 @@ class GeminiService {
 
       } catch (error) {
         // Use centralized error handler
+        decorateGeminiError(error);
         handleTranslationError(error, 'Gemini', { skipResponseData: true });
       }
     });
@@ -683,8 +847,9 @@ class GeminiService {
           { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'OFF' },
         ];
 
-        const response = await axios.post(
-          `${this.baseUrl}/models/${this.model}:streamGenerateContent`,
+        const response = await this.request(
+          'post',
+          `/models/${this.model}:streamGenerateContent`,
           {
             contents: [{
               parts: [{
@@ -696,7 +861,6 @@ class GeminiService {
           },
           {
             headers: {
-              'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '',
               'Accept': 'text/event-stream'
             },
             params: { alt: 'sse' },
@@ -847,6 +1011,7 @@ class GeminiService {
         });
 
       } catch (error) {
+        decorateGeminiError(error);
         handleTranslationError(error, 'Gemini', { skipResponseData: true });
       }
     });
@@ -966,7 +1131,13 @@ class GeminiService {
 
 module.exports = GeminiService;
 module.exports.DEFAULT_TRANSLATION_PROMPT = DEFAULT_TRANSLATION_PROMPT;
+module.exports.getErrorInfo = getGeminiErrorInfo;
+module.exports.isAuthFailure = isGeminiAuthFailure;
 module.exports.__testing = {
   getGeminiErrorMessage,
-  isGeminiAuthFailure
+  isGeminiAuthFailure,
+  isGeminiUnsupportedLocation,
+  getGeminiErrorInfo,
+  normalizeGeminiApiBase,
+  GEMINI_CLIENT_HEADER
 };

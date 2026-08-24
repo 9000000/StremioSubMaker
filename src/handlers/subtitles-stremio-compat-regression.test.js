@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 
 const {
   subtitleMatchesRequestedLanguage,
-  buildStremioSubtitleVariantLabel
+  buildStremioSubtitleVariantLabel,
+  createTranslationErrorSubtitle
 } = require('./subtitles');
 
 function makeSubtitle(id, languageCode, provider = 'test') {
@@ -30,4 +31,19 @@ test('modern Stremio variant labels identify the source instead of repeating onl
   });
 
   assert.equal(label, 'Example.Show.S01E02.WEB-DL.srt • opensubtitles');
+});
+
+test('Gemini location failures use a concise title-only visible cue', () => {
+  const subtitle = createTranslationErrorSubtitle(
+    'GEMINI_UNSUPPORTED_LOCATION',
+    'ignored provider detail',
+    'en',
+    'gemini'
+  );
+  const visibleCue = subtitle.split(/\r?\n\r?\n/, 1)[0];
+
+  assert.equal(
+    visibleCue,
+    '1\n00:00:00,000 --> 04:00:00,000\nTranslation Failed: Gemini Rejected Server Location'
+  );
 });

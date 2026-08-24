@@ -37,6 +37,7 @@
     "server": {
       "errors": {
         "storageUnavailable": "Almacenamiento de sesión temporalmente no disponible, inténtalo de nuevo.",
+        "sessionCapacityReached": "Se alcanzó la capacidad de almacenamiento de sesiones. No se eliminó ninguna sesión existente; contacta con el operador del servidor.",
         "configPayloadTooLarge": "La carga de configuración es demasiado grande",
         "originNotAllowed": "Origen no permitido",
         "stremioOnly": "Acceso denegado. Este addon debe usarse desde Stremio.",
@@ -75,6 +76,8 @@
         "invalidApiKeyAuth": "Clave API no válida: autenticación fallida",
         "requestFailed": "La solicitud falló",
         "invalidApiKey": "Clave API no válida",
+        "geminiUnsupportedLocation": "Gemini rechazó la ubicación de red de este servidor. La clave API aún puede ser válida; el host debe usar una salida de red apta para Gemini y, cuando Google lo exija, acceso de pago a la API de Gemini.",
+        "geminiRequestRejected": "Gemini rechazó la solicitud: {reason}",
         "usernamePasswordRequired": "Se requieren usuario y contraseña",
         "noTokenReceived": "No se recibió token; las credenciales pueden ser inválidas",
         "invalidCredentials": "Usuario o contraseña incorrectos",
@@ -156,6 +159,7 @@
     },
     "apiErrors": {
       "geminiRateLimit": "Se alcanzó el límite de uso de Gemini. Revisa el uso/cuota de tu API key o usa otra clave.",
+      "geminiUnsupportedLocation": "Gemini rechazó la ubicación de red de este servidor. La clave API aún puede ser válida; pide al host una salida apta para Gemini y acceso de pago cuando sea obligatorio.",
       "rateLimit": "Límite de {service} excedido. Espera unos minutos y vuelve a intentar.",
       "serviceUnavailable": "{service} no disponible temporalmente. Intenta de nuevo en unos minutos.",
       "databaseUnavailable": "La base de datos de subtítulos no está disponible temporalmente. Probando el siguiente subtítulo...",
@@ -625,6 +629,7 @@
       "translationFailed": "La traducción falló",
       "translationUnexpected": "Ocurrió un error inesperado durante la traducción.",
       "translationRetry": "Error inesperado.\\nHaz clic en este subtítulo para reintentar.",
+      "translationGeminiLocation": "Traducción fallida: Gemini rechazó la ubicación del servidor",
       "translationAuth": "Traducción fallida: error de autenticación (403)",
       "translationAuthBody": "Tu clave de Gemini es inválida o fue rechazada.\\nVerifica que sea correcta.",
       "translationAuthRetry": "Actualiza tu clave de Gemini en la configuración,\\nluego reinstala el addon y vuelve a intentar.",

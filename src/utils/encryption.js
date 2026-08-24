@@ -293,108 +293,57 @@ function unwrapEncryptedStringLayers(value, fieldName = 'unknown', options = {})
   };
 }
 
-function normalizeSensitiveInputsForStorage(config) {
+/**
+ * Find credential fields containing SubMaker ciphertext envelopes without
+ * decrypting them. Public session endpoints use this at the trust boundary so
+ * stored ciphertext can never be submitted as a chosen decryption input.
+ *
+ * Keep this list aligned with encryptUserConfig/decryptUserConfig.
+ *
+ * @param {Object} config - Client-supplied configuration
+ * @returns {string[]} Canonical paths of rejected credential fields
+ */
+function findEncryptedSensitiveInputPaths(config) {
   if (!config || typeof config !== 'object') {
-    return config;
+    return [];
   }
 
-  const normalized = JSON.parse(JSON.stringify(config));
-  const normalizedFields = [];
-
-  const normalizeField = (getter, setter, fieldName) => {
-    const currentValue = getter();
-    if (!currentValue || typeof currentValue !== 'string' || !isEncrypted(currentValue)) {
-      return;
-    }
-
-    const result = unwrapEncryptedStringLayers(currentValue, fieldName, { returnOriginalOnFailure: true });
-    if (result.layersRemoved > 0 && result.value !== currentValue) {
-      setter(result.value);
-      normalizedFields.push(fieldName);
+  const encryptedPaths = [];
+  const inspect = (value, fieldPath) => {
+    if (typeof value === 'string' && isEncrypted(value)) {
+      encryptedPaths.push(fieldPath);
     }
   };
 
-  normalizeField(
-    () => normalized.geminiApiKey,
-    (value) => { normalized.geminiApiKey = value; },
-    'geminiApiKey'
-  );
-
-  if (Array.isArray(normalized.geminiApiKeys) && normalized.geminiApiKeys.length > 0) {
-    normalized.geminiApiKeys = normalized.geminiApiKeys.map((key, idx) => {
-      const result = unwrapEncryptedStringLayers(key, `geminiApiKeys[${idx}]`, { returnOriginalOnFailure: true });
-      if (result.layersRemoved > 0 && result.value !== key) {
-        normalizedFields.push(`geminiApiKeys[${idx}]`);
-      }
-      return result.value;
+  inspect(config.geminiApiKey, 'geminiApiKey');
+  if (Array.isArray(config.geminiApiKeys)) {
+    config.geminiApiKeys.forEach((value, index) => {
+      inspect(value, `geminiApiKeys[${index}]`);
     });
   }
+  inspect(config.assemblyAiApiKey, 'assemblyAiApiKey');
+  inspect(config.cloudflareWorkersApiKey, 'cloudflareWorkersApiKey');
 
-  normalizeField(
-    () => normalized.assemblyAiApiKey,
-    (value) => { normalized.assemblyAiApiKey = value; },
-    'assemblyAiApiKey'
-  );
-
-  if (normalized.subtitleProviders?.opensubtitles) {
-    normalizeField(
-      () => normalized.subtitleProviders.opensubtitles.username,
-      (value) => { normalized.subtitleProviders.opensubtitles.username = value; },
-      'opensubtitles.username'
-    );
-    normalizeField(
-      () => normalized.subtitleProviders.opensubtitles.password,
-      (value) => { normalized.subtitleProviders.opensubtitles.password = value; },
-      'opensubtitles.password'
-    );
+  const subtitleProviders = config.subtitleProviders;
+  if (subtitleProviders && typeof subtitleProviders === 'object') {
+    inspect(subtitleProviders.opensubtitles?.username, 'subtitleProviders.opensubtitles.username');
+    inspect(subtitleProviders.opensubtitles?.password, 'subtitleProviders.opensubtitles.password');
+    inspect(subtitleProviders.subdl?.apiKey, 'subtitleProviders.subdl.apiKey');
+    inspect(subtitleProviders.subsource?.apiKey, 'subtitleProviders.subsource.apiKey');
+    inspect(subtitleProviders.scs?.apiKey, 'subtitleProviders.scs.apiKey');
+    inspect(subtitleProviders.wyzie?.apiKey, 'subtitleProviders.wyzie.apiKey');
+    inspect(subtitleProviders.subsro?.apiKey, 'subtitleProviders.subsro.apiKey');
   }
 
-  normalizeField(
-    () => normalized.subtitleProviders?.subdl?.apiKey,
-    (value) => { normalized.subtitleProviders.subdl.apiKey = value; },
-    'subdl.apiKey'
-  );
-
-  normalizeField(
-    () => normalized.subtitleProviders?.subsource?.apiKey,
-    (value) => { normalized.subtitleProviders.subsource.apiKey = value; },
-    'subsource.apiKey'
-  );
-
-  normalizeField(
-    () => normalized.subtitleProviders?.scs?.apiKey,
-    (value) => { normalized.subtitleProviders.scs.apiKey = value; },
-    'scs.apiKey'
-  );
-
-  normalizeField(
-    () => normalized.subtitleProviders?.wyzie?.apiKey,
-    (value) => { normalized.subtitleProviders.wyzie.apiKey = value; },
-    'wyzie.apiKey'
-  );
-
-  normalizeField(
-    () => normalized.subtitleProviders?.subsro?.apiKey,
-    (value) => { normalized.subtitleProviders.subsro.apiKey = value; },
-    'subsro.apiKey'
-  );
-
-  if (normalized.providers && typeof normalized.providers === 'object') {
-    for (const [key, provider] of Object.entries(normalized.providers)) {
-      if (!provider || typeof provider !== 'object') continue;
-      normalizeField(
-        () => normalized.providers[key].apiKey,
-        (value) => { normalized.providers[key].apiKey = value; },
-        `providers.${key}.apiKey`
-      );
+  if (config.providers && typeof config.providers === 'object') {
+    for (const [providerName, provider] of Object.entries(config.providers)) {
+      if (provider && typeof provider === 'object') {
+        inspect(provider.apiKey, `providers.${providerName}.apiKey`);
+      }
     }
   }
 
-  if (normalizedFields.length > 0) {
-    log.warn(() => `[Encryption] Normalized encrypted sensitive input before storage: ${normalizedFields.join(', ')}`);
-  }
-
-  return normalized;
+  return encryptedPaths;
 }
 
 /**
@@ -429,6 +378,13 @@ function encryptUserConfig(config) {
     // Encrypt AssemblyAI API key
     if (encrypted.assemblyAiApiKey) {
       encrypted.assemblyAiApiKey = encrypt(encrypted.assemblyAiApiKey);
+    }
+
+    // Encrypt the Cloudflare Workers ACCOUNT_ID|TOKEN credential. Keep an
+    // already-encrypted value unchanged so a failed legacy normalization (for
+    // example after an encryption-key mismatch) can never add another layer.
+    if (encrypted.cloudflareWorkersApiKey && !isEncrypted(encrypted.cloudflareWorkersApiKey)) {
+      encrypted.cloudflareWorkersApiKey = encrypt(encrypted.cloudflareWorkersApiKey);
     }
 
     // Encrypt subtitle provider credentials
@@ -503,6 +459,7 @@ function encryptUserConfig(config) {
 // Track if any decryption operations fail during this call - helps detect encryption key mismatches
 let decryptionWarnings = [];
 let nestedEncryptionRecoveredFields = [];
+let plaintextSensitiveFieldsDetected = [];
 
 function decryptUserConfig(config) {
   if (!config || typeof config !== 'object') {
@@ -512,6 +469,7 @@ function decryptUserConfig(config) {
   // Reset warnings for this call
   decryptionWarnings = [];
   nestedEncryptionRecoveredFields = [];
+  plaintextSensitiveFieldsDetected = [];
 
   // Clone config to avoid modifying original
   const decrypted = JSON.parse(JSON.stringify(config));
@@ -568,6 +526,24 @@ function decryptUserConfig(config) {
     if (decrypted.assemblyAiApiKey && (isConfigEncrypted || isEncrypted(decrypted.assemblyAiApiKey))) {
       log.debug(() => '[Encryption] Decrypting AssemblyAI API key');
       decrypted.assemblyAiApiKey = safeDecrypt(decrypted.assemblyAiApiKey, 'assemblyAiApiKey');
+    }
+
+    // cloudflareWorkersApiKey was stored in plaintext by releases before
+    // v1.4.93 even when the rest of the config carried the encryption marker.
+    // Preserve it for the current request and flag the session manager to
+    // rewrite that legacy payload once with field-level encryption.
+    if (decrypted.cloudflareWorkersApiKey) {
+      const cloudflareKeyEncrypted = isEncrypted(decrypted.cloudflareWorkersApiKey);
+      if (isConfigEncrypted && !cloudflareKeyEncrypted) {
+        plaintextSensitiveFieldsDetected.push('cloudflareWorkersApiKey');
+      }
+      if (isConfigEncrypted || cloudflareKeyEncrypted) {
+        log.debug(() => `[Encryption] Cloudflare Workers credential exists, encrypted: ${cloudflareKeyEncrypted}, will decrypt: ${isConfigEncrypted || cloudflareKeyEncrypted}`);
+        decrypted.cloudflareWorkersApiKey = safeDecrypt(
+          decrypted.cloudflareWorkersApiKey,
+          'cloudflareWorkersApiKey'
+        );
+      }
     }
 
     // Decrypt subtitle provider credentials
@@ -677,6 +653,12 @@ function decryptUserConfig(config) {
       log.warn(() => `[Encryption] Recovered nested encryption for fields: ${nestedEncryptionRecoveredFields.join(', ')}. Session should be re-saved in normalized form.`);
     }
 
+    if (plaintextSensitiveFieldsDetected.length > 0) {
+      decrypted.__plaintextSensitiveFieldsDetected = true;
+      decrypted.__plaintextSensitiveFieldsDetectedFields = [...plaintextSensitiveFieldsDetected];
+      log.warn(() => `[Encryption] Detected legacy plaintext sensitive fields: ${plaintextSensitiveFieldsDetected.join(', ')}. Session should be re-saved with field-level encryption.`);
+    }
+
     return decrypted;
   } catch (error) {
     log.error(() => ['[Encryption] Failed to decrypt user config:', error.message]);
@@ -696,7 +678,7 @@ module.exports = {
   isEncrypted,
   encryptUserConfig,
   decryptUserConfig,
-  normalizeSensitiveInputsForStorage,
+  findEncryptedSensitiveInputPaths,
   getEncryptionKey,
   getDecryptionWarnings
 };

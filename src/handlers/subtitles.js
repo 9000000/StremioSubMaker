@@ -914,21 +914,19 @@ function buildPartialSrtWithTail(mergedSrt, uiLanguage = 'en') {
 
 /**
  * Create an error subtitle for session token not found
- * @param {string|null} regeneratedToken - Optional regenerated token for quick reinstall link
- * @param {string|null} baseUrl - Optional base URL for generating reinstall link
+ * @param {string|null} _unusedRegeneratedToken - Retained for call-site compatibility; never used to create or expose a token
+ * @param {string|null} baseUrl - Optional base URL for the read-only Configure recovery link
  * @returns {string} - SRT formatted error subtitle
  */
-function createSessionTokenErrorSubtitle(regeneratedToken = null, baseUrl = null, uiLanguage = 'en') {
+function createSessionTokenErrorSubtitle(_unusedRegeneratedToken = null, baseUrl = null, uiLanguage = 'en') {
   const t = getTranslator(uiLanguage);
   let reinstallInstruction = t('subtitle.sessionErrorAdvice', {}, 'Please reconfig and reinstall the addon.');
 
-  // If we have a regenerated token, provide a direct reinstall link
-  if (regeneratedToken && baseUrl) {
-    const reinstallUrl = `${baseUrl}/configure/${regeneratedToken}`;
-    reinstallInstruction = `${t('subtitle.sessionErrorQuickFix', {}, 'Quick fix: Open this link to reinstall with fresh config:')}\n${reinstallUrl}`;
-  } else if (regeneratedToken) {
-    // Token available but no base URL - just mention the token
-    reinstallInstruction = `${t('subtitle.sessionErrorToken', {}, 'A fresh config was created. Use this token to reinstall:')}\n${regeneratedToken}`;
+  // Error-subtitle GET requests must stay read-only. Point users at a fresh
+  // Configure draft; saving there explicitly calls the limited POST endpoint.
+  if (baseUrl) {
+    const configureUrl = `${String(baseUrl).replace(/\/$/, '')}/configure`;
+    reinstallInstruction = `${reinstallInstruction}\n${configureUrl}`;
   }
 
   const srt = `1
@@ -1163,7 +1161,11 @@ function createTranslationErrorSubtitle(errorType, errorMessage, uiLanguage = 'e
     return providerNames[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
   })();
 
-  if (errorType === '403') {
+  if (errorType === 'GEMINI_UNSUPPORTED_LOCATION') {
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationGeminiLocation', {}, 'Translation Failed: Gemini Rejected Server Location')}`, null, uiLanguage);
+  } else if (errorType === '403') {
     return ensureInformationalSubtitleSize(`1
 00:00:00,000 --> 04:00:00,000
 ${t('subtitle.translationAuth', { provider: displayProvider }, `Translation Failed: Authentication Error (403)`)}

@@ -100,10 +100,14 @@ volumes:
   encryption-key:
 ```
 
-The built-in non-session cache budgets total 2.5 GiB, leaving 1.5 GiB of this
-4 GiB Redis limit for sessions, metadata/indexes, allocator fragmentation and
-persistence overhead. Keep `noeviction`: global Redis LRU policies cannot tell
-cache entries from persistent sessions and may delete saved user configuration.
+The built-in non-session cache budgets total 2.5 GiB and the independent hard
+session-payload quota is 512 MiB, leaving 1 GiB of this 4 GiB Redis limit for
+session metadata/indexes, allocator fragmentation and persistence overhead.
+Keep `noeviction`: global Redis LRU policies cannot tell cache entries from
+persistent sessions and may delete saved user configuration. New session saves
+are rejected when either `SESSION_STORAGE_MAX_SESSIONS` or
+`SESSION_STORAGE_MAX_BYTES` is full; SubMaker does not evict a live session to
+admit a new one.
 If you override any `CACHE_LIMIT_*` values, keep their sum comfortably below
 `maxmemory` (normally 60-70% unless sessions use a separate Redis instance).
 

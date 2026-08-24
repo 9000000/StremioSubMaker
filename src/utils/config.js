@@ -665,6 +665,23 @@ function normalizeConfig(config) {
     return parts.length === 4 && parts[0] === '1';
   };
 
+  // Keep the standalone Cloudflare Workers credential string-only and trimmed.
+  // Ciphertext can reach normalization after an encryption-key mismatch; never
+  // pass that unusable value to the xSync bootstrap or Cloudflare API.
+  const normalizedCloudflareWorkersApiKey = typeof mergedConfig.cloudflareWorkersApiKey === 'string'
+    ? mergedConfig.cloudflareWorkersApiKey.trim()
+    : '';
+  if (looksEncrypted(normalizedCloudflareWorkersApiKey)) {
+    mergedConfig.cloudflareWorkersApiKey = '';
+    mergedConfig.__credentialDecryptionFailed = true;
+    const credentialFailureFields = new Set(mergedConfig.__credentialDecryptionFailedFields || []);
+    credentialFailureFields.add('cloudflareWorkersApiKey');
+    mergedConfig.__credentialDecryptionFailedFields = Array.from(credentialFailureFields);
+    log.warn(() => '[Config] Cloudflare Workers credential appears to still be encrypted (decryption failed). Clearing it before runtime use.');
+  } else {
+    mergedConfig.cloudflareWorkersApiKey = normalizedCloudflareWorkersApiKey;
+  }
+
   // Sanitize geminiApiKeys array: trim whitespace, remove empty strings, dedupe, enforce max limit
   // Also detect and remove encrypted keys that failed to decrypt
   const rawKeys = Array.isArray(mergedConfig.geminiApiKeys) ? mergedConfig.geminiApiKeys : [];

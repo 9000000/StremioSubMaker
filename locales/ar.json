@@ -37,6 +37,7 @@
     "server": {
       "errors": {
         "storageUnavailable": "تخزين الجلسة غير متاح مؤقتاً، يرجى إعادة المحاولة.",
+        "sessionCapacityReached": "تم بلوغ سعة تخزين الجلسات. لم تتم إزالة أي جلسات موجودة؛ يُرجى التواصل مع مشغل الخادم.",
         "configPayloadTooLarge": "حجم بيانات الإعدادات كبير جداً",
         "originNotAllowed": "المصدر غير مسموح به",
         "stremioOnly": "تم رفض الوصول. يجب الوصول إلى هذه الإضافة من خلال Stremio.",
@@ -75,6 +76,8 @@
         "invalidApiKeyAuth": "مفتاح API غير صالح - فشلت المصادقة",
         "requestFailed": "فشل الطلب",
         "invalidApiKey": "مفتاح API غير صالح",
+        "geminiUnsupportedLocation": "رفض Gemini موقع شبكة هذا الخادم. قد يظل مفتاح API صالحًا؛ يجب على المضيف استخدام مسار شبكة مؤهل لـ Gemini ووصول مدفوع إلى Gemini API عندما تتطلب Google ذلك.",
+        "geminiRequestRejected": "رفض Gemini الطلب: {reason}",
         "usernamePasswordRequired": "اسم المستخدم وكلمة المرور مطلوبان",
         "noTokenReceived": "لم يتم استلام أي رمز - قد تكون بيانات الاعتماد غير صالحة",
         "invalidCredentials": "اسم المستخدم أو كلمة المرور غير صالحة",
@@ -156,6 +159,7 @@
     },
     "apiErrors": {
       "geminiRateLimit": "تم الوصول إلى حد استخدام Gemini. تحقق من استخدام/حصة مفتاح API أو استخدم مفتاحًا آخر.",
+      "geminiUnsupportedLocation": "رفض Gemini موقع شبكة هذا الخادم. قد يظل مفتاح API صالحًا؛ اطلب من المضيف استخدام مسار شبكة مؤهل لـ Gemini ووصول مدفوع عند الحاجة.",
       "rateLimit": "تم تجاوز حد المعدل لخدمة {service}. يرجى الانتظار بضع دقائق والمحاولة مرة أخرى.",
       "serviceUnavailable": "خدمة {service} غير متاحة مؤقتاً. يرجى المحاولة مرة أخرى خلال بضع دقائق.",
       "databaseUnavailable": "قاعدة بيانات خادم الترجمات غير متاحة مؤقتاً. جاري تجربة الترجمة التالية...",
@@ -625,6 +629,7 @@
       "translationFailed": "فشلت الترجمة",
       "translationUnexpected": "حدث خطأ غير متوقع أثناء الترجمة.",
       "translationRetry": "حدث خطأ غير متوقع.\\nانقر على هذه الترجمة مرة أخرى لإعادة المحاولة.",
+      "translationGeminiLocation": "فشلت الترجمة: رفض Gemini موقع الخادم",
       "translationAuth": "فشلت الترجمة: خطأ في المصادقة (403)",
       "translationAuthBody": "مفتاح Gemini API غير صالح أو مرفوض.\\nيرجى التحقق من صحة مفتاح API.",
       "translationAuthRetry": "قم بتحديث مفتاح Gemini API في إعدادات الإضافة،\\nثم أعد تثبيت الإضافة وحاول مرة أخرى.",

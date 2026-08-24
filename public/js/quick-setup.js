@@ -2039,16 +2039,23 @@
                     body: JSON.stringify(finalConfig)
                 });
 
-                if (!resp.ok) {
+                if (resp.status === 404 || resp.status === 410) {
+                    // The update endpoint is deliberately update-only. Fall
+                    // through to the strictly creation-limited POST endpoint.
+                    isUpdate = false;
+                    targetToken = null;
+                    localStorage.removeItem(TOKEN_KEY);
+                } else if (!resp.ok) {
                     const errText = await resp.text();
                     throw new Error(`Update failed (${resp.status}): ${errText}`);
+                } else {
+                    data = await resp.json();
+
+                    if (data.token) targetToken = data.token;
                 }
-                data = await resp.json();
+            }
 
-                // If update returned a new token (e.g. expired), use it
-                if (data.token) targetToken = data.token;
-
-            } else {
+            if (!isUpdate || !targetToken) {
                 // Create new session (fallback or first time)
                 const resp = await fetch('/api/create-session', {
                     method: 'POST',

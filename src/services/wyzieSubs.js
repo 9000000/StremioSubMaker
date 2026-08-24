@@ -468,6 +468,7 @@ class WyzieSubsService {
 
     async validateApiKey(options = {}) {
         const timeout = Number(options.timeout) > 0 ? Number(options.timeout) : 10000;
+        const cacheAuthFailures = options.cacheAuthFailures !== false;
 
         if (!this.apiKey) {
             return { valid: false, error: 'API key is required' };
@@ -483,7 +484,7 @@ class WyzieSubsService {
                     return null;
                 }
 
-                if (result.valid === false && (result.status === 401 || result.status === 403)) {
+                if (cacheAuthFailures && result.valid === false && (result.status === 401 || result.status === 403)) {
                     await cacheProviderAuthFailure(this.authFailureCacheKey);
                 } else if (result.valid === true) {
                     await clearCachedProviderAuthFailure(this.authFailureCacheKey);
@@ -576,7 +577,9 @@ class WyzieSubsService {
             const upstream = getWyzieUpstreamMessage(error.response?.data, error.message || 'Request failed');
 
             if (status === 401 || status === 403) {
-                await cacheProviderAuthFailure(this.authFailureCacheKey);
+                if (cacheAuthFailures) {
+                    await cacheProviderAuthFailure(this.authFailureCacheKey);
+                }
                 return { valid: false, error: upstream, status };
             }
 

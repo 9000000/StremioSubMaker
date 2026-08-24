@@ -1,9 +1,15 @@
 const crypto = require('crypto');
+const { LRUCache } = require('lru-cache');
 const log = require('./logger');
 
 const PROVIDER_AUTH_FAILURE_TTL_MS = 10 * 60 * 1000;
+const PROVIDER_AUTH_FAILURE_CACHE_MAX = 5000;
 const PROVIDER_AUTH_FAILURE_PREFIX = 'provider_auth_fail:';
-const localAuthFailureCache = new Map();
+const localAuthFailureCache = new LRUCache({
+  max: PROVIDER_AUTH_FAILURE_CACHE_MAX,
+  ttl: PROVIDER_AUTH_FAILURE_TTL_MS,
+  updateAgeOnGet: false
+});
 
 function getProviderAuthFailureCacheKey(provider, apiKey) {
   const providerKey = String(provider || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
@@ -21,17 +27,7 @@ function hasLocalAuthFailure(cacheKey) {
     return false;
   }
 
-  const timestamp = localAuthFailureCache.get(cacheKey);
-  if (!timestamp) {
-    return false;
-  }
-
-  if (Date.now() - timestamp > PROVIDER_AUTH_FAILURE_TTL_MS) {
-    localAuthFailureCache.delete(cacheKey);
-    return false;
-  }
-
-  return true;
+  return localAuthFailureCache.get(cacheKey) === true;
 }
 
 async function hasCachedProviderAuthFailure(cacheKey) {
@@ -48,7 +44,7 @@ async function hasCachedProviderAuthFailure(cacheKey) {
     const { StorageAdapter } = require('../storage');
     const cached = await getShared(`${PROVIDER_AUTH_FAILURE_PREFIX}${cacheKey}`, StorageAdapter.CACHE_TYPES.SESSION);
     if (cached) {
-      localAuthFailureCache.set(cacheKey, Date.now());
+      localAuthFailureCache.set(cacheKey, true);
       return true;
     }
   } catch (error) {
@@ -58,12 +54,17 @@ async function hasCachedProviderAuthFailure(cacheKey) {
   return false;
 }
 
-async function cacheProviderAuthFailure(cacheKey) {
+async function cacheProviderAuthFailure(cacheKey, options = {}) {
   if (!cacheKey) {
     return;
   }
 
-  localAuthFailureCache.set(cacheKey, Date.now());
+  if (options.local !== false) {
+    localAuthFailureCache.set(cacheKey, true);
+  }
+  if (options.shared === false) {
+    return;
+  }
 
   try {
     const { setShared } = require('./sharedCache');
@@ -99,11 +100,20 @@ function resetProviderAuthFailureCache() {
   localAuthFailureCache.clear();
 }
 
+function getProviderAuthFailureCacheStats() {
+  return {
+    size: localAuthFailureCache.size,
+    max: PROVIDER_AUTH_FAILURE_CACHE_MAX
+  };
+}
+
 module.exports = {
   PROVIDER_AUTH_FAILURE_TTL_MS,
+  PROVIDER_AUTH_FAILURE_CACHE_MAX,
   getProviderAuthFailureCacheKey,
   hasCachedProviderAuthFailure,
   cacheProviderAuthFailure,
   clearCachedProviderAuthFailure,
-  resetProviderAuthFailureCache
+  resetProviderAuthFailureCache,
+  getProviderAuthFailureCacheStats
 };
