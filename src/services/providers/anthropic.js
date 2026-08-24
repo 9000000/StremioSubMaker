@@ -1,8 +1,9 @@
 const axios = require('axios');
-const { handleTranslationError, logApiError } = require('../../utils/apiErrorHandler');
+const { handleTranslationError, isResponseTooLargeError, logApiError } = require('../../utils/apiErrorHandler');
 const { httpAgent, httpsAgent } = require('../../utils/httpAgents');
 const log = require('../../utils/logger');
 const { sanitizeApiKeyForHeader } = require('../../utils/security');
+const { MAX_AI_RESPONSE_BYTES } = require('../../utils/resourceLimits');
 const { DEFAULT_TRANSLATION_PROMPT } = require('../gemini');
 const { normalizeTargetLanguageForPrompt } = require('../utils/normalizeTargetLanguageForPrompt');
 
@@ -161,7 +162,8 @@ class AnthropicProvider {
         headers: this.getHeaders(),
         timeout: 10000,
         httpAgent,
-        httpsAgent
+        httpsAgent,
+        maxContentLength: MAX_AI_RESPONSE_BYTES
       });
 
       const models = Array.isArray(response.data?.data) ? response.data.data : [];
@@ -238,7 +240,8 @@ class AnthropicProvider {
             headers: this.getHeaders(),
             timeout: this.translationTimeout,
             httpAgent,
-            httpsAgent
+            httpsAgent,
+            maxContentLength: MAX_AI_RESPONSE_BYTES
           }
         );
 
@@ -256,6 +259,9 @@ class AnthropicProvider {
         return this.cleanTranslatedSubtitle(fullText);
       } catch (error) {
         lastError = error;
+        if (isResponseTooLargeError(error)) {
+          handleTranslationError(error, this.providerName, { skipResponseData: true });
+        }
         if (!disableTopP && this.isTopPTemperatureConflict(error)) {
           disableTopP = true;
           log.warn(() => [`[${this.providerName}] Model rejected temperature+top_p together, retrying without top_p`]);
@@ -295,7 +301,8 @@ class AnthropicProvider {
           timeout: this.translationTimeout,
           httpAgent,
           httpsAgent,
-          responseType: 'stream'
+          responseType: 'stream',
+          maxContentLength: MAX_AI_RESPONSE_BYTES
         }
       );
 
@@ -462,6 +469,10 @@ class AnthropicProvider {
         return await executeStream(body);
       } catch (error) {
         lastError = error;
+
+        if (isResponseTooLargeError(error)) {
+          handleTranslationError(error, this.providerName, { skipResponseData: true });
+        }
 
         if (!disableTopP && this.isTopPTemperatureConflict(error)) {
           disableTopP = true;

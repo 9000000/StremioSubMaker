@@ -2,6 +2,7 @@ const { getLanguageName } = require('./languages');
 const { version: appVersion } = require('./version');
 const { quickNavStyles, quickNavScript, renderQuickNav } = require('./quickNav');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
+const { serializeJsonForInlineScript } = require('./inlineScriptJson');
 
 function buildQuery(params) {
   const entries = Object.entries(params || {}).filter(([, value]) => value !== undefined && value !== null && value !== '');
@@ -1337,7 +1338,7 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
 
     // Retranslate button handler
     (function initRetranslateButtons() {
-      const CONFIG_STR = ${JSON.stringify(configStr || '')};
+      const CONFIG_STR = ${serializeJsonForInlineScript(configStr || '')};
       
       function tt(key, vars, fallback) {
         try {
@@ -1436,15 +1437,15 @@ function generateHistoryPage(configStr, historyEntries, config, videoId, filenam
 
     (function initSubtitleMenuBridge() {
       const HISTORY = {
-        configStr: ${JSON.stringify(configStr || '')},
-        videoId: ${JSON.stringify(videoId || '')},
-        filename: ${JSON.stringify(filename || '')},
+        configStr: ${serializeJsonForInlineScript(configStr || '')},
+        videoId: ${serializeJsonForInlineScript(videoId || '')},
+        filename: ${serializeJsonForInlineScript(filename || '')},
         videoHash: ''
       };
-      const SUBTITLE_MENU_TARGETS = ${JSON.stringify(config?.targetLanguages || [])};
-      const SUBTITLE_MENU_SOURCES = ${JSON.stringify(config?.sourceLanguages || [])};
-      const SUBTITLE_MENU_TARGET_CODES = ${JSON.stringify(config?.targetLanguages || [])};
-      const SUBTITLE_LANGUAGE_MAPS = ${JSON.stringify(config?.languageMaps || {})};
+      const SUBTITLE_MENU_TARGETS = ${serializeJsonForInlineScript(config?.targetLanguages || [])};
+      const SUBTITLE_MENU_SOURCES = ${serializeJsonForInlineScript(config?.sourceLanguages || [])};
+      const SUBTITLE_MENU_TARGET_CODES = ${serializeJsonForInlineScript(config?.targetLanguages || [])};
+      const SUBTITLE_LANGUAGE_MAPS = ${serializeJsonForInlineScript(config?.languageMaps || {})};
 
       function tryMountSubtitleMenu(attemptsLeft) {
         if (!window.SubtitleMenu || typeof window.SubtitleMenu.mount !== 'function') {

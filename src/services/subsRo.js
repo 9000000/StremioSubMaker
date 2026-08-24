@@ -528,7 +528,8 @@ class SubsRoService {
 
                 const response = await this.client.get(downloadUrl, {
                     responseType: 'arraybuffer',
-                    timeout: timeout // Use configurable timeout
+                    timeout: timeout, // Use configurable timeout
+                    maxContentLength: MAX_ZIP_BYTES
                 });
 
                 const buffer = Buffer.from(response.data);
@@ -587,6 +588,11 @@ class SubsRoService {
             } catch (error) {
                 lastError = error;
                 const status = error.response?.status;
+
+                if (error?.code === 'ERR_BAD_RESPONSE' && /maxContentLength size of \d+ exceeded/i.test(error?.message || '')) {
+                    log.warn(() => `[SubsRo] Download exceeded ${MAX_ZIP_BYTES} byte response limit`);
+                    return createZipTooLargeSubtitle(MAX_ZIP_BYTES, MAX_ZIP_BYTES + 1);
+                }
 
                 // Don't retry for non-retryable errors
                 if (status === 404 || status === 401 || status === 403) {

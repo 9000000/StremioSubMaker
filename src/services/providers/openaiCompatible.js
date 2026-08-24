@@ -1,8 +1,14 @@
 const axios = require('axios');
-const { handleTranslationError, logApiError } = require('../../utils/apiErrorHandler');
+const { handleTranslationError, isResponseTooLargeError, logApiError } = require('../../utils/apiErrorHandler');
 const { httpAgent, httpsAgent } = require('../../utils/httpAgents');
 const log = require('../../utils/logger');
 const { sanitizeApiKeyForHeader } = require('../../utils/security');
+const { MAX_AI_RESPONSE_BYTES } = require('../../utils/resourceLimits');
+const {
+  areInternalEndpointsAllowed,
+  assertSafeCustomRequestUrl,
+  createSsrfSafeRedirectValidator
+} = require('../../utils/ssrfProtection');
 const { DEFAULT_TRANSLATION_PROMPT } = require('../gemini');
 const {
   findISO6391ByName,
@@ -50,6 +56,7 @@ class OpenAICompatibleProvider {
       const https = require('https');
       this._ssrfHttpAgent = new http.Agent({ keepAlive: true, lookup: this._ssrfLookup });
       this._ssrfHttpsAgent = new https.Agent({ keepAlive: true, lookup: this._ssrfLookup });
+      this._ssrfBeforeRedirect = createSsrfSafeRedirectValidator();
     }
   }
 
@@ -68,6 +75,34 @@ class OpenAICompatibleProvider {
       return { httpAgent: this._ssrfHttpAgent, httpsAgent: this._ssrfHttpsAgent };
     }
     return { httpAgent, httpsAgent };
+  }
+
+  /**
+   * Apply custom-provider SSRF checks to the initial request and every
+   * redirect. Disabling Axios environment proxies keeps DNS/socket validation
+   * on this process instead of delegating destination resolution to a proxy.
+   */
+  getHttpRequestConfig(url, config = {}) {
+    const agents = this.getHttpAgents();
+    const requestConfig = {
+      ...config,
+      httpAgent: agents.httpAgent,
+      httpsAgent: agents.httpsAgent,
+      // Axios enforces this against decompressed bytes for both buffered and
+      // streamed responses, bounding model lists, translations, and SSE
+      // accumulators without changing normal provider behavior.
+      maxContentLength: MAX_AI_RESPONSE_BYTES
+    };
+
+    if (this._ssrfLookup) {
+      assertSafeCustomRequestUrl(url);
+      requestConfig.beforeRedirect = this._ssrfBeforeRedirect;
+      if (!areInternalEndpointsAllowed()) {
+        requestConfig.proxy = false;
+      }
+    }
+
+    return requestConfig;
   }
 
 
@@ -582,13 +617,10 @@ class OpenAICompatibleProvider {
         ? `${this.baseUrl.replace(/\/v1$/, '')}/models`
         : `${this.baseUrl}/models`;
 
-      const agents = this.getHttpAgents();
-      const requestConfig = {
+      const requestConfig = this.getHttpRequestConfig(baseModelsUrl, {
         headers: this.getAuthHeaders(),
-        timeout: 10000,
-        httpAgent: agents.httpAgent,
-        httpsAgent: agents.httpsAgent
-      };
+        timeout: 10000
+      });
 
       let response;
 
@@ -699,13 +731,10 @@ class OpenAICompatibleProvider {
       false,
       { disableStructuredOutput: true }
     );
-    const agents = this.getHttpAgents();
-    const response = await axios.post(url, body, {
+    const response = await axios.post(url, body, this.getHttpRequestConfig(url, {
       headers: this.getAuthHeaders(),
-      timeout: this.translationTimeout,
-      httpAgent: agents.httpAgent,
-      httpsAgent: agents.httpsAgent
-    });
+      timeout: this.translationTimeout
+    }));
 
     const text = isCfRun
       ? (
@@ -743,16 +772,13 @@ class OpenAICompatibleProvider {
             disableStructuredOutput
           }
         );
-        const agents = this.getHttpAgents();
         const response = await axios.post(
           url,
           body,
-          {
+          this.getHttpRequestConfig(url, {
             headers: this.getAuthHeaders(),
-            timeout: this.translationTimeout,
-            httpAgent: agents.httpAgent,
-            httpsAgent: agents.httpsAgent
-          }
+            timeout: this.translationTimeout
+          })
         );
 
         let text;
@@ -775,6 +801,9 @@ class OpenAICompatibleProvider {
         return this.cleanTranslatedSubtitle(text);
       } catch (error) {
         lastError = error;
+        if (isResponseTooLargeError(error)) {
+          handleTranslationError(error, this.providerName, { skipResponseData: true });
+        }
         if (
           this.enableJsonOutput &&
           !disableStructuredOutput &&
@@ -832,17 +861,14 @@ class OpenAICompatibleProvider {
     }
 
     const executeStream = async () => {
-      const agents = this.getHttpAgents();
       const response = await axios.post(
         url,
         body,
-        {
+        this.getHttpRequestConfig(url, {
           headers: this.getAuthHeaders(),
           timeout: this.translationTimeout,
-          httpAgent: agents.httpAgent,
-          httpsAgent: agents.httpsAgent,
           responseType: 'stream'
-        }
+        })
       );
 
       const contentType = (response.headers && (response.headers['content-type'] || response.headers['Content-Type'])) || '';
@@ -959,6 +985,10 @@ class OpenAICompatibleProvider {
         return await executeStream();
       } catch (error) {
         lastError = error;
+
+        if (isResponseTooLargeError(error)) {
+          handleTranslationError(error, this.providerName, { skipResponseData: true });
+        }
 
         // If streaming is not supported, fall back to non-stream once
         const status = error?.response?.status;

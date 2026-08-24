@@ -473,6 +473,7 @@ class SubDLService {
           subtitleResponse = await SubDLService.downloadClient.get(downloadUrl, {
             responseType: 'arraybuffer',
             timeout: timeout, // Use configurable timeout
+            maxContentLength: MAX_ZIP_BYTES,
             // Without this header SubDL treats the request as anonymous and
             // applies its per-IP quota. That makes every user of a shared host
             // consume the same allowance even though each configured a key.

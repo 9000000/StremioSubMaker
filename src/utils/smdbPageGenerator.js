@@ -7,6 +7,7 @@ const { getLanguageName, getAllLanguages, buildLanguageLookupMaps } = require('.
 const { deriveVideoHash } = require('./videoHash');
 const { parseStremioId } = require('./subtitle');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
+const { serializeJsonForInlineScript } = require('./inlineScriptJson');
 const { quickNavStyles, quickNavScript, renderQuickNav } = require('./quickNav');
 const { version: appVersion } = require('./version');
 
@@ -1039,13 +1040,13 @@ async function generateSmdbPage(configStr, videoId, filename, config = {}) {
 
   <script>
     // ── Bootstrap data ──────────────────────────────────────────────────────
-    const CONFIG_STR = ${JSON.stringify(configStr || '')};
-    const VIDEO_ID = ${JSON.stringify(videoId || '')};
-    const FILENAME = ${JSON.stringify(filename || '')};
-    const DERIVED_HASH = ${JSON.stringify(videoHash || '')};
-    const USER_LANGUAGES = ${JSON.stringify(userLanguages)};
-    const ALL_LANGUAGES = ${JSON.stringify(allLanguages)};
-    const TARGET_LANGUAGES = ${JSON.stringify(subtitleMenuTargets)};
+    const CONFIG_STR = ${serializeJsonForInlineScript(configStr || '')};
+    const VIDEO_ID = ${serializeJsonForInlineScript(videoId || '')};
+    const FILENAME = ${serializeJsonForInlineScript(filename || '')};
+    const DERIVED_HASH = ${serializeJsonForInlineScript(videoHash || '')};
+    const USER_LANGUAGES = ${serializeJsonForInlineScript(userLanguages)};
+    const ALL_LANGUAGES = ${serializeJsonForInlineScript(allLanguages)};
+    const TARGET_LANGUAGES = ${serializeJsonForInlineScript(subtitleMenuTargets)};
 
     // ── State ───────────────────────────────────────────────────────────────
     let linkedStream = null; // { videoId, filename, videoHash, stremioHash }
@@ -1487,10 +1488,10 @@ async function generateSmdbPage(configStr, videoId, filename, config = {}) {
   <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}&_cb=${escapeHtml(appVersion || 'dev')}"></script>
   <script>
     // ── Subtitle Menu (floating button) ──────────────────────────────────────
-    const SUBTITLE_MENU_TARGETS = ${JSON.stringify(subtitleMenuTargets)};
-    const SUBTITLE_MENU_SOURCES = ${JSON.stringify(config.sourceLanguages || [])};
-    const SUBTITLE_MENU_TARGET_CODES = ${JSON.stringify(config.targetLanguages || [])};
-    const SUBTITLE_LANGUAGE_MAPS = JSON.parse(${JSON.stringify(JSON.stringify(languageMaps))});
+    const SUBTITLE_MENU_TARGETS = ${serializeJsonForInlineScript(subtitleMenuTargets)};
+    const SUBTITLE_MENU_SOURCES = ${serializeJsonForInlineScript(config.sourceLanguages || [])};
+    const SUBTITLE_MENU_TARGET_CODES = ${serializeJsonForInlineScript(config.targetLanguages || [])};
+    const SUBTITLE_LANGUAGE_MAPS = ${serializeJsonForInlineScript(languageMaps)};
     let subtitleMenuInstance = null;
 
     function mountSubtitleMenu() {

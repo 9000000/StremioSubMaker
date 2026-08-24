@@ -178,6 +178,15 @@ class StorageFactory {
       }
     }, 6 * 60 * 60 * 1000);
 
+    // Cleanup expired translation-history entries and their quota metadata.
+    scheduleBackgroundInterval(async () => {
+      try {
+        await adapter.cleanup(StorageAdapter.CACHE_TYPES.HISTORY);
+      } catch (error) {
+        log.error(() => '[Cleanup] Failed to cleanup translation history cache:', error);
+      }
+    }, 6 * 60 * 60 * 1000);
+
     log.debug(() => 'Scheduled periodic cache cleanup tasks');
   }
 

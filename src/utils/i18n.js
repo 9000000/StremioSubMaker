@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { serializeJsonForInlineScript } = require('./inlineScriptJson');
 
 // Simple in-memory cache to avoid re-reading locale files
 const localeCache = new Map();
@@ -103,7 +104,7 @@ function getTranslator(lang) {
  */
 function buildClientBootstrap(localePayload) {
   const safePayload = localePayload || loadLocale(DEFAULT_LANG);
-  const json = JSON.stringify(safePayload);
+  const json = serializeJsonForInlineScript(safePayload);
   return `
     <script>
       (function() {

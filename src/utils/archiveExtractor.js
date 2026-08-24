@@ -6,7 +6,95 @@
 const log = require('./logger');
 const { detectAndConvertEncoding } = require('./encodingDetector');
 const { appendHiddenInformationalNote } = require('./subtitle');
+const { DEFAULT_ARCHIVE_LIMITS } = require('./resourceLimits');
 const zlib = require('zlib');
+
+class ArchiveLimitError extends Error {
+    constructor(reason, limitBytes, actualBytes) {
+        super(`Archive safety limit exceeded (${reason})`);
+        this.name = 'ArchiveLimitError';
+        this.code = 'ARCHIVE_LIMIT_EXCEEDED';
+        this.reason = reason;
+        this.limitBytes = limitBytes;
+        this.actualBytes = actualBytes;
+    }
+}
+
+function resolveArchiveLimits(options = {}) {
+    const custom = options.archiveLimits && typeof options.archiveLimits === 'object'
+        ? options.archiveLimits
+        : {};
+    const resolvePositiveInteger = (value, fallback) => (
+        Number.isSafeInteger(value) && value > 0 ? value : fallback
+    );
+
+    return {
+        maxEntries: resolvePositiveInteger(custom.maxEntries, DEFAULT_ARCHIVE_LIMITS.maxEntries),
+        maxEntryBytes: resolvePositiveInteger(custom.maxEntryBytes, DEFAULT_ARCHIVE_LIMITS.maxEntryBytes),
+        maxTotalBytes: resolvePositiveInteger(custom.maxTotalBytes, DEFAULT_ARCHIVE_LIMITS.maxTotalBytes),
+        maxCompressionRatio: resolvePositiveInteger(custom.maxCompressionRatio, DEFAULT_ARCHIVE_LIMITS.maxCompressionRatio),
+        minRatioBytes: resolvePositiveInteger(custom.minRatioBytes, DEFAULT_ARCHIVE_LIMITS.minRatioBytes),
+        maxDepth: resolvePositiveInteger(custom.maxDepth, DEFAULT_ARCHIVE_LIMITS.maxDepth)
+    };
+}
+
+function normalizeArchiveSize(value, fallback) {
+    return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+}
+
+function assertArchiveMetadata(metadata, archiveBytes, limits) {
+    if (metadata.length > limits.maxEntries) {
+        throw new ArchiveLimitError('entry count', limits.maxEntries, metadata.length);
+    }
+
+    let totalBytes = 0;
+    for (const item of metadata) {
+        const expandedBytes = normalizeArchiveSize(item.expandedBytes, limits.maxEntryBytes + 1);
+        const compressedBytes = normalizeArchiveSize(item.compressedBytes, null);
+
+        if (expandedBytes > limits.maxEntryBytes) {
+            throw new ArchiveLimitError('single entry bytes', limits.maxEntryBytes, expandedBytes);
+        }
+
+        totalBytes += expandedBytes;
+        if (!Number.isSafeInteger(totalBytes) || totalBytes > limits.maxTotalBytes) {
+            throw new ArchiveLimitError('cumulative expanded bytes', limits.maxTotalBytes, totalBytes);
+        }
+
+        if (expandedBytes >= limits.minRatioBytes && compressedBytes !== null) {
+            const ratioLimitBytes = compressedBytes * limits.maxCompressionRatio;
+            if (expandedBytes > ratioLimitBytes) {
+                throw new ArchiveLimitError('entry compression ratio', ratioLimitBytes, expandedBytes);
+            }
+        }
+    }
+
+    if (totalBytes >= limits.minRatioBytes && archiveBytes > 0) {
+        const ratioLimitBytes = archiveBytes * limits.maxCompressionRatio;
+        if (totalBytes > ratioLimitBytes) {
+            throw new ArchiveLimitError('archive compression ratio', ratioLimitBytes, totalBytes);
+        }
+    }
+}
+
+function assertExpandedBuffer(buffer, limits, totalBytes = 0) {
+    const size = buffer?.length || 0;
+    if (size > limits.maxEntryBytes) {
+        throw new ArchiveLimitError('single entry bytes', limits.maxEntryBytes, size);
+    }
+    if (totalBytes + size > limits.maxTotalBytes) {
+        throw new ArchiveLimitError('cumulative expanded bytes', limits.maxTotalBytes, totalBytes + size);
+    }
+    return totalBytes + size;
+}
+
+function assertCompressionRatio(compressedBytes, expandedBytes, limits) {
+    if (expandedBytes < limits.minRatioBytes) return;
+    const ratioLimitBytes = compressedBytes * limits.maxCompressionRatio;
+    if (expandedBytes > ratioLimitBytes) {
+        throw new ArchiveLimitError('compression ratio', ratioLimitBytes, expandedBytes);
+    }
+}
 
 // Magic byte signatures for archive detection
 const ARCHIVE_SIGNATURES = {
@@ -121,6 +209,25 @@ Please pick another subtitle or provider.`;
     return appendHiddenInformationalNote(message);
 }
 
+function createArchiveSafetyLimitSubtitle(error) {
+    const reason = error?.reason || 'safe processing limit';
+    const detail = reason === 'entry count'
+        ? `The pack contains too many files (${error.actualBytes}; limit: ${error.limitBytes}).`
+        : reason.includes('compression ratio')
+            ? 'The pack expands far beyond its compressed size.'
+            : reason === 'recursion depth'
+                ? `The pack contains too many nested compression layers (limit: ${error.limitBytes}).`
+                : 'The pack expands beyond the safe processing limit.';
+
+    const message = `1
+00:00:00,000 --> 04:00:00,000
+Subtitle pack is too large or complex to process safely.
+${detail}
+Please pick another subtitle or provider.`;
+
+    return appendHiddenInformationalNote(message);
+}
+
 /**
  * Create informative subtitle when episode not found in season pack
  * @param {number} episode - Requested episode number
@@ -216,7 +323,7 @@ Please select a different subtitle (SRT, VTT, or ASS recommended).`;
  * @param {Buffer} buffer - RAR archive buffer
  * @returns {Promise<{files: Map<string, Buffer>, entries: string[]}>}
  */
-async function extractRar(buffer) {
+async function extractRar(buffer, selectionOptions = {}, limits = DEFAULT_ARCHIVE_LIMITS) {
     log.debug(() => `[ArchiveExtractor] extractRar: starting RAR extraction (${buffer.length} bytes)`);
 
     const { createExtractorFromData } = require('node-unrar-js');
@@ -230,8 +337,13 @@ async function extractRar(buffer) {
         const fileHeaders = [...list.fileHeaders];
         log.debug(() => `[ArchiveExtractor] extractRar: found ${fileHeaders.length} total entries (including directories)`);
 
-        const entries = fileHeaders
-            .filter(h => !h.flags.directory)
+        const nonDirectoryHeaders = fileHeaders.filter(h => !h.flags.directory);
+        assertArchiveMetadata(nonDirectoryHeaders.map(header => ({
+            expandedBytes: header.unpSize,
+            compressedBytes: header.packSize
+        })), buffer.length, limits);
+
+        const entries = nonDirectoryHeaders
             .map(h => h.name)
             .filter(name => {
                 // Reject entries with path traversal sequences or absolute paths
@@ -250,10 +362,19 @@ async function extractRar(buffer) {
             log.debug(() => `[ArchiveExtractor] extractRar: files in RAR: ${entries.slice(0, 10).join(', ')}${entries.length > 10 ? ` ... and ${entries.length - 10} more` : ''}`);
         }
 
-        const safeEntrySet = new Set(entries);
-        const extracted = extractor.extract();
         const files = new Map();
+        const { filename: selectedFilename } = findSubtitleFile(entries, selectionOptions);
+        if (!selectedFilename) {
+            return { files, entries };
+        }
+
+        // node-unrar-js can filter before extraction. Expanding only the file
+        // selected by the existing matching logic avoids materializing an
+        // entire season pack while preserving the chosen subtitle.
+        const safeEntrySet = new Set([selectedFilename]);
+        const extracted = extractor.extract({ files: [selectedFilename] });
         let extractedCount = 0;
+        let totalBytes = 0;
 
         for (const file of extracted.files) {
             if (file.extraction) {
@@ -264,6 +385,7 @@ async function extractRar(buffer) {
                     continue;
                 }
                 const fileBuffer = Buffer.from(file.extraction);
+                totalBytes = assertExpandedBuffer(fileBuffer, limits, totalBytes);
                 files.set(entryName, fileBuffer);
                 extractedCount++;
                 log.debug(() => `[ArchiveExtractor] extractRar: extracted ${entryName} (${fileBuffer.length} bytes)`);
@@ -273,6 +395,7 @@ async function extractRar(buffer) {
         log.debug(() => `[ArchiveExtractor] extractRar: successfully extracted ${extractedCount} files`);
         return { files, entries };
     } catch (err) {
+        if (err instanceof ArchiveLimitError) throw err;
         log.error(() => [`[ArchiveExtractor] extractRar: RAR extraction failed:`, err.message]);
         log.error(() => `[ArchiveExtractor] extractRar: stack trace: ${err.stack}`);
         throw err;
@@ -285,13 +408,14 @@ async function extractRar(buffer) {
  * @param {Buffer} buffer - Gzip compressed buffer
  * @returns {Promise<Buffer>} - Decompressed buffer
  */
-async function decompressGzip(buffer) {
+async function decompressGzip(buffer, maxOutputBytes = DEFAULT_ARCHIVE_LIMITS.maxTotalBytes) {
     log.debug(() => `[ArchiveExtractor] decompressGzip: decompressing ${buffer.length} bytes`);
     try {
-        const decompressed = zlib.gunzipSync(buffer);
+        const decompressed = zlib.gunzipSync(buffer, { maxOutputLength: maxOutputBytes });
         log.debug(() => `[ArchiveExtractor] decompressGzip: decompressed to ${decompressed.length} bytes`);
         return decompressed;
     } catch (err) {
+        if (err?.code === 'ERR_BUFFER_TOO_LARGE') throw err;
         log.error(() => [`[ArchiveExtractor] decompressGzip: Gzip decompression failed:`, err.message]);
         throw err;
     }
@@ -302,13 +426,14 @@ async function decompressGzip(buffer) {
  * @param {Buffer} buffer - Brotli compressed buffer
  * @returns {Promise<Buffer>} - Decompressed buffer
  */
-async function decompressBrotli(buffer) {
+async function decompressBrotli(buffer, maxOutputBytes = DEFAULT_ARCHIVE_LIMITS.maxTotalBytes) {
     log.debug(() => `[ArchiveExtractor] decompressBrotli: decompressing ${buffer.length} bytes`);
     try {
-        const decompressed = zlib.brotliDecompressSync(buffer);
+        const decompressed = zlib.brotliDecompressSync(buffer, { maxOutputLength: maxOutputBytes });
         log.debug(() => `[ArchiveExtractor] decompressBrotli: decompressed to ${decompressed.length} bytes`);
         return decompressed;
     } catch (err) {
+        if (err?.code === 'ERR_BUFFER_TOO_LARGE') throw err;
         log.error(() => [`[ArchiveExtractor] decompressBrotli: Brotli decompression failed:`, err.message]);
         throw err;
     }
@@ -371,7 +496,7 @@ async function decompressXz(buffer) {
  * @param {Buffer} buffer - 7z archive buffer
  * @returns {Promise<{files: Map<string, Buffer>, entries: string[]}>}
  */
-async function extract7z(buffer) {
+async function extract7z(buffer, limits = DEFAULT_ARCHIVE_LIMITS) {
     log.debug(() => `[ArchiveExtractor] extract7z: starting 7z extraction (${buffer.length} bytes)`);
     const path = require('path');
 
@@ -380,6 +505,7 @@ async function extract7z(buffer) {
         const reader = new SevenZipReader(buffer);
         const files = new Map();
         const entries = [];
+        let totalBytes = 0;
 
         for (const entry of reader) {
             // Skip directories
@@ -395,9 +521,29 @@ async function extract7z(buffer) {
             }
 
             entries.push(name);
+            if (entries.length > limits.maxEntries) {
+                throw new ArchiveLimitError('entry count', limits.maxEntries, entries.length);
+            }
+
+            const declaredSize = normalizeArchiveSize(
+                entry.size ?? entry.uncompressedSize ?? entry.unpackedSize,
+                null
+            );
+            if (declaredSize !== null) {
+                if (declaredSize > limits.maxEntryBytes) {
+                    throw new ArchiveLimitError('single entry bytes', limits.maxEntryBytes, declaredSize);
+                }
+                if (totalBytes + declaredSize > limits.maxTotalBytes) {
+                    throw new ArchiveLimitError('cumulative expanded bytes', limits.maxTotalBytes, totalBytes + declaredSize);
+                }
+            }
+
             const content = entry.extract();
             if (content) {
-                files.set(name, Buffer.from(content));
+                const fileBuffer = Buffer.from(content);
+                totalBytes = assertExpandedBuffer(fileBuffer, limits, totalBytes);
+                assertCompressionRatio(buffer.length, totalBytes, limits);
+                files.set(name, fileBuffer);
                 log.debug(() => `[ArchiveExtractor] extract7z: extracted ${name} (${content.length} bytes)`);
             }
         }
@@ -405,6 +551,7 @@ async function extract7z(buffer) {
         log.debug(() => `[ArchiveExtractor] extract7z: successfully extracted ${files.size} files`);
         return { files, entries };
     } catch (err) {
+        if (err instanceof ArchiveLimitError) throw err;
         log.error(() => [`[ArchiveExtractor] extract7z: 7z extraction failed:`, err.message]);
         log.error(() => `[ArchiveExtractor] extract7z: stack trace: ${err.stack}`);
         throw err;
@@ -416,7 +563,7 @@ async function extract7z(buffer) {
  * @param {Buffer} buffer - Tar archive buffer
  * @returns {Promise<{files: Map<string, Buffer>, entries: string[]}>}
  */
-async function extractTar(buffer) {
+async function extractTar(buffer, limits = DEFAULT_ARCHIVE_LIMITS) {
     log.debug(() => `[ArchiveExtractor] extractTar: starting Tar extraction (${buffer.length} bytes)`);
     const path = require('path');
 
@@ -426,6 +573,8 @@ async function extractTar(buffer) {
         const extract = tar.extract();
         const files = new Map();
         const entries = [];
+        let entryCount = 0;
+        let totalBytes = 0;
 
         const promise = new Promise((resolve, reject) => {
             extract.on('entry', (header, stream, next) => {
@@ -436,6 +585,22 @@ async function extractTar(buffer) {
                 if (header.type === 'directory') {
                     stream.resume();
                     next();
+                    return;
+                }
+
+                entryCount++;
+                if (entryCount > limits.maxEntries) {
+                    extract.destroy(new ArchiveLimitError('entry count', limits.maxEntries, entryCount));
+                    return;
+                }
+
+                const declaredSize = normalizeArchiveSize(header.size, limits.maxEntryBytes + 1);
+                if (declaredSize > limits.maxEntryBytes) {
+                    extract.destroy(new ArchiveLimitError('single entry bytes', limits.maxEntryBytes, declaredSize));
+                    return;
+                }
+                if (totalBytes + declaredSize > limits.maxTotalBytes) {
+                    extract.destroy(new ArchiveLimitError('cumulative expanded bytes', limits.maxTotalBytes, totalBytes + declaredSize));
                     return;
                 }
 
@@ -451,11 +616,17 @@ async function extractTar(buffer) {
 
                 stream.on('data', (chunk) => chunks.push(chunk));
                 stream.on('end', () => {
-                    const fileBuffer = Buffer.concat(chunks);
-                    entries.push(name);
-                    files.set(name, fileBuffer);
-                    log.debug(() => `[ArchiveExtractor] extractTar: extracted ${name} (${fileBuffer.length} bytes)`);
-                    next();
+                    try {
+                        const fileBuffer = Buffer.concat(chunks);
+                        totalBytes = assertExpandedBuffer(fileBuffer, limits, totalBytes);
+                        assertCompressionRatio(buffer.length, totalBytes, limits);
+                        entries.push(name);
+                        files.set(name, fileBuffer);
+                        log.debug(() => `[ArchiveExtractor] extractTar: extracted ${name} (${fileBuffer.length} bytes)`);
+                        next();
+                    } catch (err) {
+                        extract.destroy(err);
+                    }
                 });
                 stream.on('error', (err) => {
                     log.warn(() => `[ArchiveExtractor] extractTar: error reading entry ${name}: ${err.message}`);
@@ -476,6 +647,7 @@ async function extractTar(buffer) {
         log.debug(() => `[ArchiveExtractor] extractTar: successfully extracted ${files.size} files`);
         return { files, entries };
     } catch (err) {
+        if (err instanceof ArchiveLimitError) throw err;
         log.error(() => [`[ArchiveExtractor] extractTar: Tar extraction failed:`, err.message]);
         log.error(() => `[ArchiveExtractor] extractTar: stack trace: ${err.stack}`);
         throw err;
@@ -487,7 +659,7 @@ async function extractTar(buffer) {
  * @param {Buffer} buffer - ZIP archive buffer
  * @returns {Promise<{zip: JSZip, entries: string[]}>}
  */
-async function extractZip(buffer) {
+async function extractZip(buffer, limits = DEFAULT_ARCHIVE_LIMITS) {
     log.debug(() => `[ArchiveExtractor] extractZip: starting ZIP extraction (${buffer.length} bytes)`);
 
     const JSZip = require('jszip');
@@ -496,6 +668,12 @@ async function extractZip(buffer) {
     try {
         const zip = await JSZip.loadAsync(buffer, { base64: false });
         const allEntries = Object.keys(zip.files);
+        const fileEntries = allEntries.filter(name => !zip.files[name].dir);
+        assertArchiveMetadata(fileEntries.map(name => ({
+            expandedBytes: zip.files[name]?._data?.uncompressedSize,
+            compressedBytes: zip.files[name]?._data?.compressedSize
+        })), buffer.length, limits);
+
         const entries = allEntries.filter(name => {
             if (zip.files[name].dir) return false;
             // Reject entries with path traversal sequences or absolute paths
@@ -516,6 +694,7 @@ async function extractZip(buffer) {
 
         return { zip, entries };
     } catch (err) {
+        if (err instanceof ArchiveLimitError) throw err;
         log.error(() => [`[ArchiveExtractor] extractZip: ZIP extraction failed:`, err.message]);
         log.error(() => `[ArchiveExtractor] extractZip: stack trace: ${err.stack}`);
         throw err;
@@ -981,6 +1160,7 @@ function manualAssToVtt(input) {
  * @param {number} options.season - Season number (for season packs)
  * @param {number} options.episode - Episode number (for season packs)
  * @param {boolean} options.skipAssConversion - If true, return ASS/SSA as-is without conversion
+ * @param {Object} options.archiveLimits - Optional per-call safety limits (primarily for tests/self-host customization)
  * @returns {Promise<string|{content: string, format: string}>} - Extracted subtitle content or object with format
  */
 async function extractSubtitleFromArchive(buffer, options = {}) {
@@ -991,8 +1171,16 @@ async function extractSubtitleFromArchive(buffer, options = {}) {
         season = null,
         episode = null,
         languageHint = null,
-        skipAssConversion = false
+        skipAssConversion = false,
+        _archiveDepth = 0
     } = options;
+    const archiveLimits = resolveArchiveLimits(options);
+    let archiveDepth = _archiveDepth;
+    const maxCompressionOutputBytes = Math.min(
+        maxBytes,
+        archiveLimits.maxEntryBytes,
+        archiveLimits.maxTotalBytes
+    );
 
     log.debug(() => `[${providerName}] extractSubtitleFromArchive: starting (buffer=${buffer?.length || 0} bytes, isSeasonPack=${isSeasonPack}, season=${season}, episode=${episode})`);
 
@@ -1002,22 +1190,64 @@ async function extractSubtitleFromArchive(buffer, options = {}) {
         throw new Error('Empty archive buffer received');
     }
 
+    // Enforce the compressed/input limit before format probing. In particular,
+    // Brotli trial decompression must never run on a response that has already
+    // exceeded the caller's established download ceiling.
+    if (buffer.length > maxBytes) {
+        const sizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
+        const limitMB = (maxBytes / (1024 * 1024)).toFixed(2);
+        log.warn(() => `[${providerName}] Archive too large: ${sizeMB} MB > ${limitMB} MB limit`);
+        return createArchiveTooLargeSubtitle(maxBytes, buffer.length);
+    }
+
+    if (archiveDepth > archiveLimits.maxDepth) {
+        return createArchiveSafetyLimitSubtitle(new ArchiveLimitError(
+            'recursion depth',
+            archiveLimits.maxDepth,
+            archiveDepth
+        ));
+    }
+
     // Detect archive type
     let archiveType = detectArchiveType(buffer);
     if (!archiveType) {
+        if (archiveDepth >= archiveLimits.maxDepth) {
+            return createArchiveSafetyLimitSubtitle(new ArchiveLimitError(
+                'recursion depth',
+                archiveLimits.maxDepth,
+                archiveDepth + 1
+            ));
+        }
         // Try Brotli decompression as last resort (no reliable magic bytes)
         try {
             log.debug(() => `[${providerName}] No archive signature detected, trying Brotli decompression...`);
-            const decompressed = await decompressBrotli(buffer);
+            const compressedBytes = buffer.length;
+            const decompressed = await decompressBrotli(buffer, maxCompressionOutputBytes);
             if (decompressed && decompressed.length > 0) {
+                assertCompressionRatio(compressedBytes, decompressed.length, archiveLimits);
                 const innerType = detectArchiveType(decompressed);
                 if (innerType) {
+                    archiveDepth++;
+                    if (archiveDepth > archiveLimits.maxDepth) {
+                        return createArchiveSafetyLimitSubtitle(new ArchiveLimitError(
+                            'recursion depth',
+                            archiveLimits.maxDepth,
+                            archiveDepth
+                        ));
+                    }
                     log.debug(() => `[${providerName}] Brotli decompressed to ${innerType.toUpperCase()} (${decompressed.length} bytes)`);
                     buffer = decompressed;
                     archiveType = innerType;
                 }
             }
-        } catch (_) {
+        } catch (err) {
+            if (err?.code === 'ERR_BUFFER_TOO_LARGE' || err instanceof ArchiveLimitError) {
+                return createArchiveSafetyLimitSubtitle(
+                    err instanceof ArchiveLimitError
+                        ? err
+                        : new ArchiveLimitError('expanded bytes', maxCompressionOutputBytes, maxCompressionOutputBytes + 1)
+                );
+            }
             // Not Brotli — continue to error
         }
 
@@ -1030,26 +1260,29 @@ async function extractSubtitleFromArchive(buffer, options = {}) {
 
     log.debug(() => `[${providerName}] Archive type: ${archiveType.toUpperCase()}, size: ${buffer.length} bytes`);
 
-    // Check size limit
-    if (buffer.length > maxBytes) {
-        const sizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
-        const limitMB = (maxBytes / (1024 * 1024)).toFixed(2);
-        log.warn(() => `[${providerName}] Archive too large: ${sizeMB} MB > ${limitMB} MB limit`);
-        return createArchiveTooLargeSubtitle(maxBytes, buffer.length);
-    }
-
     // Handle compression-only formats (gzip, bz2, xz) by decompressing first,
     // then re-detecting the inner content (may be tar, another archive, or plain subtitle)
     if (archiveType === 'gzip' || archiveType === 'bz2' || archiveType === 'xz') {
+        if (archiveDepth >= archiveLimits.maxDepth) {
+            return createArchiveSafetyLimitSubtitle(new ArchiveLimitError(
+                'recursion depth',
+                archiveLimits.maxDepth,
+                archiveDepth + 1
+            ));
+        }
         try {
             let decompressed;
+            const compressedBytes = buffer.length;
             if (archiveType === 'gzip') {
-                decompressed = await decompressGzip(buffer);
+                decompressed = await decompressGzip(buffer, maxCompressionOutputBytes);
             } else if (archiveType === 'bz2') {
                 decompressed = await decompressBzip2(buffer);
             } else {
                 decompressed = await decompressXz(buffer);
             }
+
+            assertExpandedBuffer(decompressed, archiveLimits);
+            assertCompressionRatio(compressedBytes, decompressed.length, archiveLimits);
 
             // Check size limit on decompressed content
             if (decompressed.length > maxBytes) {
@@ -1062,7 +1295,10 @@ async function extractSubtitleFromArchive(buffer, options = {}) {
             if (innerType) {
                 log.debug(() => `[${providerName}] ${archiveType.toUpperCase()} decompressed to ${innerType.toUpperCase()} archive, extracting recursively...`);
                 // Recursively extract the inner archive (e.g., tar.gz → tar → files)
-                return await extractSubtitleFromArchive(decompressed, options);
+                return await extractSubtitleFromArchive(decompressed, {
+                    ...options,
+                    _archiveDepth: archiveDepth + 1
+                });
             }
 
             // Not an archive — treat as plain subtitle content
@@ -1073,6 +1309,13 @@ async function extractSubtitleFromArchive(buffer, options = {}) {
             }
             throw new Error(`${archiveType.toUpperCase()} decompressed content is empty`);
         } catch (err) {
+            if (err?.code === 'ERR_BUFFER_TOO_LARGE' || err instanceof ArchiveLimitError) {
+                return createArchiveSafetyLimitSubtitle(
+                    err instanceof ArchiveLimitError
+                        ? err
+                        : new ArchiveLimitError('expanded bytes', maxCompressionOutputBytes, maxCompressionOutputBytes + 1)
+                );
+            }
             if (err.message && (err.message.includes('not available') || err.message.includes('not installed'))) {
                 // Optional dependency not installed
                 return createCorruptedArchiveSubtitle(providerName, archiveType);
@@ -1091,25 +1334,34 @@ async function extractSubtitleFromArchive(buffer, options = {}) {
         log.debug(() => `[${providerName}] Extracting ${archiveType.toUpperCase()} archive...`);
 
         if (archiveType === 'zip') {
-            const result = await extractZip(buffer);
+            const result = await extractZip(buffer, archiveLimits);
             archive = result.zip;
             entries = result.entries;
         } else if (archiveType === 'rar') {
-            const result = await extractRar(buffer);
+            const result = await extractRar(buffer, {
+                isSeasonPack,
+                season,
+                episode,
+                skipAssConversion
+            }, archiveLimits);
             filesMap = result.files;
             entries = result.entries;
         } else if (archiveType === '7z') {
-            const result = await extract7z(buffer);
+            const result = await extract7z(buffer, archiveLimits);
             filesMap = result.files;
             entries = result.entries;
         } else if (archiveType === 'tar') {
-            const result = await extractTar(buffer);
+            const result = await extractTar(buffer, archiveLimits);
             filesMap = result.files;
             entries = result.entries;
         }
 
         log.debug(() => `[${providerName}] Successfully extracted ${entries.length} file entries`);
     } catch (err) {
+        if (err instanceof ArchiveLimitError || err?.code === 'ARCHIVE_LIMIT_EXCEEDED') {
+            log.warn(() => `[${providerName}] Archive rejected by ${err.reason || 'safety'} limit`);
+            return createArchiveSafetyLimitSubtitle(err);
+        }
         log.error(() => [`[${providerName}] Failed to parse ${archiveType.toUpperCase()} archive:`, err.message]);
         log.error(() => `[${providerName}] Archive parse error stack: ${err.stack}`);
         return createCorruptedArchiveSubtitle(providerName, archiveType);
@@ -1158,6 +1410,15 @@ async function extractSubtitleFromArchive(buffer, options = {}) {
         throw new Error(`Failed to read ${filename} from archive - file is empty`);
     }
 
+    try {
+        assertExpandedBuffer(fileBuffer, archiveLimits);
+    } catch (err) {
+        if (err instanceof ArchiveLimitError) {
+            return createArchiveSafetyLimitSubtitle(err);
+        }
+        throw err;
+    }
+
     log.debug(() => `[${providerName}] Read ${fileBuffer.length} bytes from ${filename}`);
 
     // Handle SRT files with encoding detection
@@ -1188,6 +1449,7 @@ module.exports = {
     isArchive,
     extractSubtitleFromArchive,
     createArchiveTooLargeSubtitle,
+    createArchiveSafetyLimitSubtitle,
     createZipTooLargeSubtitle: createArchiveTooLargeSubtitle, // Alias for backward compatibility
     createEpisodeNotFoundSubtitle,
     createCorruptedArchiveSubtitle,
@@ -1201,5 +1463,7 @@ module.exports = {
     decompressGzip,
     decompressBrotli,
     extract7z,
-    extractTar
+    extractTar,
+    ArchiveLimitError,
+    DEFAULT_ARCHIVE_LIMITS
 };

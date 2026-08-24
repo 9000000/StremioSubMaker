@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const log = require('../utils/logger');
+const { MAX_ANIME_LIST_BYTES } = require('../utils/resourceLimits');
 
 // ── constants ────────────────────────────────────────────────────────
 const DATA_DIR = path.join(__dirname, '..', '..', 'data');
@@ -328,6 +329,7 @@ async function downloadList() {
                 'User-Agent': 'StremioSubMaker/1.0',
                 Accept: 'application/json',
             },
+            maxContentLength: MAX_ANIME_LIST_BYTES,
         });
         fs.writeFileSync(LOCAL_FILE, resp.data);
         const sizeMB = (resp.data.length / (1024 * 1024)).toFixed(1);

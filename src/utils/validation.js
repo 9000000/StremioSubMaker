@@ -1,6 +1,7 @@
 const Joi = require('joi');
 const log = require('./logger');
 const { inspectStremioIdSupport, parseStremioId } = require('./subtitle');
+const { MAX_PROVIDER_FILE_ID_CHARS } = require('./providerUrlToken');
 
 /**
  * Validation schemas for API endpoints
@@ -9,11 +10,13 @@ const { inspectStremioIdSupport, parseStremioId } = require('./subtitle');
 // Validate fileId (subtitle file identifier)
 // SCS uses opaque download tokens embedded in the provider URL, which can be long
 // because they encode content metadata such as filename/video hash.
-// Typical SCS IDs are 250-400 chars, so allow up to 600 for safety.
+// Typical SCS IDs are 250-400 chars. Authenticated provider URL IDs can be
+// longer when a dynamic CDN supplies a signed URL near the encoder's 4 KiB
+// safety ceiling, so keep this bound aligned with providerUrlToken.js.
 const fileIdSchema = Joi.string()
   .pattern(/^[a-zA-Z0-9_-]+$/)
   .min(1)
-  .max(600)
+  .max(MAX_PROVIDER_FILE_ID_CHARS)
   .required();
 
 // Validate language code (ISO-639-2, ISO-639-1, or BCP-47 subtags)

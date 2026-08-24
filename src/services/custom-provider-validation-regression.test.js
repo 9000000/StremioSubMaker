@@ -4,8 +4,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { Readable } = require('node:stream');
 const axios = require('axios');
 const OpenAICompatibleProvider = require('./providers/openaiCompatible');
+const { MAX_AI_RESPONSE_BYTES } = require('../utils/resourceLimits');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
 
@@ -38,6 +40,68 @@ test('custom provider validation sends a minimal request with the entered URL, k
     assert.match(request.body.messages[1].content, /Reply with exactly: OK/);
     assert.equal(request.options.headers.Authorization, 'Bearer custom-secret-key');
     assert.equal(request.options.timeout, 15000);
+    assert.equal(request.options.maxContentLength, MAX_AI_RESPONSE_BYTES);
+  } finally {
+    axios.post = originalPost;
+  }
+});
+
+test('custom provider streaming responses use the same hard byte ceiling', async () => {
+  const originalPost = axios.post;
+  let request;
+  axios.post = async (url, body, options) => {
+    request = { url, body, options };
+    return {
+      headers: { 'content-type': 'text/event-stream' },
+      data: Readable.from([
+        'data: {"choices":[{"delta":{"content":"Olá"}}]}\n\n',
+        'data: {"choices":[{"finish_reason":"stop","delta":{}}]}\n\n',
+        'data: [DONE]\n\n'
+      ])
+    };
+  };
+
+  try {
+    const provider = new OpenAICompatibleProvider({
+      providerName: 'custom',
+      baseUrl: 'https://llm.example.test/v1/',
+      apiKey: 'custom-secret-key',
+      model: 'local-model:latest',
+      maxRetries: 0
+    });
+
+    const result = await provider.streamTranslateSubtitle('Hello', 'English', 'Portuguese');
+    assert.equal(result, 'Olá');
+    assert.equal(request.options.responseType, 'stream');
+    assert.equal(request.options.maxContentLength, MAX_AI_RESPONSE_BYTES);
+  } finally {
+    axios.post = originalPost;
+  }
+});
+
+test('oversized custom-provider responses fail without retry amplification', async () => {
+  const originalPost = axios.post;
+  let calls = 0;
+  axios.post = async () => {
+    calls++;
+    const error = new Error(`maxContentLength size of ${MAX_AI_RESPONSE_BYTES} exceeded`);
+    error.code = 'ERR_BAD_RESPONSE';
+    throw error;
+  };
+
+  try {
+    const provider = new OpenAICompatibleProvider({
+      providerName: 'custom',
+      baseUrl: 'https://llm.example.test/v1/',
+      model: 'local-model:latest',
+      maxRetries: 3
+    });
+
+    await assert.rejects(
+      provider.translateSubtitle('Hello', 'English', 'Portuguese'),
+      error => error.translationErrorType === 'RESPONSE_TOO_LARGE'
+    );
+    assert.equal(calls, 1);
   } finally {
     axios.post = originalPost;
   }

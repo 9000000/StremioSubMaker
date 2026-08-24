@@ -460,6 +460,25 @@ function filterSubtitlesByRequestedLanguages(subtitles = [], requestedLanguages 
   return subtitles.filter(sub => sub?.languageCode && expandedRequested.has(sub.languageCode));
 }
 
+function subtitleMatchesRequestedLanguage(subtitle, requestedLanguage) {
+  const subtitleLanguage = normalizeLanguageCode(subtitle?.languageCode || '');
+  if (!subtitleLanguage) return false;
+  return expandRequestedLanguageSet([requestedLanguage]).has(subtitleLanguage);
+}
+
+function buildStremioSubtitleVariantLabel(subtitle, fallbackIndex = 0) {
+  const cleanPart = (value, maxLength = 140) => String(value || '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+  const name = cleanPart(subtitle?.originalFilename || subtitle?.name);
+  const provider = cleanPart(subtitle?.provider, 40);
+  const usefulName = name && name.toLowerCase() !== 'unknown' ? name : '';
+  const parts = [usefulName, provider].filter(Boolean);
+  return parts.length > 0 ? parts.join(' • ') : `Subtitle #${fallbackIndex + 1}`;
+}
+
 function getMaxSubtitlesPerLanguage(config) {
   return Number.isFinite(config?.maxSubtitlesPerLanguage)
     ? config.maxSubtitlesPerLanguage
@@ -1171,6 +1190,11 @@ ${t('subtitle.translationRateLimitDeeplBody', {}, 'DeepL API rate/quota limit re
 00:00:00,000 --> 04:00:00,000
 ${t('subtitle.translationRateLimit', { provider: displayProvider }, `Translation Failed: ${displayProvider} Rate Limit (429)`)}
 ${t('subtitle.translationRateLimitBody', { provider: displayProvider }, `${displayProvider} rate or quota limit reached.\nWait a few minutes, then click this subtitle again to retry.`)}`, null, uiLanguage);
+  } else if (errorType === 'RESPONSE_TOO_LARGE') {
+    return ensureInformationalSubtitleSize(`1
+00:00:00,000 --> 04:00:00,000
+${t('subtitle.translationResponseTooLarge', {}, 'Translation Failed: Provider Response Too Large')}
+${t('subtitle.translationResponseTooLargeBody', { provider: displayProvider }, `${displayProvider} returned more data than SubMaker can process safely.\nTry a different subtitle, model, or provider.`)}`, null, uiLanguage);
   } else if (errorType === 'MAX_TOKENS') {
     return ensureInformationalSubtitleSize(`1
 00:00:00,000 --> 04:00:00,000
@@ -3190,7 +3214,7 @@ function createSubtitleHandler(config) {
           }
           return true;
         })
-        .map(sub => {
+        .map((sub, subtitleIndex) => {
           // Display-friendly label for Stremio UI while preserving code for URL
           const displayLang = (sub.languageCode && sub.languageCode.toLowerCase() === 'spn')
             ? 'Spanish (LA)'
@@ -3199,6 +3223,9 @@ function createSubtitleHandler(config) {
           const subtitle = {
             id: `${sub.fileId}`,
             lang: displayLang,
+            // Newer Stremio clients show `label` in the per-language variants
+            // pane. Older clients ignore it and keep using `lang`.
+            label: buildStremioSubtitleVariantLabel(sub, subtitleIndex),
             url: `{{ADDON_URL}}/${subtitleRouteBase}/${toPathSegment(sub.fileId)}/${toPathSegment(sub.languageCode)}${urlExtension}`
           };
 
@@ -3280,10 +3307,7 @@ function createSubtitleHandler(config) {
         // Create translation entries: for each target language, create entries for top source language subtitles
         // Note: filteredFoundSubtitles is already limited to MAX_SUBS_PER_LANGUAGE per language (including source languages)
         const providerSourceSubtitles = filteredFoundSubtitles.filter(sub =>
-          config.sourceLanguages.some(sourceLang => {
-            const normalized = normalizeLanguageCode(sourceLang);
-            return sub.languageCode === normalized;
-          })
+          config.sourceLanguages.some(sourceLang => subtitleMatchesRequestedLanguage(sub, sourceLang))
         );
 
         // Add embedded originals as source subtitles when they match configured source languages
@@ -3294,12 +3318,16 @@ function createSubtitleHandler(config) {
             if (!entry || !entry.trackId) continue;
             const normalizedSource = normalizeLanguageCode(entry.languageCode || '');
             if (!normalizedSource) continue;
-            const isAllowedSource = config.sourceLanguages.some(sourceLang => normalizeLanguageCode(sourceLang) === normalizedSource);
+            const isAllowedSource = config.sourceLanguages.some(sourceLang =>
+              subtitleMatchesRequestedLanguage({ languageCode: normalizedSource }, sourceLang)
+            );
             if (!isAllowedSource) continue;
             const embeddedFileId = entry.cacheKey ? `xembed_${entry.cacheKey}` : `xembed_${hash}_${entry.trackId}`;
             embeddedSourceSubtitles.push({
               fileId: embeddedFileId,
-              languageCode: normalizedSource
+              languageCode: normalizedSource,
+              name: entry.metadata?.filename || entry.metadata?.title || `Embedded track ${entry.trackId}`,
+              provider: 'xEmbed'
             });
           }
         }
@@ -3322,7 +3350,7 @@ function createSubtitleHandler(config) {
           const displayName = `Make ${baseName}`;
           log.debug(() => `[Subtitles] Creating translation entries for ${displayName} (${targetLang})`);
 
-          for (const sourceSub of sourceSubtitles) {
+          for (const [sourceIndex, sourceSub] of sourceSubtitles.entries()) {
             // Cache source metadata for later history enrichment (Stremio may drop query params)
             try {
               const metaKey = `${config.__configHash || config.userHash || 'default'}:${sourceSub.fileId}`;
@@ -3336,6 +3364,7 @@ function createSubtitleHandler(config) {
             const translationEntry = {
               id: `translate_${sourceSub.fileId}_to_${targetLang}`,
               lang: displayName, // Display as "Make Language" in Stremio UI
+              label: `${displayName} • ${buildStremioSubtitleVariantLabel(sourceSub, sourceIndex)}`,
               url: `{{ADDON_URL}}/translate/${sourceSub.fileId}/${targetLang}${translationUrlExtension}${translateQuery}`
             };
             translationEntries.push(translationEntry);
@@ -3351,16 +3380,17 @@ function createSubtitleHandler(config) {
         if (config.learnMode === true) {
           const normalizedLearnLangs = [...new Set((config.learnTargetLanguages || []).map(lang => normalizeLanguageCode(lang)))];
           const sourceSubtitles = filteredFoundSubtitles.filter(sub =>
-            config.sourceLanguages.some(sourceLang => normalizeLanguageCode(sourceLang) === sub.languageCode)
+            config.sourceLanguages.some(sourceLang => subtitleMatchesRequestedLanguage(sub, sourceLang))
           );
 
           for (const learnLang of normalizedLearnLangs) {
             const baseName = getLanguageName(learnLang);
             const displayName = `Learn ${baseName}`;
-            for (const sourceSub of sourceSubtitles) {
+            for (const [sourceIndex, sourceSub] of sourceSubtitles.entries()) {
               learnEntries.push({
                 id: `learn_${sourceSub.fileId}_to_${learnLang}`,
                 lang: displayName,
+                label: `${displayName} • ${buildStremioSubtitleVariantLabel(sourceSub, sourceIndex)}`,
                 url: `{{ADDON_URL}}/learn/${sourceSub.fileId}/${learnLang}.vtt`
               });
             }
@@ -6336,6 +6366,8 @@ module.exports = {
   createSubDLCloudflareBlockedSubtitle,
   createInvalidSubtitleMessage,
   filterSubtitlesByRequestedLanguages,
+  subtitleMatchesRequestedLanguage,
+  buildStremioSubtitleVariantLabel,
   collectProviderSearchResults,
   deduplicateSearch,
   maybeConvertToSRT,

@@ -3,6 +3,7 @@ const { httpAgent, dnsLookup } = require('../utils/httpAgents');
 const { scsHttpsAgent } = require('../utils/scsHttpAgent');
 const { detectAndConvertEncoding } = require('../utils/encodingDetector');
 const { convertSubtitleToVtt } = require('../utils/archiveExtractor');
+const { MAX_REMOTE_SUBTITLE_BYTES } = require('../utils/resourceLimits');
 const log = require('../utils/logger');
 const { version } = require('../utils/version');
 
@@ -774,7 +775,8 @@ class StremioCommunitySubtitlesService {
             const response = await makeRequestWithRetry(
                 () => this.client.get(url, {
                     responseType: 'arraybuffer',
-                    timeout: timeout
+                    timeout: timeout,
+                    maxContentLength: MAX_REMOTE_SUBTITLE_BYTES
                 }),
                 'download'
             );

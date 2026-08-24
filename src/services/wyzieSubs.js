@@ -44,10 +44,17 @@ const { toISO6391 } = require('../utils/languages');
 const { httpAgent, httpsAgent, dnsLookup } = require('../utils/httpAgents');
 const { detectAndConvertEncoding } = require('../utils/encodingDetector');
 const { getSeasonHintCandidates } = require('../utils/animeSearchResolver');
-const { convertSubtitleToVtt } = require('../utils/archiveExtractor');
+const { convertSubtitleToVtt, createZipTooLargeSubtitle } = require('../utils/archiveExtractor');
 const { redactApiKey } = require('../utils/security');
 const log = require('../utils/logger');
 const { version } = require('../utils/version');
+const { encodeProviderUrl, decodeProviderUrl } = require('../utils/providerUrlToken');
+const {
+    MAX_REMOTE_SUBTITLE_BYTES,
+    createPublicRemoteRequestConfig,
+    isRemoteResponseTooLargeError,
+    isSsrfBlockedRequestError
+} = require('../utils/publicRemoteRequest');
 const {
     getProviderAuthFailureCacheKey,
     hasCachedProviderAuthFailure,
@@ -363,9 +370,21 @@ class WyzieSubsService {
                     displayName = `[${sourceStr}] ${displayName}`;
                 }
 
-                // Encode the download URL in the fileId for later retrieval
-                // The URL is the Wyzie proxy URL which handles ZIP extraction server-side
-                const encodedUrl = Buffer.from(sub.url).toString('base64url');
+                let fileId;
+                try {
+                    // Wyzie may return any current source CDN. Keep that dynamic,
+                    // but require a public HTTPS destination and seal it so the
+                    // client cannot fabricate or alter the embedded URL.
+                    createPublicRemoteRequestConfig(sub.url, {}, {
+                        requireHttps: true,
+                        context: 'Wyzie download URL',
+                        maxBytes: MAX_REMOTE_SUBTITLE_BYTES
+                    });
+                    fileId = encodeProviderUrl('wyzie_', sub.url);
+                } catch (error) {
+                    log.warn(() => `[WyzieSubs] Skipping unsafe download URL: ${error.message}`);
+                    return null;
+                }
 
                 return {
                     id: `wyzie_${sub.id}`,
@@ -385,10 +404,10 @@ class WyzieSubsService {
                     releases: sub.releases || (sub.release ? [sub.release] : []),
                     fileName: sub.fileName, // Original filename if available
                     origin: sub.origin, // Origin type (DVD, WEB, BluRay) if available
-                    fileId: `wyzie_${encodedUrl}`, // Encoded URL for download
+                    fileId,
                     _wyzieUrl: sub.url // Store original URL for reference
                 };
-            });
+            }).filter(Boolean);
 
             // Apply per-language result limit
             const limitedResults = [];
@@ -581,7 +600,7 @@ class WyzieSubsService {
     /**
      * Download subtitle content from Wyzie
      * Wyzie may provide its own download URL or a direct source-provider URL.
-     * @param {string} fileId - File ID from search results (format: wyzie_{base64url_encoded_url})
+     * @param {string} fileId - Opaque authenticated file ID from search results
      * @param {Object} options - Download options
      * @param {number} options.timeout - Request timeout in ms (default: 15000)
      * @param {number} options.maxRetries - Maximum number of retries (default: 3)
@@ -591,31 +610,25 @@ class WyzieSubsService {
         const downloadStartTime = Date.now();
         const maxRetries = options?.maxRetries || 3;
         const timeout = options?.timeout || 15000;
-        // Extract encoded URL from fileId
-        // Format: wyzie_{base64url_encoded_url}
+        // Format: wyzie_e1_{opaque_token}
         if (!fileId.startsWith('wyzie_')) {
             throw new Error('Invalid Wyzie file ID format');
         }
 
-        const encodedUrl = fileId.substring(6); // Remove 'wyzie_' prefix
-        let downloadUrl;
-        try {
-            downloadUrl = Buffer.from(encodedUrl, 'base64url').toString('utf-8');
-        } catch (e) {
-            throw new Error(`Failed to decode Wyzie download URL: ${e.message}`);
-        }
-
-        // Current Wyzie responses may deliberately point straight at an upstream
-        // provider, so validate the transport rather than requiring a Wyzie host.
-        let parsedDownloadUrl;
-        try {
-            parsedDownloadUrl = new URL(downloadUrl);
-        } catch (_) {
-            throw new Error('Invalid Wyzie download URL');
-        }
-        if (parsedDownloadUrl.protocol !== 'https:') {
-            throw new Error('Unsafe Wyzie download URL protocol');
-        }
+        const downloadUrl = decodeProviderUrl(fileId, 'wyzie_');
+        const downloadRequestConfig = createPublicRemoteRequestConfig(downloadUrl, {
+            responseType: 'arraybuffer',
+            timeout,
+            headers: {
+                'User-Agent': USER_AGENT,
+                'Accept': 'text/plain, text/vtt, application/x-subrip, */*'
+            }
+        }, {
+            requireHttps: true,
+            context: 'Wyzie download URL',
+            maxBytes: MAX_REMOTE_SUBTITLE_BYTES
+        });
+        const parsedDownloadUrl = new URL(downloadUrl);
 
         log.debug(() => `[WyzieSubs] Downloading subtitle from host: ${parsedDownloadUrl.hostname}`);
 
@@ -626,16 +639,7 @@ class WyzieSubsService {
                 log.debug(() => `[WyzieSubs] Download attempt ${attempt}/${maxRetries}`);
 
                 // Use axios directly for full URL (not relative to baseURL)
-                const response = await axios.get(downloadUrl, {
-                    responseType: 'arraybuffer',
-                    timeout,
-                    headers: {
-                        'User-Agent': USER_AGENT,
-                        'Accept': 'text/plain, text/vtt, application/x-subrip, */*'
-                    },
-                    httpAgent,
-                    httpsAgent
-                });
+                const response = await axios.get(downloadUrl, downloadRequestConfig);
 
                 const buffer = Buffer.from(response.data);
 
@@ -670,6 +674,19 @@ class WyzieSubsService {
             } catch (error) {
                 lastError = error;
                 const status = error.response?.status;
+
+                if (isRemoteResponseTooLargeError(error)) {
+                    log.warn(() => `[WyzieSubs] Download exceeded ${MAX_REMOTE_SUBTITLE_BYTES} byte response limit`);
+                    return createZipTooLargeSubtitle(
+                        MAX_REMOTE_SUBTITLE_BYTES,
+                        MAX_REMOTE_SUBTITLE_BYTES + 1
+                    );
+                }
+
+                if (isSsrfBlockedRequestError(error)) {
+                    log.warn(() => `[WyzieSubs] Blocked unsafe download destination: ${error.message}`);
+                    break;
+                }
 
                 // Don't retry for non-retryable errors
                 if (status === 404 || status === 401 || status === 403) {

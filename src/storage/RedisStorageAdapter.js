@@ -10,6 +10,104 @@ const { handleCaughtError } = require('../utils/errorClassifier');
 const SESSION_INDEX_KEY = 'session:index';
 const DEFAULT_REDIS_COMMAND_TIMEOUT_MS = 5000;
 
+// The size check and all writes that make up one cache entry must happen in one
+// Redis operation. A pipeline only batches commands; it does not isolate them
+// from concurrent writers in other SubMaker pods.
+const ATOMIC_CACHE_WRITE_SCRIPT = `
+local contentSize = tonumber(ARGV[2]) or 0
+local now = ARGV[3]
+local expiresAt = ARGV[4]
+local ttl = tonumber(ARGV[5]) or 0
+local sizeLimit = tonumber(ARGV[6]) or 0
+local member = ARGV[7]
+local isSession = ARGV[8] == '1'
+
+local currentSize = tonumber(redis.call('GET', KEYS[4]) or '0') or 0
+if currentSize < 0 then
+  currentSize = 0
+end
+
+-- Old releases can leave a stale positive counter after every TTL-backed key
+-- and its metadata have expired. It is safe to repair it when the LRU index is
+-- empty because no quota-tracked entry remains.
+if sizeLimit > 0 and currentSize > 0 and redis.call('ZCARD', KEYS[3]) == 0 then
+  currentSize = 0
+end
+
+local oldSize = tonumber(redis.call('HGET', KEYS[2], 'size') or '0') or 0
+local projectedSize = currentSize - oldSize + contentSize
+if projectedSize < 0 then
+  projectedSize = 0
+end
+
+if sizeLimit > 0 and projectedSize > sizeLimit then
+  return {0, currentSize, oldSize, projectedSize}
+end
+
+local createdAt = redis.call('HGET', KEYS[2], 'createdAt') or now
+
+if ttl > 0 then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ttl)
+else
+  redis.call('SET', KEYS[1], ARGV[1])
+end
+
+redis.call('HMSET', KEYS[2],
+  'size', contentSize,
+  'createdAt', createdAt,
+  'expiresAt', expiresAt)
+
+-- Quota-tracked metadata intentionally outlives TTL-backed content so cleanup
+-- can subtract its exact serialized size after Redis expires the content key.
+-- Unlimited session metadata keeps the session TTL and cannot accumulate.
+if ttl > 0 and sizeLimit == 0 then
+  redis.call('EXPIRE', KEYS[2], ttl)
+else
+  redis.call('PERSIST', KEYS[2])
+end
+
+redis.call('ZADD', KEYS[3], now, member)
+
+if isSession then
+  redis.call('SADD', KEYS[5], member)
+end
+
+if sizeLimit > 0 then
+  redis.call('SET', KEYS[4], projectedSize)
+end
+
+return {1, projectedSize, oldSize, projectedSize}
+`;
+
+// Deleting content, metadata, the LRU/index member and its byte count is also a
+// single operation. Concurrent eviction attempts therefore cannot decrement a
+// cache counter twice or leave half-deleted entries behind.
+const ATOMIC_CACHE_DELETE_SCRIPT = `
+local member = ARGV[1]
+local hasSizeLimit = ARGV[2] == '1'
+local isSession = ARGV[3] == '1'
+local oldSize = tonumber(redis.call('HGET', KEYS[2], 'size') or '0') or 0
+
+local contentDeleted = redis.call('DEL', KEYS[1])
+local metadataDeleted = redis.call('DEL', KEYS[2])
+redis.call('ZREM', KEYS[3], member)
+
+if isSession then
+  redis.call('SREM', KEYS[5], member)
+end
+
+if hasSizeLimit then
+  local currentSize = tonumber(redis.call('GET', KEYS[4]) or '0') or 0
+  local nextSize = currentSize - oldSize
+  if nextSize < 0 then
+    nextSize = 0
+  end
+  redis.call('SET', KEYS[4], nextSize)
+end
+
+return {contentDeleted, metadataDeleted, oldSize}
+`;
+
 function parsePositiveIntEnv(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || raw === null || raw === '') return fallback;
@@ -56,8 +154,16 @@ class RedisStorageAdapter extends StorageAdapter {
     // honor other option fields, but keyPrefix must remain the canonical
     // colon-suffixed value so reads/writes stay in the same namespace across
     // restarts and deployments.
-    const { keyPrefix: _ignoredKeyPrefix, ...restOptions } = options || {};
+    const {
+      keyPrefix: _ignoredKeyPrefix,
+      sizeLimits: configuredSizeLimits,
+      ...restOptions
+    } = options || {};
     const commandTimeout = parsePositiveIntEnv('REDIS_COMMAND_TIMEOUT_MS', DEFAULT_REDIS_COMMAND_TIMEOUT_MS);
+
+    // Keep limits instance-scoped so tests and specialized deployments can use
+    // an explicit profile without mutating global process state.
+    this.sizeLimits = configuredSizeLimits || StorageAdapter.SIZE_LIMITS;
 
     if (sentinelEnabled) {
       // Redis Sentinel configuration for HA deployments
@@ -114,6 +220,56 @@ class RedisStorageAdapter extends StorageAdapter {
     this.initialized = false;
     this.sentinelMode = sentinelEnabled;
     this.prefixVariants = variants;
+  }
+
+  _getSizeLimit(cacheType) {
+    return this.sizeLimits?.[cacheType] ?? null;
+  }
+
+  _defineAtomicCommands(client) {
+    client.defineCommand('submakerAtomicCacheWrite', {
+      numberOfKeys: 5,
+      lua: ATOMIC_CACHE_WRITE_SCRIPT
+    });
+    client.defineCommand('submakerAtomicCacheDelete', {
+      numberOfKeys: 5,
+      lua: ATOMIC_CACHE_DELETE_SCRIPT
+    });
+  }
+
+  async _validateRedisMemoryBudget() {
+    try {
+      const [maxMemoryReply, policyReply] = await Promise.all([
+        this.client.config('GET', 'maxmemory'),
+        this.client.config('GET', 'maxmemory-policy')
+      ]);
+      const replyValue = (reply, key) => {
+        if (Array.isArray(reply)) return reply[1];
+        if (reply && typeof reply === 'object') return reply[key];
+        return null;
+      };
+      const maxMemory = Number(replyValue(maxMemoryReply, 'maxmemory')) || 0;
+      const policy = replyValue(policyReply, 'maxmemory-policy') || 'unknown';
+      const configuredCacheBytes = Object.values(this.sizeLimits)
+        .filter(Number.isFinite)
+        .reduce((total, value) => total + value, 0);
+
+      if (maxMemory > 0) {
+        const ratio = configuredCacheBytes / maxMemory;
+        const summary = `${(configuredCacheBytes / (1024 ** 3)).toFixed(2)} GiB cache budget / ${(maxMemory / (1024 ** 3)).toFixed(2)} GiB maxmemory (${(ratio * 100).toFixed(1)}%, policy=${policy})`;
+        if (ratio >= 0.8) {
+          log.warn(() => `[RedisStorage] Cache budgets leave insufficient Redis headroom: ${summary}`);
+        } else {
+          log.debug(() => `[RedisStorage] Redis memory budget validated: ${summary}`);
+        }
+      } else {
+        log.debug(() => `[RedisStorage] Redis maxmemory is unbounded; application cache quotas total ${(configuredCacheBytes / (1024 ** 3)).toFixed(2)} GiB (policy=${policy})`);
+      }
+    } catch (error) {
+      // Managed Redis ACLs commonly disallow CONFIG GET. Budget validation is
+      // diagnostic only and must never make storage startup fail.
+      log.debug(() => `[RedisStorage] Redis memory budget validation unavailable: ${error.message}`);
+    }
   }
 
   /**
@@ -348,12 +504,15 @@ class RedisStorageAdapter extends StorageAdapter {
 
     try {
       this.client = new Redis(this.options);
+      this._defineAtomicCommands(this.client);
 
       await new Promise((resolve, reject) => {
         this.client.on('ready', resolve);
         this.client.on('error', reject);
         setTimeout(() => reject(new Error('Redis connection timeout')), 10000);
       });
+
+      await this._validateRedisMemoryBudget();
 
       if (this.prefixMigrationEnabled) {
         // Self-heal legacy double-prefixed keys to prevent invisible sessions/configs
@@ -751,87 +910,69 @@ class RedisStorageAdapter extends StorageAdapter {
         const metaKey = this._getMetadataKey(key, cacheType);
         const lruKey = this._getLruKey(cacheType);
         const sizeKey = this._getSizeKey(cacheType);
+        const sessionIndexKey = this.getSessionIndexKey();
 
         // Serialize value
         const content = typeof value === 'string' ? value : JSON.stringify(value);
         const contentSize = Buffer.byteLength(content, 'utf8');
-
-        // Check if we need to enforce size limits
-        const sizeLimit = StorageAdapter.SIZE_LIMITS[cacheType];
-        if (sizeLimit) {
-          const currentSize = parseInt(await this.client.get(sizeKey) || '0', 10);
-
-          // If adding this entry would exceed the limit, clean up old entries
-          if (currentSize + contentSize > sizeLimit) {
-            await this._enforceLimit(cacheType, contentSize);
-          }
+        const sizeLimit = this._getSizeLimit(cacheType) || 0;
+        if (sizeLimit > 0 && contentSize > sizeLimit) {
+          log.warn(() => `[RedisStorage] Refused ${cacheType} entry larger than its entire cache quota (${contentSize} > ${sizeLimit} bytes)`);
+          return false;
         }
 
-        // Get existing entry size/createdAt if updating
-        const existingMeta = await this.client.hgetall(metaKey);
-        const oldSize = existingMeta.size ? parseInt(existingMeta.size, 10) : 0;
-        const preservedCreatedAt = existingMeta.createdAt ? parseInt(existingMeta.createdAt, 10) : null;
-
-        // Use a pipeline for atomic operations
-        const pipeline = this.client.pipeline();
-
-        // Store the content
-        if (ttl !== null) {
-          pipeline.setex(redisKey, ttl, content);
-        } else {
-          pipeline.set(redisKey, content);
-        }
-
-        // Store metadata
         const now = Date.now();
         const expiresAt = ttl ? now + (ttl * 1000) : null;
-        pipeline.hmset(metaKey, {
-          size: contentSize,
-          createdAt: preservedCreatedAt || now,
-          expiresAt: expiresAt || 'null'
-        });
 
-        if (ttl !== null) {
-          pipeline.expire(metaKey, ttl);
-        }
+        // A rejected write means another entry must be evicted first. The Lua
+        // command performs the quota check and write atomically, so concurrent
+        // pods can never all pass the same stale size check and overshoot.
+        // A burst from several pods can refill the quota between eviction and
+        // retry. Keep retries bounded, but allow enough turns for contenders to
+        // converge without turning a successful cacheable response into a miss.
+        const maxWriteAttempts = 8;
+        for (let attempt = 0; attempt < maxWriteAttempts; attempt++) {
+          const result = await this.client.submakerAtomicCacheWrite(
+            redisKey,
+            metaKey,
+            lruKey,
+            sizeKey,
+            sessionIndexKey,
+            content,
+            contentSize,
+            now,
+            expiresAt || 'null',
+            ttl && ttl > 0 ? ttl : 0,
+            sizeLimit,
+            key,
+            cacheType === StorageAdapter.CACHE_TYPES.SESSION ? 1 : 0
+          );
 
-        // Update LRU tracking
-        pipeline.zadd(lruKey, now, key);
-
-        // Track session tokens in an index for fast counts (idempotent)
-        if (cacheType === StorageAdapter.CACHE_TYPES.SESSION) {
-          pipeline.sadd(this.getSessionIndexKey(), key);
-        }
-
-        // Update total size counter
-        if (sizeLimit) {
-          const sizeDelta = contentSize - oldSize;
-          if (sizeDelta > 0) {
-            pipeline.incrby(sizeKey, sizeDelta);
-          } else if (sizeDelta < 0) {
-            pipeline.decrby(sizeKey, Math.abs(sizeDelta));
-          }
-        }
-
-        const results = await pipeline.exec();
-
-        // Check for pipeline errors - results is array of [err, result] pairs
-        if (results) {
-          for (let i = 0; i < results.length; i++) {
-            const [err, result] = results[i];
-            if (err) {
-              log.error(() => `[RedisStorage] Pipeline command ${i} failed for key ${key}: ${err.message}`);
-              return false;
+          if (Array.isArray(result) && Number(result[0]) === 1) {
+            if (cacheType === StorageAdapter.CACHE_TYPES.SESSION) {
+              log.debug(() => `[RedisStorage] Session persisted to Redis: ${key.substring(0, 8)}...${key.substring(key.length - 4)} (ttl=${ttl || 'none'})`);
             }
+            return true;
           }
+
+          if (!sizeLimit || !Array.isArray(result)) {
+            return false;
+          }
+
+          if (attempt === maxWriteAttempts - 1) {
+            break;
+          }
+
+          const oldSize = Math.max(0, Number(result[2]) || 0);
+          const requiredGrowth = Math.max(0, contentSize - oldSize);
+          await this._enforceLimit(cacheType, requiredGrowth, key);
+          // Even when this worker deleted nothing, another concurrent writer
+          // may just have freed the required space. Always retry the atomic
+          // admission check rather than converting that benign race to a miss.
         }
 
-        // Debug: confirm session was written
-        if (cacheType === StorageAdapter.CACHE_TYPES.SESSION) {
-          log.debug(() => `[RedisStorage] Session persisted to Redis: ${key.substring(0, 8)}...${key.substring(key.length - 4)} (ttl=${ttl || 'none'})`);
-        }
-
-        return true;
+        log.warn(() => `[RedisStorage] Could not make space for ${cacheType} key within its configured quota`);
+        return false;
       });
     } catch (error) {
       if (error instanceof StorageUnavailableError) {
@@ -856,29 +997,16 @@ class RedisStorageAdapter extends StorageAdapter {
         const metaKey = this._getMetadataKey(key, cacheType);
         const lruKey = this._getLruKey(cacheType);
         const sizeKey = this._getSizeKey(cacheType);
-
-        // Get size before deleting
-        const meta = await this.client.hgetall(metaKey);
-        const size = meta.size ? parseInt(meta.size, 10) : 0;
-
-        // Delete using pipeline
-        const pipeline = this.client.pipeline();
-        pipeline.del(redisKey);
-        pipeline.del(metaKey);
-        pipeline.zrem(lruKey, key);
-
-        if (cacheType === StorageAdapter.CACHE_TYPES.SESSION) {
-          pipeline.srem(this.getSessionIndexKey(), key);
-        }
-
-        // Size counters are only maintained for caches with configured limits.
-        // Decrementing an unlimited cache (sessions) creates a negative counter
-        // because set() intentionally never increments one for that cache.
-        if (size > 0 && StorageAdapter.SIZE_LIMITS[cacheType]) {
-          pipeline.decrby(sizeKey, size);
-        }
-
-        await pipeline.exec();
+        await this.client.submakerAtomicCacheDelete(
+          redisKey,
+          metaKey,
+          lruKey,
+          sizeKey,
+          this.getSessionIndexKey(),
+          key,
+          this._getSizeLimit(cacheType) ? 1 : 0,
+          cacheType === StorageAdapter.CACHE_TYPES.SESSION ? 1 : 0
+        );
         return true;
       });
     } catch (error) {
@@ -931,33 +1059,20 @@ class RedisStorageAdapter extends StorageAdapter {
           const sizeKey = `${altPrefix}size:${cacheType}`;
           const indexKey = `${altPrefix}${SESSION_INDEX_KEY}`;
 
-          let size = 0;
-          try {
-            const meta = await migrationClient.hgetall(metaKey);
-            if (meta && meta.size) {
-              size = parseInt(meta.size, 10) || 0;
-            }
-          } catch (_) {
-            // best-effort cleanup
-          }
-
-          const pipeline = migrationClient.pipeline();
-          pipeline.del(contentKey);
-          pipeline.del(metaKey);
-          pipeline.zrem(lruKey, key);
-          pipeline.srem(indexKey, key);
-          if (size > 0 && StorageAdapter.SIZE_LIMITS[cacheType]) {
-            pipeline.decrby(sizeKey, size);
-          }
-
-          const results = await pipeline.exec();
-          if (Array.isArray(results)) {
-            const delResults = [results[0], results[1]];
-            for (const result of delResults) {
-              if (result && result[1]) {
-                deleted += result[1];
-              }
-            }
+          const result = await migrationClient.eval(
+            ATOMIC_CACHE_DELETE_SCRIPT,
+            5,
+            contentKey,
+            metaKey,
+            lruKey,
+            sizeKey,
+            indexKey,
+            key,
+            this._getSizeLimit(cacheType) ? 1 : 0,
+            cacheType === StorageAdapter.CACHE_TYPES.SESSION ? 1 : 0
+          );
+          if (Array.isArray(result)) {
+            deleted += (Number(result[0]) || 0) + (Number(result[1]) || 0);
           }
         }
 
@@ -1169,53 +1284,79 @@ class RedisStorageAdapter extends StorageAdapter {
   }
 
   /**
+   * List logical keys from the LRU index. Unlike list(), this still sees an
+   * entry after Redis expires its TTL-backed content key, allowing cleanup to
+   * remove persistent quota metadata and repair the byte counter.
+   * @private
+   */
+  async _listLruMembers(cacheType) {
+    const members = [];
+    const lruKey = this._getLruKey(cacheType);
+    let cursor = '0';
+
+    do {
+      const [nextCursor, values] = await this.client.zscan(lruKey, cursor, 'COUNT', 100);
+      cursor = nextCursor;
+      for (let index = 0; index < values.length; index += 2) {
+        members.push(values[index]);
+      }
+    } while (cursor !== '0');
+
+    return members;
+  }
+
+  /**
    * Enforce size limit by evicting oldest entries (LRU)
    * @private
    */
-  async _enforceLimit(cacheType, requiredSpace = 0) {
-    const sizeLimit = StorageAdapter.SIZE_LIMITS[cacheType];
+  async _enforceLimit(cacheType, requiredSpace = 0, protectedKey = null) {
+    const sizeLimit = this._getSizeLimit(cacheType);
     if (!sizeLimit) {
       return { deleted: 0, bytesFreed: 0 };
     }
 
     try {
-      const currentSize = await this.size(cacheType);
-      const targetSize = Math.floor(sizeLimit * 0.8); // Free up to 80% of limit
-
-      let needToFree = (currentSize + requiredSpace) - targetSize;
-      if (needToFree <= 0) {
+      let currentSize = await this.size(cacheType);
+      if (currentSize + requiredSpace <= sizeLimit) {
         return { deleted: 0, bytesFreed: 0 };
       }
+
+      const targetSize = Math.floor(sizeLimit * 0.8); // Free up to 80% of limit
+      let needToFree = (currentSize + requiredSpace) - targetSize;
 
       // Get oldest entries from LRU sorted set
       const lruKey = this._getLruKey(cacheType);
       let deleted = 0;
       let bytesFreed = 0;
-      let offset = 0;
 
       while (needToFree > 0) {
-        // Get batch of 100 oldest entries
-        const oldestKeys = await this.client.zrange(lruKey, offset, offset + 99);
+        // Always read from rank zero. Deleting members shifts the remaining
+        // entries down; advancing an offset would skip every second batch.
+        const oldestKeys = await this.client.zrange(lruKey, 0, 99);
 
         if (oldestKeys.length === 0) {
           break; // No more entries to delete
         }
 
-        for (const key of oldestKeys) {
-          const meta = await this.metadata(key, cacheType);
-          if (meta) {
-            await this.delete(key, cacheType);
-            deleted++;
-            bytesFreed += meta.size;
-            needToFree -= meta.size;
-
-            if (needToFree <= 0) {
-              break;
-            }
-          }
+        const candidates = protectedKey
+          ? oldestKeys.filter(candidate => candidate !== protectedKey)
+          : oldestKeys;
+        if (candidates.length === 0) {
+          break;
         }
 
-        offset += 100;
+        for (const candidate of candidates) {
+          const meta = await this.metadata(candidate, cacheType);
+          await this.delete(candidate, cacheType);
+          deleted++;
+          if (meta) {
+            bytesFreed += meta.size;
+          }
+
+          currentSize = await this.size(cacheType);
+          needToFree = (currentSize + requiredSpace) - targetSize;
+          if (needToFree <= 0) break;
+        }
       }
 
       log.debug(() => `Enforced ${cacheType} cache limit: deleted ${deleted} entries, freed ${bytesFreed} bytes`);
@@ -1244,21 +1385,23 @@ class RedisStorageAdapter extends StorageAdapter {
       let deleted = 0;
       let bytesFreed = 0;
 
-      // Get all keys for this cache type
-      const keys = await this.list(cacheType);
+      // The LRU index deliberately outlives TTL-backed content. Walking it
+      // allows exact byte-counter repair after Redis expires a content key.
+      const keys = await this._listLruMembers(cacheType);
 
       for (const key of keys) {
         const redisKey = this._getKey(key, cacheType);
         const exists = await this.client.exists(redisKey);
 
-        // If the main key doesn't exist but metadata does, clean up metadata
+        // If the main key no longer exists, atomically clean metadata, LRU and
+        // the size counter. Also remove legacy orphan LRU members with no meta.
         if (!exists) {
           const meta = await this.metadata(key, cacheType);
           if (meta) {
             bytesFreed += meta.size;
-            await this.delete(key, cacheType);
-            deleted++;
           }
+          await this.delete(key, cacheType);
+          deleted++;
         }
       }
 

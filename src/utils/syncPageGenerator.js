@@ -18,6 +18,7 @@ const { xsyncMinVersion: REQUIRED_XSYNC_VERSION } = require('../../package.json'
 const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = require('./quickNav');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
 const { streamFilenameSelectorClientScript } = require('./streamUrlIdentity');
+const { serializeJsonForInlineScript } = require('./inlineScriptJson');
 
 function escapeHtml(text) {
     if (!text) return '';
@@ -32,22 +33,6 @@ function escapeHtml(text) {
 function resolveUiLang(config) {
     const lang = (config && config.uiLanguage) ? String(config.uiLanguage).toLowerCase() : 'en';
     return escapeHtml(lang || 'en');
-}
-
-/**
- * Safely serialize JavaScript object for embedding in <script> tags
- * Prevents XSS by escaping HTML special characters that could break out of script context
- * Uses double-encoding to ensure JSON.parse() can safely reconstruct the object
- * @param {*} obj - Object to serialize
- * @returns {string} - Safe JavaScript code to parse the object
- */
-function safeJsonSerialize(obj) {
-    // First JSON.stringify to get JSON string
-    const jsonString = JSON.stringify(obj);
-    // Second JSON.stringify to escape it for embedding in JavaScript
-    // This prevents </script> tag injection and other escaping issues
-    const doubleEncoded = JSON.stringify(jsonString);
-    return `JSON.parse(${doubleEncoded})`;
 }
 
 function themeToggleMarkup(label) {
@@ -2218,14 +2203,13 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         }
 
         // Configuration and state
-        const CONFIG = ${safeJsonSerialize({
+        const CONFIG = ${serializeJsonForInlineScript({
         configStr,
         videoId,
         streamFilename,
         videoHash,
         linkedTitle,
         languageMaps,
-        geminiApiKey: config.geminiApiKey || '',
         sourceLanguages: config.sourceLanguages || [],
         targetLanguages: config.targetLanguages || []
     })};
@@ -2237,19 +2221,19 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         };
         // Runtime copy object for safe client-side fallback strings.
         // Prevents ReferenceError if any client code path references copy.*.
-        const copy = ${safeJsonSerialize(copy)};
-        const subtitleMenuTargets = ${JSON.stringify(targetLanguages.map(lang => ({ code: lang, name: getLanguageName(lang) || lang })))};
+        const copy = ${serializeJsonForInlineScript(copy)};
+        const subtitleMenuTargets = ${serializeJsonForInlineScript(targetLanguages.map(lang => ({ code: lang, name: getLanguageName(lang) || lang })))};
         const hashStatusEl = document.getElementById('hashStatus');
         const hashMismatchEl = document.getElementById('hashMismatchAlert');
         const lockReasons = {
-            needContinue: ${JSON.stringify(copy.locks.needContinue)},
-            needSubtitle: ${JSON.stringify(copy.locks.needSubtitle)}
+            needContinue: ${serializeJsonForInlineScript(copy.locks.needContinue)},
+            needSubtitle: ${serializeJsonForInlineScript(copy.locks.needSubtitle)}
         };
         const subtitleUi = {
-            selectPlaceholder: ${JSON.stringify(copy.step2.selectPlaceholder)},
-            loadingPlaceholder: ${JSON.stringify(copy.step2.loadingPlaceholder)},
-            emptyPlaceholder: ${JSON.stringify(copy.step2.emptyPlaceholder)},
-            loadFailedPlaceholder: ${JSON.stringify(copy.step2.loadFailedPlaceholder)}
+            selectPlaceholder: ${serializeJsonForInlineScript(copy.step2.selectPlaceholder)},
+            loadingPlaceholder: ${serializeJsonForInlineScript(copy.step2.loadingPlaceholder)},
+            emptyPlaceholder: ${serializeJsonForInlineScript(copy.step2.emptyPlaceholder)},
+            loadFailedPlaceholder: ${serializeJsonForInlineScript(copy.step2.loadFailedPlaceholder)}
         };
         const subtitleLoadState = {
             requestId: 0,
@@ -2750,8 +2734,8 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             awaitingTrackChoice: false
         };
         const startSyncBtn = document.getElementById('startSyncBtn');
-        const startSyncLabel = startSyncBtn ? startSyncBtn.innerHTML : '<span>⚡</span> ' + ${JSON.stringify(copy.step3.start)};
-        const startSyncBusyLabel = ${JSON.stringify(copy.step3.startBusy)};
+        const startSyncLabel = startSyncBtn ? startSyncBtn.innerHTML : '<span>⚡</span> ' + ${serializeJsonForInlineScript(copy.step3.start)};
+        const startSyncBusyLabel = ${serializeJsonForInlineScript(copy.step3.startBusy)};
         let syncInFlight = false;
         const syncTrackPrompt = document.getElementById('syncTrackPrompt');
         const syncAudioTrackSelect = document.getElementById('syncAudioTrack');
@@ -3001,8 +2985,8 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
 
         function forwardMenuNotification(info) {
             if (!subtitleMenuInstance || typeof subtitleMenuInstance.notify !== 'function') return false;
-            const message = (info && info.message) ? info.message : tt('sync.toast.meta', {}, ${JSON.stringify(copy.toast.meta)});
-            const title = (info && info.title) ? info.title + ': ' : (tt('sync.toast.title', {}, ${JSON.stringify(copy.toast.title)}) + ': ');
+            const message = (info && info.message) ? info.message : tt('sync.toast.meta', {}, ${serializeJsonForInlineScript(copy.toast.meta)});
+            const title = (info && info.title) ? info.title + ': ' : (tt('sync.toast.title', {}, ${serializeJsonForInlineScript(copy.toast.title)}) + ': ');
             subtitleMenuInstance.notify(title + message, 'muted', { persist: true });
             return false; // keep page toast visible
         }
@@ -3405,28 +3389,28 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             const parsed = parseVideoId(source.videoId);
             const episodeTag = formatEpisodeTag(source.videoId);
             const isEpisode = parsed && (parsed.type === 'episode' || parsed.type === 'anime' || parsed.type === 'anime-episode');
-            const fallbackTitle = source.title || cleanLinkedName(source.filename) || cleanLinkedName(source.videoId) || tt('sync.meta.noStream', {}, ${JSON.stringify(copy.meta.noStream)});
+            const fallbackTitle = source.title || cleanLinkedName(source.filename) || cleanLinkedName(source.videoId) || tt('sync.meta.noStream', {}, ${serializeJsonForInlineScript(copy.meta.noStream)});
             // Append episode tag to main title for episodes
             const displayFallbackTitle = (isEpisode && episodeTag && !fallbackTitle.toUpperCase().includes(episodeTag.toUpperCase()))
                 ? fallbackTitle + ' - ' + episodeTag
                 : fallbackTitle;
             const fallbackDetails = [];
-            if (source.videoId) fallbackDetails.push(tt('sync.meta.videoIdLabel', {}, ${JSON.stringify(copy.meta.videoIdLabel)}) + ': ' + source.videoId);
-            if (source.title) fallbackDetails.push(tt('sync.meta.titleLabel', {}, ${JSON.stringify(copy.meta.titleLabel)}) + ': ' + source.title);
-            if (source.videoId || source.filename || source.title) fallbackDetails.push(tt('sync.meta.episodeLabel', {}, ${JSON.stringify(copy.meta.episodeLabel)}) + ': ' + (episodeTag || '-'));
-            const fallbackFileLine = source.filename ? (tt('sync.meta.fileLabel', {}, ${JSON.stringify(copy.meta.fileLabel)}) + ': ' + cleanLinkedName(source.filename)) : '';
+            if (source.videoId) fallbackDetails.push(tt('sync.meta.videoIdLabel', {}, ${serializeJsonForInlineScript(copy.meta.videoIdLabel)}) + ': ' + source.videoId);
+            if (source.title) fallbackDetails.push(tt('sync.meta.titleLabel', {}, ${serializeJsonForInlineScript(copy.meta.titleLabel)}) + ': ' + source.title);
+            if (source.videoId || source.filename || source.title) fallbackDetails.push(tt('sync.meta.episodeLabel', {}, ${serializeJsonForInlineScript(copy.meta.episodeLabel)}) + ': ' + (episodeTag || '-'));
+            const fallbackFileLine = source.filename ? (tt('sync.meta.fileLabel', {}, ${serializeJsonForInlineScript(copy.meta.fileLabel)}) + ': ' + cleanLinkedName(source.filename)) : '';
             LINKED_META.title.textContent = displayFallbackTitle;
-            LINKED_META.subtitle.innerHTML = buildMetaSubtitleHtml(fallbackDetails.join(' | '), fallbackFileLine, tt('sync.meta.waiting', {}, ${JSON.stringify(copy.meta.waiting)}));
+            LINKED_META.subtitle.innerHTML = buildMetaSubtitleHtml(fallbackDetails.join(' | '), fallbackFileLine, tt('sync.meta.waiting', {}, ${serializeJsonForInlineScript(copy.meta.waiting)}));
 
             const requestId = ++linkedTitleRequestId;
             const fetchedTitle = source.title || await fetchLinkedTitle(source.videoId);
             if (requestId !== linkedTitleRequestId) return;
 
             const details = [];
-            if (source.videoId) details.push(tt('sync.meta.videoIdLabel', {}, ${JSON.stringify(copy.meta.videoIdLabel)}) + ': ' + source.videoId);
-            if (fetchedTitle) details.push(tt('sync.meta.titleLabel', {}, ${JSON.stringify(copy.meta.titleLabel)}) + ': ' + fetchedTitle);
-            if (source.videoId || source.filename || fetchedTitle || source.title) details.push(tt('sync.meta.episodeLabel', {}, ${JSON.stringify(copy.meta.episodeLabel)}) + ': ' + (episodeTag || '-'));
-            const fileLine = source.filename ? (tt('sync.meta.fileLabel', {}, ${JSON.stringify(copy.meta.fileLabel)}) + ': ' + cleanLinkedName(source.filename)) : '';
+            if (source.videoId) details.push(tt('sync.meta.videoIdLabel', {}, ${serializeJsonForInlineScript(copy.meta.videoIdLabel)}) + ': ' + source.videoId);
+            if (fetchedTitle) details.push(tt('sync.meta.titleLabel', {}, ${serializeJsonForInlineScript(copy.meta.titleLabel)}) + ': ' + fetchedTitle);
+            if (source.videoId || source.filename || fetchedTitle || source.title) details.push(tt('sync.meta.episodeLabel', {}, ${serializeJsonForInlineScript(copy.meta.episodeLabel)}) + ': ' + (episodeTag || '-'));
+            const fileLine = source.filename ? (tt('sync.meta.fileLabel', {}, ${serializeJsonForInlineScript(copy.meta.fileLabel)}) + ': ' + cleanLinkedName(source.filename)) : '';
 
             // Append episode tag to main title for episodes
             const resolvedTitle = fetchedTitle || fallbackTitle;
@@ -3434,7 +3418,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                 ? resolvedTitle + ' - ' + episodeTag
                 : resolvedTitle;
             LINKED_META.title.textContent = displayTitle;
-            LINKED_META.subtitle.innerHTML = buildMetaSubtitleHtml(details.join(' | '), fileLine, tt('sync.meta.waiting', {}, ${JSON.stringify(copy.meta.waiting)}));
+            LINKED_META.subtitle.innerHTML = buildMetaSubtitleHtml(details.join(' | '), fileLine, tt('sync.meta.waiting', {}, ${serializeJsonForInlineScript(copy.meta.waiting)}));
         }
 
         updateLinkedMeta();
@@ -3691,7 +3675,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         const extStatus = document.getElementById('ext-status');
         const xsyncVersionWarning = document.getElementById('xsync-version-warning');
         const EXT_INSTALL_URL = 'https://chromewebstore.google.com/detail/submaker-xsync/lpocanpndchjkkpgchefobjionncknjn';
-        const REQUIRED_XSYNC_VERSION = ${JSON.stringify(REQUIRED_XSYNC_VERSION)};
+        const REQUIRED_XSYNC_VERSION = ${serializeJsonForInlineScript(REQUIRED_XSYNC_VERSION)};
         const VERSION_WARNING_TEMPLATE = tt(
             'toolbox.extension.versionOutdated',
             { detected: '{detected}', required: '{required}' },
@@ -3810,8 +3794,8 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             if (extDot) extDot.className = 'status-dot ' + dotTone;
             if (extLabel) {
                 extLabel.textContent = ready
-                    ? (text || tt('sync.extension.ready', {}, ${JSON.stringify(t('sync.extension.ready', {}, 'Ready'))}))
-                    : (text || tt('sync.extension.notDetected', {}, ${JSON.stringify(t('sync.extension.notDetected', {}, 'Extension not detected'))}));
+                    ? (text || tt('sync.extension.ready', {}, ${serializeJsonForInlineScript(t('sync.extension.ready', {}, 'Ready'))}))
+                    : (text || tt('sync.extension.notDetected', {}, ${serializeJsonForInlineScript(t('sync.extension.notDetected', {}, 'Extension not detected'))}));
                 if (ready) {
                     extLabel.classList.add('ready');
                     extLabel.removeAttribute('href');
@@ -3852,7 +3836,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
                 window.postMessage({ type: 'SUBMAKER_PING', source: 'webpage' }, '*');
                 if (pingAttempts >= MAX_PINGS && !extensionInstalled) {
                     clearInterval(pingTimer);
-                    updateExtensionStatus(false, tt('sync.extension.notDetected', {}, ${JSON.stringify(t('sync.extension.notDetected', {}, 'Extension not detected'))}), 'bad');
+                    updateExtensionStatus(false, tt('sync.extension.notDetected', {}, ${serializeJsonForInlineScript(t('sync.extension.notDetected', {}, 'Extension not detected'))}), 'bad');
                     if (!pingRetryTimer) {
                         pingRetryTimer = setTimeout(() => {
                             if (!extensionInstalled) pingExtension(true);

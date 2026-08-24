@@ -5,9 +5,11 @@ const assert = require('node:assert/strict');
 
 const {
     getApiErrorMessage,
+    isResponseTooLargeError,
     isOpenSubtitlesQuotaError,
     parseApiError,
-    handleDownloadError
+    handleDownloadError,
+    handleTranslationError
 } = require('./apiErrorHandler');
 const OpenSubtitlesService = require('../services/opensubtitles');
 const { handleSubtitleDownload } = require('../handlers/subtitles');
@@ -22,6 +24,23 @@ test('does not classify a generic OpenSubtitles 406 as exhausted quota', () => {
     const error = upstream406('The requested file ID is not available');
     assert.equal(isOpenSubtitlesQuotaError(error), false);
     assert.equal(parseApiError(error, 'OpenSubtitles').type, 'client_error');
+});
+
+test('oversized buffered responses receive a non-retryable user-facing classification', () => {
+    const error = new Error('maxContentLength size of 67108864 exceeded');
+    error.code = 'ERR_BAD_RESPONSE';
+
+    assert.equal(isResponseTooLargeError(error), true);
+    const parsed = parseApiError(error, 'Custom');
+    assert.equal(parsed.type, 'response_too_large');
+    assert.equal(parsed.isRetryable, false);
+    assert.match(parsed.userMessage, /more data than SubMaker can process safely/i);
+
+    assert.throws(
+        () => handleTranslationError(error, 'Custom'),
+        wrapped => wrapped.translationErrorType === 'RESPONSE_TOO_LARGE'
+            && /more data than SubMaker can process safely/i.test(wrapped.message)
+    );
 });
 
 test('preserves the upstream 406 message through the download error wrapper', () => {

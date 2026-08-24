@@ -2,6 +2,7 @@ const axios = require('axios');
 const { sanitizeApiKeyForHeader } = require('../utils/security');
 const { handleTranslationError, logApiError } = require('../utils/apiErrorHandler');
 const { httpAgent, httpsAgent } = require('../utils/httpAgents');
+const { MAX_AI_RESPONSE_BYTES } = require('../utils/resourceLimits');
 const log = require('../utils/logger');
 const { resolveLanguageDisplayName } = require('../utils/languageResolver');
 const { normalizeTargetLanguageForPrompt } = require('./utils/normalizeTargetLanguageForPrompt');
@@ -244,7 +245,8 @@ class GeminiService {
         headers: { 'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '' },
         timeout: 10000,
         httpAgent,
-        httpsAgent
+        httpsAgent,
+        maxContentLength: MAX_AI_RESPONSE_BYTES
       });
 
       if (!response.data || !response.data.models) {
@@ -291,7 +293,8 @@ class GeminiService {
         headers: { 'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '' },
         timeout: 10000,
         httpAgent,
-        httpsAgent
+        httpsAgent,
+        maxContentLength: MAX_AI_RESPONSE_BYTES
       });
 
       const data = response.data || {};
@@ -442,7 +445,8 @@ class GeminiService {
           headers: { 'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '' },
           timeout: 10000,
           httpAgent,
-          httpsAgent
+          httpsAgent,
+          maxContentLength: MAX_AI_RESPONSE_BYTES
         }
       );
 
@@ -536,7 +540,8 @@ class GeminiService {
             headers: { 'x-goog-api-key': sanitizeApiKeyForHeader(this.apiKey) || '' },
             timeout: this.timeout,
             httpAgent,
-            httpsAgent
+            httpsAgent,
+            maxContentLength: MAX_AI_RESPONSE_BYTES
           }
         );
 
@@ -698,7 +703,8 @@ class GeminiService {
             timeout: this.timeout,
             httpAgent,
             httpsAgent,
-            responseType: 'stream'
+            responseType: 'stream',
+            maxContentLength: MAX_AI_RESPONSE_BYTES
           }
         );
 

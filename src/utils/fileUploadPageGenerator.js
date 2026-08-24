@@ -5,6 +5,7 @@ const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = r
 const { version: appVersion } = require('./version');
 const { xsyncMinVersion: REQUIRED_XSYNC_VERSION } = require('../../package.json');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
+const { serializeJsonForInlineScript } = require('./inlineScriptJson');
 
 function safeLanguageMaps() {
     try {
@@ -2461,42 +2462,42 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}&_cb=${escapeHtml(appVersion || 'dev')}"></script>
         <script src="/js/combobox.js"></script>
         <script>
-        const clientConfig = ${JSON.stringify(clientConfig)};
-        const providerInfo = ${JSON.stringify(providerSummary)};
-        const configToken = ${JSON.stringify(configStr)};
-        const providerDefaults = ${JSON.stringify(getDefaultProviderParameters())};
-        const PAGE = { configStr: configToken, videoId: ${JSON.stringify(videoId)}, filename: ${JSON.stringify(filename || '')}, videoHash: ${JSON.stringify(config?.videoHash || '')} };
-        const subtitleMenuTargets = ${JSON.stringify(targetLangs)};
+        const clientConfig = ${serializeJsonForInlineScript(clientConfig)};
+        const providerInfo = ${serializeJsonForInlineScript(providerSummary)};
+        const configToken = ${serializeJsonForInlineScript(configStr)};
+        const providerDefaults = ${serializeJsonForInlineScript(getDefaultProviderParameters())};
+        const PAGE = { configStr: configToken, videoId: ${serializeJsonForInlineScript(videoId)}, filename: ${serializeJsonForInlineScript(filename || '')}, videoHash: ${serializeJsonForInlineScript(config?.videoHash || '')} };
+        const subtitleMenuTargets = ${serializeJsonForInlineScript(targetLangs)};
         let subtitleMenuInstance = null;
         let pendingStreamUpdate = null;
-        const uploadQueueLimits = ${JSON.stringify(uploadQueueDefaults)};
-        const translationDefaults = ${JSON.stringify(translationWorkflowDefaults)};
+        const uploadQueueLimits = ${serializeJsonForInlineScript(uploadQueueDefaults)};
+        const translationDefaults = ${serializeJsonForInlineScript(translationWorkflowDefaults)};
         const MAX_OUTPUT_TOKEN_LIMIT = ${MAX_OUTPUT_TOKEN_LIMIT};
         const DEFAULT_MAX_OUTPUT_TOKENS = ${DEFAULT_MAX_OUTPUT_TOKENS};
         ${quickNavScript()}
 
         const localeStrings = {
-            targetPlaceholder: ${JSON.stringify(targetPlaceholderText)},
-            sourceAuto: ${JSON.stringify(sourceAutoDetectText)},
-            queueEmpty: ${JSON.stringify(queueEmpty)},
-            progressHeadline: ${JSON.stringify(progressTitle)},
-            progressQueued: ${JSON.stringify(progressSubtext)},
-            toastTitle: ${JSON.stringify(toastTitle)},
-            toastMeta: ${JSON.stringify(toastMeta)},
-            toastUpdate: ${JSON.stringify(toastUpdate)},
-            toastDismiss: ${JSON.stringify(toastDismiss)},
-            resultTitle: ${JSON.stringify(resultTitleText)},
-            resultBody: ${JSON.stringify(resultBodyText)},
-            downloadCta: ${JSON.stringify(downloadCta)},
-            translateAgain: ${JSON.stringify(translateAgainCta)},
-            startCta: ${JSON.stringify(startTranslationCta)},
-            resetText: ${JSON.stringify(resetBarText)},
-            resetAction: ${JSON.stringify(resetBarCta)},
-            modelStatusUnavailable: ${JSON.stringify(modelStatusUnavailable)},
-            modelStatusFetching: ${JSON.stringify(modelStatusFetching)},
-            modelStatusLoaded: ${JSON.stringify(modelStatusLoaded)},
-            modelStatusEmpty: ${JSON.stringify(modelStatusEmpty)},
-            modelStatusFailed: ${JSON.stringify(modelStatusFailed)}
+            targetPlaceholder: ${serializeJsonForInlineScript(targetPlaceholderText)},
+            sourceAuto: ${serializeJsonForInlineScript(sourceAutoDetectText)},
+            queueEmpty: ${serializeJsonForInlineScript(queueEmpty)},
+            progressHeadline: ${serializeJsonForInlineScript(progressTitle)},
+            progressQueued: ${serializeJsonForInlineScript(progressSubtext)},
+            toastTitle: ${serializeJsonForInlineScript(toastTitle)},
+            toastMeta: ${serializeJsonForInlineScript(toastMeta)},
+            toastUpdate: ${serializeJsonForInlineScript(toastUpdate)},
+            toastDismiss: ${serializeJsonForInlineScript(toastDismiss)},
+            resultTitle: ${serializeJsonForInlineScript(resultTitleText)},
+            resultBody: ${serializeJsonForInlineScript(resultBodyText)},
+            downloadCta: ${serializeJsonForInlineScript(downloadCta)},
+            translateAgain: ${serializeJsonForInlineScript(translateAgainCta)},
+            startCta: ${serializeJsonForInlineScript(startTranslationCta)},
+            resetText: ${serializeJsonForInlineScript(resetBarText)},
+            resetAction: ${serializeJsonForInlineScript(resetBarCta)},
+            modelStatusUnavailable: ${serializeJsonForInlineScript(modelStatusUnavailable)},
+            modelStatusFetching: ${serializeJsonForInlineScript(modelStatusFetching)},
+            modelStatusLoaded: ${serializeJsonForInlineScript(modelStatusLoaded)},
+            modelStatusEmpty: ${serializeJsonForInlineScript(modelStatusEmpty)},
+            modelStatusFailed: ${serializeJsonForInlineScript(modelStatusFailed)}
         };
 
         const tt = (key, vars, fallback) => {
@@ -2559,7 +2560,7 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
             let pingTimer = null;
             let pingAttempts = 0;
             const MAX_PINGS = 5;
-            const REQUIRED_XSYNC_VERSION = ${JSON.stringify(REQUIRED_XSYNC_VERSION)};
+            const REQUIRED_XSYNC_VERSION = ${serializeJsonForInlineScript(REQUIRED_XSYNC_VERSION)};
             const VERSION_WARNING_TEMPLATE = tt(
                 'toolbox.extension.versionOutdated',
                 { detected: '{detected}', required: '{required}' },
@@ -2697,8 +2698,8 @@ function generateFileTranslationPage(videoId, configStr, config, filename = '') 
         const closeResetConfirmBtn = document.getElementById('closeResetConfirmBtn');
 
         // Pre-rendered language option markup (injected from backend list)
-        const languageOptionsMarkup = ${JSON.stringify(languageOptions)};
-        const allLanguageOptionsMarkup = ${JSON.stringify(allLanguageOptions)};
+        const languageOptionsMarkup = ${serializeJsonForInlineScript(languageOptions)};
+        const allLanguageOptionsMarkup = ${serializeJsonForInlineScript(allLanguageOptions)};
 
         // Language lists
         const targetPlaceholderOption = '<option value="">' + localeStrings.targetPlaceholder + '</option>';

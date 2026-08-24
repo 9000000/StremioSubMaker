@@ -1,295 +1,352 @@
 /**
- * SSRF (Server-Side Request Forgery) protection utilities
- * 
- * Prevents custom provider baseUrls from targeting internal/private networks
- * unless explicitly allowed via ALLOW_INTERNAL_CUSTOM_ENDPOINTS=true.
+ * SSRF (Server-Side Request Forgery) protection for caller-controlled URLs.
  *
- * Includes DNS rebinding protection: after hostname validation, the resolved
- * IP address is checked against internal ranges to prevent attackers from
- * using public domains that resolve to private/loopback addresses.
+ * Internal endpoints are denied by default. Self-hosters can explicitly opt in
+ * with ALLOW_INTERNAL_CUSTOM_ENDPOINTS=true. URL structure and protocol checks
+ * remain enforced even when that escape hatch is enabled.
  */
 
-const dns = require('dns');
+const dns = require('node:dns');
+const ipaddr = require('ipaddr.js');
 const log = require('./logger');
 
-// Environment variable to allow internal endpoints (for self-hosters)
-const ALLOW_INTERNAL = process.env.ALLOW_INTERNAL_CUSTOM_ENDPOINTS === 'true';
-
-/**
- * Private/internal IP ranges that should be blocked by default
- * Covers: localhost, private networks (RFC 1918), link-local, loopback
- */
-const INTERNAL_PATTERNS = [
-    // IPv4 loopback
-    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/,
-    // IPv4 private networks (RFC 1918)
-    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/,          // 10.0.0.0/8
-    /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/,  // 172.16.0.0/12
-    /^192\.168\.\d{1,3}\.\d{1,3}$/,              // 192.168.0.0/16
-    // IPv4 link-local
-    /^169\.254\.\d{1,3}\.\d{1,3}$/,             // 169.254.0.0/16
-    // IPv4 shared address space (carrier-grade NAT)
-    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/,  // 100.64.0.0/10
-];
-
-// Hostnames that should be blocked by default
 const INTERNAL_HOSTNAMES = new Set([
     'localhost',
     'localhost.localdomain',
-    'local',
-    '127.0.0.1',
-    '::1',
-    '0.0.0.0'
+    'local'
 ]);
 
-/**
- * Check if a hostname or IP is internal/private
- * @param {string} host - Hostname or IP address
- * @returns {boolean} - True if internal/private
- */
-function isInternalHost(host) {
-    if (!host) return true;  // Empty host is suspicious
+// ipaddr.js classifies most special-purpose space for us. Keep explicit checks
+// for ranges whose treatment has varied across library/IANA revisions.
+const ALWAYS_NON_GLOBAL_IPV6_CIDRS = [
+    ipaddr.parseCIDR('100::/64') // Discard-only address block (RFC 6666)
+];
 
-    const lowercaseHost = host.toLowerCase();
+function areInternalEndpointsAllowed() {
+    return process.env.ALLOW_INTERNAL_CUSTOM_ENDPOINTS === 'true';
+}
 
-    // Check against known internal hostnames
-    if (INTERNAL_HOSTNAMES.has(lowercaseHost)) {
-        return true;
+function stripIpv6Brackets(value) {
+    const text = String(value || '').trim();
+    if (text.startsWith('[') && text.endsWith(']')) {
+        return text.slice(1, -1);
     }
-
-    // Check against private IP patterns
-    for (const pattern of INTERNAL_PATTERNS) {
-        if (pattern.test(host)) {
-            return true;
-        }
-    }
-
-    // Check for IPv6 localhost variations
-    if (lowercaseHost.startsWith('[::1]') || lowercaseHost === '::1') {
-        return true;
-    }
-
-    // Check for .local, .internal, .localhost TLDs
-    if (lowercaseHost.endsWith('.local') ||
-        lowercaseHost.endsWith('.internal') ||
-        lowercaseHost.endsWith('.localhost')) {
-        return true;
-    }
-
-    return false;
+    return text;
 }
 
 /**
- * Check if an IP address string is internal/private
- * Works on resolved IP addresses (not hostnames)
- * @param {string} ip - IP address string
- * @returns {boolean} - True if internal/private
+ * Parse and canonicalize an IP literal. IPv6 scope identifiers are removed
+ * only for classification; scoped addresses are non-global and are blocked.
+ *
+ * @param {string} value
+ * @returns {import('ipaddr.js').IPv4|import('ipaddr.js').IPv6|null}
+ */
+function parseIpLiteral(value) {
+    let candidate = stripIpv6Brackets(value);
+    const scopeIndex = candidate.indexOf('%');
+    if (scopeIndex !== -1 && candidate.includes(':')) {
+        candidate = candidate.slice(0, scopeIndex);
+    }
+
+    if (!candidate || !ipaddr.isValid(candidate)) {
+        return null;
+    }
+
+    try {
+        return ipaddr.parse(candidate);
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
+ * Return true unless an IP is ordinary global-unicast space. IPv4-mapped IPv6
+ * is decoded before classification so hexadecimal forms such as
+ * ::ffff:7f00:1 cannot hide loopback or link-local IPv4 addresses.
+ *
+ * @param {string} ip
+ * @returns {boolean}
  */
 function isInternalIp(ip) {
-    if (!ip) return true;
+    const parsed = parseIpLiteral(ip);
+    if (!parsed) {
+        return true; // Resolvers should only return valid IPs; fail closed.
+    }
 
-    // Check against private IPv4 patterns
-    for (const pattern of INTERNAL_PATTERNS) {
-        if (pattern.test(ip)) {
+    if (parsed.kind() === 'ipv6') {
+        if (parsed.isIPv4MappedAddress()) {
+            return isInternalIp(parsed.toIPv4Address().toString());
+        }
+
+        if (ALWAYS_NON_GLOBAL_IPV6_CIDRS.some(cidr => parsed.match(cidr))) {
             return true;
         }
     }
 
-    // IPv6 loopback
-    if (ip === '::1' || ip === '::ffff:127.0.0.1') {
-        return true;
-    }
+    return parsed.range() !== 'unicast';
+}
 
-    // IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) — extract the IPv4 part and re-check
-    const v4Mapped = ip.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
-    if (v4Mapped) {
-        return isInternalIp(v4Mapped[1]);
-    }
-
-    // IPv6 link-local (fe80::/10)
-    if (/^fe[89ab]/i.test(ip)) {
-        return true;
-    }
-
-    // IPv6 unique local (fc00::/7)
-    if (/^f[cd]/i.test(ip)) {
-        return true;
-    }
-
-    // 0.0.0.0
-    if (ip === '0.0.0.0') {
-        return true;
-    }
-
-    return false;
+function normalizeHostname(host) {
+    return stripIpv6Brackets(host).toLowerCase().replace(/\.+$/, '');
 }
 
 /**
- * Resolve a hostname to IP addresses and check if any resolve to internal/private IPs.
- * This is the DNS rebinding defense: even if the hostname looks external, the resolved
- * IP must also be external.
+ * Check a hostname or IP literal for an immediately recognizable internal or
+ * non-global destination. DNS names receive a second check after resolution.
  *
- * @param {string} hostname - Hostname to resolve
- * @returns {Promise<{ safe: boolean, resolvedIps?: string[], error?: string }>}
+ * @param {string} host
+ * @returns {boolean}
+ */
+function isInternalHost(host) {
+    if (!host) return true;
+
+    const normalized = normalizeHostname(host);
+    if (!normalized) return true;
+
+    const parsedIp = parseIpLiteral(normalized);
+    if (parsedIp) {
+        return isInternalIp(normalized);
+    }
+
+    // A colon in a URL hostname denotes an IPv6 literal. If it did not parse,
+    // treat it as unsafe rather than passing malformed input to DNS.
+    if (normalized.includes(':')) {
+        return true;
+    }
+
+    if (INTERNAL_HOSTNAMES.has(normalized)) {
+        return true;
+    }
+
+    return normalized.endsWith('.local') ||
+        normalized.endsWith('.internal') ||
+        normalized.endsWith('.localhost');
+}
+
+function createSsrfError(message, code = 'ESSRF_UNSAFE_URL') {
+    const error = new Error(`[SSRF] ${message}`);
+    error.code = code;
+    return error;
+}
+
+function shouldAllowInternal(options = {}) {
+    if (typeof options.allowInternal === 'boolean') {
+        return options.allowInternal;
+    }
+    return areInternalEndpointsAllowed();
+}
+
+/**
+ * Perform URL checks that do not require DNS. This is used both before each
+ * custom-provider request and for every redirect destination.
+ *
+ * @param {string} rawUrl
+ * @returns {URL}
+ */
+function assertSafeRequestUrl(rawUrl, options = {}) {
+    const context = options.context || 'request';
+    const allowedProtocols = Array.isArray(options.allowedProtocols) && options.allowedProtocols.length > 0
+        ? options.allowedProtocols
+        : ['http:', 'https:'];
+    let parsed;
+    try {
+        parsed = new URL(rawUrl);
+    } catch (_) {
+        throw createSsrfError(`Invalid ${context} URL`);
+    }
+
+    if (!allowedProtocols.includes(parsed.protocol)) {
+        throw createSsrfError(`Protocol ${parsed.protocol} is not allowed`);
+    }
+
+    if (parsed.username || parsed.password) {
+        throw createSsrfError('URL credentials are not allowed');
+    }
+
+    if (parsed.hash) {
+        throw createSsrfError('URL fragments are not allowed');
+    }
+
+    if (!shouldAllowInternal(options) && isInternalHost(parsed.hostname)) {
+        throw createSsrfError(
+            `Destination ${parsed.hostname} is internal or non-global`,
+            'ESSRF_INTERNAL_IP'
+        );
+    }
+
+    return parsed;
+}
+
+function assertSafeCustomRequestUrl(rawUrl) {
+    return assertSafeRequestUrl(rawUrl, { context: 'custom provider' });
+}
+
+function assertSafePublicRequestUrl(rawUrl, options = {}) {
+    return assertSafeRequestUrl(rawUrl, {
+        ...options,
+        context: options.context || 'public remote',
+        allowInternal: false
+    });
+}
+
+/**
+ * Resolve a hostname using the same OS lookup path used for connections and
+ * reject it if any returned address is not global unicast.
+ *
+ * @param {string} hostname
+ * @returns {Promise<{safe: boolean, resolvedIps?: string[], error?: string}>}
  */
 function resolveAndValidateHost(hostname) {
+    const normalized = normalizeHostname(hostname);
+    const literal = parseIpLiteral(normalized);
+
+    if (literal) {
+        const internal = isInternalIp(normalized);
+        return Promise.resolve({
+            safe: !internal,
+            resolvedIps: [literal.toString()],
+            error: internal ? `IP ${normalized} is internal or non-global` : undefined
+        });
+    }
+
+    if (!normalized || normalized.includes(':')) {
+        return Promise.resolve({
+            safe: false,
+            resolvedIps: [],
+            error: `Invalid hostname or IP literal: ${hostname}`
+        });
+    }
+
     return new Promise((resolve) => {
-        // If the hostname is already an IP literal, just check it directly
-        if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) || hostname.includes(':')) {
-            const internal = isInternalIp(hostname);
-            return resolve({
-                safe: !internal,
-                resolvedIps: [hostname],
-                error: internal ? `Resolved IP ${hostname} is internal/private` : undefined
-            });
-        }
+        dns.lookup(normalized, { all: true, verbatim: true }, (error, addresses) => {
+            if (error || !Array.isArray(addresses) || addresses.length === 0) {
+                const dnsError = error?.message || 'no addresses returned';
+                log.warn(() => `[SSRF] DNS resolution failed for ${normalized}: ${dnsError}`);
+                return resolve({
+                    safe: false,
+                    resolvedIps: [],
+                    error: `DNS resolution failed for ${normalized}: ${dnsError}`
+                });
+            }
 
-        // Resolve all A and AAAA records
-        dns.resolve(hostname, (errA, addressesA) => {
-            dns.resolve6(hostname, (err6, addresses6) => {
-                const allAddresses = [
-                    ...(Array.isArray(addressesA) ? addressesA : []),
-                    ...(Array.isArray(addresses6) ? addresses6 : [])
-                ];
+            const resolvedIps = addresses.map(entry =>
+                typeof entry === 'string' ? entry : entry.address
+            );
 
-                // If DNS resolution fails entirely, block the request (fail-closed)
-                if (allAddresses.length === 0) {
-                    const dnsError = errA?.message || err6?.message || 'unknown';
-                    log.warn(() => `[SSRF] DNS resolution failed for ${hostname}: ${dnsError}`);
-                    return resolve({
-                        safe: false,
-                        resolvedIps: [],
-                        error: `DNS resolution failed for ${hostname}: ${dnsError}`
-                    });
-                }
+            const unsafeIp = resolvedIps.find(isInternalIp);
+            if (unsafeIp) {
+                log.warn(() => `[SSRF] ${normalized} resolved to non-global IP ${unsafeIp}`);
+                return resolve({
+                    safe: false,
+                    resolvedIps,
+                    error: `Hostname ${normalized} resolves to internal or non-global IP ${unsafeIp}`
+                });
+            }
 
-                // Check every resolved IP — if ANY resolve to internal, block
-                for (const ip of allAddresses) {
-                    if (isInternalIp(ip)) {
-                        log.warn(() => `[SSRF] DNS rebinding detected: ${hostname} resolved to internal IP ${ip}`);
-                        return resolve({
-                            safe: false,
-                            resolvedIps: allAddresses,
-                            error: `Hostname ${hostname} resolves to internal/private IP ${ip}`
-                        });
-                    }
-                }
-
-                return resolve({ safe: true, resolvedIps: allAddresses });
-            });
+            return resolve({ safe: true, resolvedIps });
         });
     });
 }
 
 /**
- * Validate a baseUrl for SSRF safety
- * Blocks internal/private IPs and hostnames unless ALLOW_INTERNAL_CUSTOM_ENDPOINTS=true.
- * Performs DNS resolution to defend against DNS rebinding attacks.
- * 
- * @param {string} baseUrl - The baseUrl to validate
- * @returns {Promise<{ valid: boolean, error?: string, sanitized?: string }>} - Validation result
+ * Validate and canonicalize a caller-provided custom provider base URL.
+ *
+ * @param {string} baseUrl
+ * @returns {Promise<{valid: boolean, error?: string, sanitized?: string}>}
  */
 async function validateCustomBaseUrl(baseUrl) {
-    // Empty URL is considered invalid but not an SSRF risk
     if (!baseUrl || typeof baseUrl !== 'string' || !baseUrl.trim()) {
         return { valid: false, error: 'Base URL is required for custom provider' };
     }
 
     const trimmed = baseUrl.trim();
-
-    // Parse the URL
     let parsed;
     try {
-        parsed = new URL(trimmed);
-    } catch (e) {
-        return { valid: false, error: `Invalid URL format: ${trimmed}` };
-    }
-
-    // Only allow http and https protocols
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-        return { valid: false, error: `Invalid protocol: ${parsed.protocol}. Only http and https are allowed.` };
+        parsed = assertSafeCustomRequestUrl(trimmed);
+    } catch (error) {
+        const message = String(error?.message || '').replace(/^\[SSRF\]\s*/, '');
+        return { valid: false, error: message || 'Invalid custom provider URL' };
     }
 
     const hostname = parsed.hostname;
-
-    // Check if hostname is internal/private
-    if (isInternalHost(hostname)) {
-        if (ALLOW_INTERNAL) {
-            log.debug(() => `[SSRF] Allowing internal endpoint ${hostname} (ALLOW_INTERNAL_CUSTOM_ENDPOINTS=true)`);
-            return { valid: true, sanitized: trimmed };
-        }
-
-        log.warn(() => `[SSRF] Blocked internal endpoint: ${hostname}. Set ALLOW_INTERNAL_CUSTOM_ENDPOINTS=true in .env to allow local endpoints.`);
-        return {
-            valid: false,
-            error: `Internal/private endpoints (${hostname}) are blocked on this server for security. This server is configured for public deployment.`
-        };
+    if (areInternalEndpointsAllowed() && isInternalHost(hostname)) {
+        log.debug(() => `[SSRF] Allowing internal endpoint ${hostname} (ALLOW_INTERNAL_CUSTOM_ENDPOINTS=true)`);
+        return { valid: true, sanitized: parsed.toString() };
     }
 
-    log.debug(() => `[SSRF] Validated external endpoint: ${hostname}`);
-    
-    // DNS rebinding defense: resolve the hostname and verify the IP is also external.
-    // This prevents attackers from registering domains that resolve to 127.0.0.1, 10.x.x.x, etc.
     const dnsResult = await resolveAndValidateHost(hostname);
     if (!dnsResult.safe) {
-        if (ALLOW_INTERNAL) {
-            log.debug(() => `[SSRF] Allowing DNS-rebinding endpoint ${hostname} -> ${dnsResult.resolvedIps?.join(', ')} (ALLOW_INTERNAL_CUSTOM_ENDPOINTS=true)`);
-            return { valid: true, sanitized: trimmed };
+        if (areInternalEndpointsAllowed()) {
+            log.debug(() => `[SSRF] Allowing ${hostname} -> ${dnsResult.resolvedIps?.join(', ')} (ALLOW_INTERNAL_CUSTOM_ENDPOINTS=true)`);
+            return { valid: true, sanitized: parsed.toString() };
         }
 
-        log.warn(() => `[SSRF] Blocked DNS rebinding attempt: ${hostname} -> ${dnsResult.resolvedIps?.join(', ')}`);
+        log.warn(() => `[SSRF] Blocked custom endpoint ${hostname}: ${dnsResult.error}`);
         return {
             valid: false,
-            error: `Hostname ${hostname} resolves to an internal/private IP address. This is blocked for security.`
+            error: `Hostname ${hostname} resolves to an internal, private, or non-global IP address. This is blocked for security.`
         };
     }
 
-    return { valid: true, sanitized: trimmed };
+    log.debug(() => `[SSRF] Validated external endpoint: ${hostname} -> ${dnsResult.resolvedIps?.join(', ')}`);
+    return { valid: true, sanitized: parsed.toString() };
 }
 
 /**
- * Check if internal endpoints are allowed (for UI feedback)
- * @returns {boolean}
- */
-function areInternalEndpointsAllowed() {
-    return ALLOW_INTERNAL;
-}
-
-/**
- * Create a DNS lookup function that blocks connections to internal IPs.
- * This is used as the `lookup` option in HTTP agents/axios to enforce
- * SSRF protection at connection time (not just at validation time),
- * closing the TOCTOU gap between DNS validation and actual connection.
+ * Node-compatible DNS lookup that checks every address immediately before a
+ * socket is opened. Redirected hostnames use these same protected agents.
  *
- * @returns {Function} A Node.js-compatible lookup function
+ * @returns {Function}
  */
-function createSsrfSafeLookup() {
-    return function ssrfSafeLookup(hostname, options, callback) {
-        // Handle (hostname, callback) signature
-        if (typeof options === 'function') {
-            callback = options;
-            options = {};
+function createSsrfSafeLookup(policyOptions = {}) {
+    return function ssrfSafeLookup(hostname, lookupOptions, callback) {
+        if (typeof lookupOptions === 'function') {
+            callback = lookupOptions;
+            lookupOptions = {};
+        } else if (typeof lookupOptions === 'number') {
+            lookupOptions = { family: lookupOptions };
+        } else {
+            lookupOptions = lookupOptions || {};
         }
 
-        const family = options?.family || 0; // 0 = both, 4 = IPv4, 6 = IPv6
-        const all = options?.all || false;
+        const all = lookupOptions.all === true;
+        const family = lookupOptions.family || 0;
 
-        dns.lookup(hostname, { family, all: true }, (err, addresses) => {
-            if (err) return callback(err);
+        const allowInternal = shouldAllowInternal(policyOptions);
 
-            if (!addresses || addresses.length === 0) {
-                return callback(new Error(`[SSRF] DNS lookup returned no addresses for ${hostname}`));
+        if (!allowInternal && isInternalHost(hostname)) {
+            return callback(createSsrfError(
+                `Blocked connection to internal or non-global host ${hostname}`,
+                'ESSRF_INTERNAL_IP'
+            ));
+        }
+
+        const dnsLookupOptions = {
+            all: true,
+            family,
+            verbatim: true
+        };
+        if (lookupOptions.hints !== undefined) dnsLookupOptions.hints = lookupOptions.hints;
+
+        dns.lookup(normalizeHostname(hostname), dnsLookupOptions, (error, addresses) => {
+            if (error) return callback(error);
+
+            if (!Array.isArray(addresses) || addresses.length === 0) {
+                return callback(createSsrfError(
+                    `DNS lookup returned no addresses for ${hostname}`,
+                    'ESSRF_DNS_EMPTY'
+                ));
             }
 
-            // Check if ALLOW_INTERNAL is set — if so, skip the IP check
-            if (!ALLOW_INTERNAL) {
+            if (!allowInternal) {
                 for (const entry of addresses) {
                     const ip = typeof entry === 'string' ? entry : entry.address;
                     if (isInternalIp(ip)) {
-                        const error = new Error(`[SSRF] Blocked connection to ${hostname}: resolved to internal IP ${ip}`);
-                        error.code = 'ESSRF_INTERNAL_IP';
                         log.warn(() => `[SSRF] Connection-time block: ${hostname} -> ${ip}`);
-                        return callback(error);
+                        return callback(createSsrfError(
+                            `Blocked connection to ${hostname}: resolved to internal or non-global IP ${ip}`,
+                            'ESSRF_INTERNAL_IP'
+                        ));
                     }
                 }
             }
@@ -298,18 +355,37 @@ function createSsrfSafeLookup() {
                 return callback(null, addresses);
             }
 
-            // Return the first address
             const first = addresses[0];
             return callback(null, first.address, first.family);
         });
     };
 }
 
+/**
+ * Axios/follow-redirects hook. It runs after each Location header is resolved
+ * but before the next request. DNS is then checked by createSsrfSafeLookup.
+ *
+ * @returns {Function}
+ */
+function createSsrfSafeRedirectValidator(policyOptions = {}) {
+    return function ssrfSafeRedirectValidator(redirectOptions) {
+        const redirectUrl = redirectOptions?.href;
+        if (!redirectUrl) {
+            throw createSsrfError('Redirect destination is missing or invalid');
+        }
+        assertSafeRequestUrl(redirectUrl, policyOptions);
+    };
+}
+
 module.exports = {
     validateCustomBaseUrl,
+    assertSafeRequestUrl,
+    assertSafeCustomRequestUrl,
+    assertSafePublicRequestUrl,
     isInternalHost,
     isInternalIp,
     resolveAndValidateHost,
     areInternalEndpointsAllowed,
-    createSsrfSafeLookup
+    createSsrfSafeLookup,
+    createSsrfSafeRedirectValidator
 };

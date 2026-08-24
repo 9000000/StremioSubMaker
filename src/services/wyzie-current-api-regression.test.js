@@ -5,11 +5,13 @@ const path = require('node:path');
 
 process.env.STORAGE_TYPE = 'filesystem';
 process.env.LOG_LEVEL = 'error';
+process.env.ENCRYPTION_KEY ||= '22'.repeat(32);
 
 const axios = require('axios');
 const WyzieSubsService = require('./wyzieSubs');
 const { getDefaultConfig, normalizeConfig } = require('../utils/config');
 const StorageFactory = require('../storage/StorageFactory');
+const { encodeProviderUrl } = require('../utils/providerUrlToken');
 
 test.after(async () => {
     await StorageFactory.reset();
@@ -49,7 +51,8 @@ test('Wyzie searches all sources available to the key and ignores legacy source 
     assert.equal(query.get('language'), 'en');
     assert.equal(results.length, 1);
     assert.equal(results[0].provider, 'wyzie');
-    assert.match(results[0].fileId, /^wyzie_/);
+    assert.match(results[0].fileId, /^wyzie_e1_/);
+    assert.doesNotMatch(results[0].fileId, new RegExp(Buffer.from(results[0].url).toString('base64url')));
 });
 
 test('Wyzie validation uses the quota-free key-scoped sources endpoint', async () => {
@@ -125,7 +128,7 @@ test('Configure and Quick Setup do not expose stale Wyzie source checkboxes', ()
 test('Wyzie downloads current direct HTTPS provider URLs', async () => {
     const originalGet = axios.get;
     const directUrl = 'https://downloads.example.test/example.srt';
-    const fileId = `wyzie_${Buffer.from(directUrl).toString('base64url')}`;
+    const fileId = encodeProviderUrl('wyzie_', directUrl);
     const srt = '1\n00:00:01,000 --> 00:00:02,000\nHello\n';
 
     axios.get = async (url) => {
@@ -144,11 +147,11 @@ test('Wyzie downloads current direct HTTPS provider URLs', async () => {
 
 test('Wyzie rejects non-HTTPS download URLs', async () => {
     const directUrl = 'http://downloads.example.test/example.srt';
-    const fileId = `wyzie_${Buffer.from(directUrl).toString('base64url')}`;
+    const fileId = encodeProviderUrl('wyzie_', directUrl);
     const service = new WyzieSubsService('wyzie-regression-protocol-key');
 
     await assert.rejects(
         service.downloadSubtitle(fileId, { maxRetries: 1 }),
-        /Unsafe Wyzie download URL protocol/
+        /Protocol http: is not allowed/
     );
 });

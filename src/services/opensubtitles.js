@@ -2030,7 +2030,8 @@ class OpenSubtitlesService {
           lookup: dnsLookup,
           timeout: timeout,
           maxRedirects: 5,
-          decompress: true
+          decompress: true,
+          maxContentLength: MAX_ZIP_BYTES
         });
       } catch (cdnError) {
         // CDN download errors (403/410 from Varnish) should NOT be reported as "Authentication failed"

@@ -962,7 +962,8 @@ class SubSourceService {
               'Origin': this.defaultHeaders['Origin']
             },
             httpAgent,
-            httpsAgent
+            httpsAgent,
+            maxContentLength: MAX_ZIP_BYTES
           });
         }
       } catch (cdnFirstErr) {
@@ -1028,7 +1029,8 @@ class SubSourceService {
                 'Origin': this.defaultHeaders['Origin']
               },
               httpAgent,
-              httpsAgent
+              httpsAgent,
+              maxContentLength: MAX_ZIP_BYTES
             });
           } else {
             // No direct URL available
@@ -1040,7 +1042,8 @@ class SubSourceService {
           return this.retryWithBackoff((attemptTimeout) => this.client.get(url, {
             headers: downloadHeaders,
             responseType: 'arraybuffer',
-            timeout: attemptTimeout
+            timeout: attemptTimeout,
+            maxContentLength: MAX_ZIP_BYTES
           }).catch((err) => {
             // On retryable failure, trigger the parallel fallback chain
             const code = err?.code || '';

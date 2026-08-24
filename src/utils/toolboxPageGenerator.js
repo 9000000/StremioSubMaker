@@ -10,6 +10,7 @@ const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
 const { resolveHistoryTitle } = require('../handlers/subtitles');
 const { getEffectiveGeminiModel } = require('./config');
 const { streamFilenameSelectorClientScript } = require('./streamUrlIdentity');
+const { serializeJsonForInlineScript } = require('./inlineScriptJson');
 
 function escapeHtml(value) {
   if (value === undefined || value === null) return '';
@@ -24,22 +25,6 @@ function escapeHtml(value) {
 function resolveUiLang(config) {
   const lang = (config && config.uiLanguage) ? String(config.uiLanguage).toLowerCase() : 'en';
   return escapeHtml(lang || 'en');
-}
-
-/**
- * Safely serialize JavaScript object for embedding in <script> tags
- * Prevents XSS by escaping HTML special characters that could break out of script context
- * Uses double-encoding to ensure JSON.parse() can safely reconstruct the object
- * @param {*} obj - Object to serialize
- * @returns {string} - Safe JavaScript code to parse the object
- */
-function safeJsonSerialize(obj) {
-  // First JSON.stringify to get JSON string
-  const jsonString = JSON.stringify(obj);
-  // Second JSON.stringify to escape it for embedding in JavaScript
-  // This prevents </script> tag injection and other escaping issues
-  const doubleEncoded = JSON.stringify(jsonString);
-  return `JSON.parse(${doubleEncoded})`;
 }
 
 function formatLanguageLabel(code, fallback) {
@@ -1432,16 +1417,16 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
   </div>
   <script src="/js/subtitle-menu.js?v=${escapeHtml(appVersion || 'dev')}&_cb=${escapeHtml(appVersion || 'dev')}"></script>
   <script>
-    const TOOLBOX = ${safeJsonSerialize({
+    const TOOLBOX = ${serializeJsonForInlineScript({
     configStr,
     videoId,
     filename: filename || '',
     videoHash
   })};
-    const SUBTITLE_MENU_TARGETS = ${JSON.stringify(subtitleMenuTargets)};
-    const SUBTITLE_MENU_SOURCES = ${JSON.stringify(config.sourceLanguages || [])};
-    const SUBTITLE_MENU_TARGET_CODES = ${JSON.stringify(config.targetLanguages || [])};
-    const SUBTITLE_LANGUAGE_MAPS = ${safeJsonSerialize(languageMaps)};
+    const SUBTITLE_MENU_TARGETS = ${serializeJsonForInlineScript(subtitleMenuTargets)};
+    const SUBTITLE_MENU_SOURCES = ${serializeJsonForInlineScript(config.sourceLanguages || [])};
+    const SUBTITLE_MENU_TARGET_CODES = ${serializeJsonForInlineScript(config.targetLanguages || [])};
+    const SUBTITLE_LANGUAGE_MAPS = ${serializeJsonForInlineScript(languageMaps)};
     let subtitleMenuInstance = null;
 
     function initStreamRefreshButton(opts) {
@@ -1553,7 +1538,7 @@ function generateSubToolboxPage(configStr, videoId, filename, config) {
       let pingAttempts = 0;
       const MAX_PINGS = 5;
       const EXT_INSTALL_URL = 'https://chromewebstore.google.com/detail/submaker-xsync/lpocanpndchjkkpgchefobjionncknjn';
-      const REQUIRED_XSYNC_VERSION = ${JSON.stringify(REQUIRED_XSYNC_VERSION)};
+      const REQUIRED_XSYNC_VERSION = ${serializeJsonForInlineScript(REQUIRED_XSYNC_VERSION)};
       const VERSION_WARNING_TEMPLATE = window.t
         ? window.t(
           'toolbox.extension.versionOutdated',
@@ -3378,7 +3363,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     if (window.ComboBox && typeof window.ComboBox.enhanceAll === 'function') {
       window.ComboBox.enhanceAll(document);
     }
-    const BOOTSTRAP = ${safeJsonSerialize(bootstrap)};
+    const BOOTSTRAP = ${serializeJsonForInlineScript(bootstrap)};
     const PAGE = { configStr: BOOTSTRAP.configStr, videoId: BOOTSTRAP.videoId, filename: BOOTSTRAP.filename || '', videoHash: BOOTSTRAP.videoHash || '' };
     const tt = (key, vars = {}, fallback = '') => window.t ? window.t(key, vars, fallback || key) : (fallback || key);
     const metaCopy = BOOTSTRAP.strings?.videoMeta || {};
@@ -3399,7 +3384,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     const hashMismatchStrings = BOOTSTRAP.strings?.hashMismatch || {};
     const lockCopy = BOOTSTRAP.strings?.locks || {};
     const reloadHints = BOOTSTRAP.strings?.reloadHints || {};
-    const HASH_ALERT_DEFAULTS = ${JSON.stringify(hashAlertLines)};
+    const HASH_ALERT_DEFAULTS = ${serializeJsonForInlineScript(hashAlertLines)};
     const HASH_MISMATCH_LINES = Array.isArray(hashMismatchStrings.alertLines) && hashMismatchStrings.alertLines.length
       ? hashMismatchStrings.alertLines.filter(Boolean)
       : (HASH_ALERT_DEFAULTS.length
@@ -4159,7 +4144,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       el.removeAttribute('inert');
     }
     const EXT_INSTALL_URL = 'https://chromewebstore.google.com/detail/submaker-xsync/lpocanpndchjkkpgchefobjionncknjn';
-    const REQUIRED_XSYNC_VERSION = ${JSON.stringify(REQUIRED_XSYNC_VERSION)};
+    const REQUIRED_XSYNC_VERSION = ${serializeJsonForInlineScript(REQUIRED_XSYNC_VERSION)};
     const VERSION_WARNING_TEMPLATE = tt(
       'toolbox.extension.versionOutdated',
       { detected: '{detected}', required: '{required}' },
@@ -9985,7 +9970,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
   <script src="/js/combobox.js?_cb=${escapeHtml(appVersion || 'dev')}"></script>
   <script>
     ${quickNavScript()}
-    const BOOTSTRAP = ${safeJsonSerialize({
+    const BOOTSTRAP = ${serializeJsonForInlineScript({
     configStr,
     videoId,
     filename: filename || '',
@@ -10001,23 +9986,23 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
     assemblyApiKey
   })};
     const PAGE = { configStr: BOOTSTRAP.configStr, videoId: BOOTSTRAP.videoId, filename: BOOTSTRAP.filename || '', videoHash: BOOTSTRAP.videoHash || '' };
-    const SUBTITLE_MENU_TARGETS = ${JSON.stringify(subtitleMenuTargets)};
-    const SUBTITLE_MENU_SOURCES = ${JSON.stringify(config.sourceLanguages || [])};
-    const SUBTITLE_MENU_TARGET_CODES = ${JSON.stringify(config.targetLanguages || [])};
-    const SUBTITLE_LANGUAGE_MAPS = ${safeJsonSerialize(languageMaps)};
+    const SUBTITLE_MENU_TARGETS = ${serializeJsonForInlineScript(subtitleMenuTargets)};
+    const SUBTITLE_MENU_SOURCES = ${serializeJsonForInlineScript(config.sourceLanguages || [])};
+    const SUBTITLE_MENU_TARGET_CODES = ${serializeJsonForInlineScript(config.targetLanguages || [])};
+    const SUBTITLE_LANGUAGE_MAPS = ${serializeJsonForInlineScript(languageMaps)};
     let subtitleMenuInstance = null;
     let pendingStreamUpdate = null;
     const tt = (key, vars = {}, fallback = '') => window.t ? window.t(key, vars, fallback || key) : (fallback || key);
-    const TOAST_TITLE_FALLBACK = ${JSON.stringify(t('toolbox.toast.title', {}, 'New stream detected'))};
+    const TOAST_TITLE_FALLBACK = ${serializeJsonForInlineScript(t('toolbox.toast.title', {}, 'New stream detected'))};
     const REFRESH_LABEL_FALLBACKS = {
-      loading: ${JSON.stringify(t('toolbox.refresh.loading', {}, 'Refreshing...'))},
-      empty: ${JSON.stringify(t('toolbox.refresh.empty', {}, 'No stream yet'))},
-      error: ${JSON.stringify(t('toolbox.refresh.error', {}, 'Refresh failed'))},
-      current: ${JSON.stringify(t('toolbox.refresh.current', {}, 'Already latest'))}
+      loading: ${serializeJsonForInlineScript(t('toolbox.refresh.loading', {}, 'Refreshing...'))},
+      empty: ${serializeJsonForInlineScript(t('toolbox.refresh.empty', {}, 'No stream yet'))},
+      error: ${serializeJsonForInlineScript(t('toolbox.refresh.error', {}, 'Refresh failed'))},
+      current: ${serializeJsonForInlineScript(t('toolbox.refresh.current', {}, 'Already latest'))}
     };
 
-    window.__SUBMAKER_REQUIRED_XSYNC_VERSION = ${JSON.stringify(REQUIRED_XSYNC_VERSION)};
-    const copy = ${safeJsonSerialize(copy)};
+    window.__SUBMAKER_REQUIRED_XSYNC_VERSION = ${serializeJsonForInlineScript(REQUIRED_XSYNC_VERSION)};
+    const copy = ${serializeJsonForInlineScript(copy)};
     ${streamFilenameSelectorClientScript()}
     (${autoSubsRuntime.toString()})(copy, selectStreamFilename);
 

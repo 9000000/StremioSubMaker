@@ -3,6 +3,7 @@ const path = require('path');
 
 const { getLanguageSelectionLimits } = require('./config');
 const { version } = require('./version');
+const { serializeJsonForInlineScript } = require('./inlineScriptJson');
 
 const TEMPLATE_PATH = path.join(__dirname, '..', '..', 'public', 'configure.html');
 const APP_VERSION_JSON_TOKEN = '__APP_VERSION_JSON__';
@@ -40,15 +41,6 @@ function loadTemplate() {
   return fs.readFileSync(TEMPLATE_PATH, 'utf8');
 }
 
-function escapeJsonForInlineScript(value) {
-  return JSON.stringify(value)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
-}
-
 function escapeJsSingleQuotedString(value) {
   return String(value)
     .replace(/\\/g, '\\\\')
@@ -71,7 +63,7 @@ function renderConfigurePage() {
   return template
     .split(APP_VERSION_JSON_TOKEN).join(`'${escapeJsSingleQuotedString(appVersion)}'`)
     .split(APP_VERSION_QUERY_TOKEN).join(escapeHtml(encodeURIComponent(appVersion)))
-    .split(CONFIG_LIMITS_JSON_TOKEN).join(escapeJsonForInlineScript(languageLimits));
+    .split(CONFIG_LIMITS_JSON_TOKEN).join(serializeJsonForInlineScript(languageLimits));
 }
 
 const CACHED_CONFIGURE_PAGE = renderConfigurePage();
