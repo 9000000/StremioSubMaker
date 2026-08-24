@@ -99,3 +99,29 @@ test('API-key subtitle providers are skipped before fan-out when unconfigured', 
   assert.match(configSource, /normalizeApiKeySubtitleProvider\(mergedConfig, config, 'subsro'\)/);
   assert.match(configSource, /const normalizedEnabled = wyzieConfig\.enabled === true && !!normalizedApiKey/);
 });
+
+test('session-backed requests fail fast while storage is still initializing', () => {
+  const source = readWorkspaceFile('index.js');
+  const readinessStart = source.indexOf('const SESSION_READINESS_REQUEST_TIMEOUT_MS');
+  const readinessEnd = source.indexOf("app.get('/configure/:config/'", readinessStart);
+
+  assert.notEqual(readinessStart, -1, 'bounded readiness wait should be configured');
+  assert.notEqual(readinessEnd, -1, 'readiness middleware end marker should exist');
+
+  const readinessSource = source.slice(readinessStart, readinessEnd);
+  assert.match(readinessSource, /Promise\.race\(\[sessionManager\.waitUntilReady\(\), timeout\]\)/);
+  assert.match(readinessSource, /SESSION_READINESS_TIMEOUT/);
+  assert.match(readinessSource, /setHeader\('Retry-After', '5'\)/);
+  assert.match(readinessSource, /status\(503\)/);
+  assert.match(readinessSource, /retryable: true/);
+});
+
+test('configuration service worker versioning does not normally depend on session storage', () => {
+  const source = readWorkspaceFile('public/sw.js');
+
+  assert.match(source, /function getRegisteredAppVersion\(\)/);
+  assert.match(source, /searchParams\.get\('_cb'\)/);
+  assert.match(source, /if \(registeredVersion\) return registeredVersion/);
+  assert.match(source, /VERSION_LOOKUP_TIMEOUT_MS = 3000/);
+  assert.match(source, /signal: controller\.signal/);
+});

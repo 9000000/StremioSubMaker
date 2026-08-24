@@ -8,17 +8,40 @@
  * 4. Automatic cache cleanup on version changes
  */
 
-// Cache version from build time
-let APP_VERSION = 'unknown';
+const VERSION_LOOKUP_TIMEOUT_MS = 3000;
+
+function getRegisteredAppVersion() {
+    try {
+        const workerUrl = new URL(self.location.href);
+        return (workerUrl.searchParams.get('_cb') || workerUrl.searchParams.get('v') || '').trim();
+    } catch (_) {
+        return '';
+    }
+}
+
+// sw-register.js already puts the server-rendered app version in this worker's
+// URL. Prefer it so installing/activating the configuration-page worker never
+// waits on Redis-backed session statistics during application startup.
+let APP_VERSION = getRegisteredAppVersion() || 'unknown';
 
 // Fetch version from server on install
 async function getAppVersion() {
+    const registeredVersion = getRegisteredAppVersion();
+    if (registeredVersion) return registeredVersion;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), VERSION_LOOKUP_TIMEOUT_MS);
     try {
-        const response = await fetch('/api/session-stats', { cache: 'no-store' });
+        const response = await fetch('/api/session-stats', {
+            cache: 'no-store',
+            signal: controller.signal
+        });
         const data = await response.json();
         return data.version || 'unknown';
     } catch (e) {
         return 'unknown';
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 

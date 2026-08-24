@@ -17,6 +17,7 @@ const { version: appVersion } = require('./version');
 const { xsyncMinVersion: REQUIRED_XSYNC_VERSION } = require('../../package.json');
 const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = require('./quickNav');
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
+const { streamFilenameSelectorClientScript } = require('./streamUrlIdentity');
 
 function escapeHtml(text) {
     if (!text) return '';
@@ -2505,38 +2506,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
             return md5hex(base).substring(0, 16);
         }
 
-        function extractStreamFilename(streamUrl) {
-            try {
-                const url = new URL(streamUrl);
-                // First, check for explicit filename-type params (these are reliable)
-                const explicitParams = ['filename', 'file', 'download', 'dn'];
-                for (const key of explicitParams) {
-                    const val = url.searchParams.get(key);
-                    if (val && val.trim()) return decodeURIComponent(val.trim().split('/').pop());
-                }
-                // Next, check pathname for a real filename (has extension)
-                const parts = (url.pathname || '').split('/').filter(Boolean);
-                if (parts.length) {
-                    const lastPart = decodeURIComponent(parts[parts.length - 1]);
-                    // If it looks like a real filename (has extension), use it
-                    if (/\.[a-z0-9]{2,5}$/i.test(lastPart)) {
-                        return lastPart;
-                    }
-                }
-                // Then check 'name' param as fallback (often just title, not filename)
-                const nameVal = url.searchParams.get('name');
-                if (nameVal && nameVal.trim()) {
-                    return decodeURIComponent(nameVal.trim().split('/').pop());
-                }
-                // Last resort: return pathname last part even without extension
-                if (parts.length) {
-                    return decodeURIComponent(parts[parts.length - 1]);
-                }
-                return '';
-            } catch (_) {
-                return '';
-            }
-        }
+        ${streamFilenameSelectorClientScript()}
 
         function normalizeVideoIdCandidate(value) {
             if (!value) return '';
@@ -2564,7 +2534,7 @@ async function generateSubtitleSyncPage(subtitles, videoId, streamFilename, conf
         }
 
         function deriveStreamHashFromUrl(streamUrl, fallback = {}) {
-            const filename = extractStreamFilename(streamUrl) || fallback.filename || fallback.streamFilename || '';
+            const filename = selectStreamFilename(streamUrl, fallback.filename || fallback.streamFilename || '');
             const streamVideoId = extractStreamVideoId(streamUrl) || fallback.videoId || '';
             const hash = deriveVideoHashFromParts(filename, streamVideoId);
             return { hash, filename, videoId: streamVideoId, source: 'stream-url' };

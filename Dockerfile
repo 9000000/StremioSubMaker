@@ -1,5 +1,5 @@
-# Use Node.js LTS version
-FROM node:20-alpine
+# Use the current Active LTS line. Node.js 20 reached end-of-life in April 2026.
+FROM node:24-alpine
 
 # Install su-exec for privilege dropping and tzdata for IANA timezone support
 RUN apk add --no-cache su-exec tzdata
@@ -7,9 +7,10 @@ RUN apk add --no-cache su-exec tzdata
 # Set working directory
 WORKDIR /app
 
-# Install dependencies first (for better caching)
-COPY package*.json ./
-RUN npm ci --only=production
+# Install dependencies first (for better caching). Include project npm policy
+# so production installs enforce the reviewed lifecycle-script allowlist.
+COPY package*.json .npmrc ./
+RUN npm ci --omit=dev
 
 # Copy application code
 COPY . .
@@ -23,10 +24,11 @@ RUN mkdir -p .cache/translations \
     logs \
     keys
 
-# Set permissions: node owns everything, data dirs are world-writable (777)
-# so containers running with arbitrary UIDs can write to them via named volumes.
-# For bind mounts, the entrypoint handles ownership automatically.
-RUN chown -R node:node /app && \
+# Keep application files and dependencies read-only at runtime. Only /app itself
+# (for the default key file) and the runtime data directories need ownership.
+# Avoiding a recursive chown of node_modules also makes image builds much faster.
+RUN chown node:node /app && \
+    chown -R node:node .cache data logs keys && \
     chmod 777 .cache data logs keys
 
 # Copy entrypoint script

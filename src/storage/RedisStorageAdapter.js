@@ -34,8 +34,7 @@ class RedisStorageAdapter extends StorageAdapter {
     const {
       canonicalPrefix,
       variants,
-      usedFallbackPrefix,
-      isolationPrefix
+      usedFallbackPrefix
     } = this._normalizeKeyPrefix(options.keyPrefix);
 
     // Prefix/key migration can unintentionally merge data between tenants when
@@ -48,7 +47,7 @@ class RedisStorageAdapter extends StorageAdapter {
     // isolation-derived default before this fallback was introduced.
     const migrationEnv = process.env.REDIS_PREFIX_MIGRATION;
     this.prefixMigrationEnabled = migrationEnv === 'true'
-      || (migrationEnv !== 'false' && (usedFallbackPrefix || Boolean(isolationPrefix)));
+      || (migrationEnv !== 'false' && usedFallbackPrefix);
 
     // Check if Redis Sentinel is enabled (disabled by default)
     const sentinelEnabled = process.env.REDIS_SENTINEL_ENABLED === 'true' || options.sentinelEnabled === true;
@@ -872,7 +871,10 @@ class RedisStorageAdapter extends StorageAdapter {
           pipeline.srem(this.getSessionIndexKey(), key);
         }
 
-        if (size > 0) {
+        // Size counters are only maintained for caches with configured limits.
+        // Decrementing an unlimited cache (sessions) creates a negative counter
+        // because set() intentionally never increments one for that cache.
+        if (size > 0 && StorageAdapter.SIZE_LIMITS[cacheType]) {
           pipeline.decrby(sizeKey, size);
         }
 
@@ -944,7 +946,7 @@ class RedisStorageAdapter extends StorageAdapter {
           pipeline.del(metaKey);
           pipeline.zrem(lruKey, key);
           pipeline.srem(indexKey, key);
-          if (size > 0) {
+          if (size > 0 && StorageAdapter.SIZE_LIMITS[cacheType]) {
             pipeline.decrby(sizeKey, size);
           }
 
@@ -1113,7 +1115,17 @@ class RedisStorageAdapter extends StorageAdapter {
       return await this._executeWithRetry(`size ${cacheType}`, async () => {
         const sizeKey = this._getSizeKey(cacheType);
         const size = await this.client.get(sizeKey);
-        return size ? parseInt(size, 10) : 0;
+        if (!size) return 0;
+
+        const parsedSize = parseInt(size, 10);
+        if (!Number.isSafeInteger(parsedSize) || parsedSize < 0) {
+          // Repair counters produced by older releases that decremented
+          // unlimited cache types without ever incrementing them.
+          await this.client.set(sizeKey, 0);
+          return 0;
+        }
+
+        return parsedSize;
       });
     } catch (error) {
       if (error instanceof StorageUnavailableError) {

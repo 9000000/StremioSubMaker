@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://www.gnu.org/licenses/agpl-3.0"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=flat-square" alt="License: AGPL v3"/></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen?style=flat-square" alt="Node 18+"/>
+  <img src="https://img.shields.io/badge/node-%3E%3D22.9.0-brightgreen?style=flat-square" alt="Node 22.9+"/>
   <img src="https://img.shields.io/badge/Stremio-Addon-purple?style=flat-square" alt="Stremio Addon"/>
   <img src="https://img.shields.io/badge/languages-433-orange?style=flat-square" alt="433 Languages"/>
   <img src="https://img.shields.io/badge/AI-10%2B%20providers-ff69b4?style=flat-square" alt="10+ AI Providers"/>
@@ -87,7 +87,7 @@ Check their [FREE Stremio Addons Guide](https://stremio-addons-guide.elfhosted.c
 
 ### Prerequisites
 
-- **Node.js** 18+ — [nodejs.org](https://nodejs.org)
+- **Node.js** 22.9+ with npm 11.17 or newer — [nodejs.org](https://nodejs.org)
 - **Gemini API Key** — [Get free](https://aistudio.google.com/app/api-keys)
 - At least one subtitle provider key (optional but recommended)
 

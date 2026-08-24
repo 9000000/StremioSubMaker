@@ -9,6 +9,7 @@ const { quickNavStyles, quickNavScript, renderQuickNav, renderRefreshBadge } = r
 const { buildClientBootstrap, loadLocale, getTranslator } = require('./i18n');
 const { resolveHistoryTitle } = require('../handlers/subtitles');
 const { getEffectiveGeminiModel } = require('./config');
+const { streamFilenameSelectorClientScript } = require('./streamUrlIdentity');
 
 function escapeHtml(value) {
   if (value === undefined || value === null) return '';
@@ -3756,38 +3757,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
       return md5hex(base).substring(0, 16);
     }
 
-    function extractStreamFilename(streamUrl) {
-      try {
-        const url = new URL(streamUrl);
-        // First, check for explicit filename-type params (these are reliable)
-        const explicitParams = ['filename', 'file', 'download', 'dn'];
-        for (const key of explicitParams) {
-          const val = url.searchParams.get(key);
-          if (val && val.trim()) return decodeURIComponent(val.trim().split('/').pop());
-        }
-        // Next, check pathname for a real filename (has extension)
-        const parts = (url.pathname || '').split('/').filter(Boolean);
-        if (parts.length) {
-          const lastPart = decodeURIComponent(parts[parts.length - 1]);
-          // If it looks like a real filename (has extension), use it
-          if (/\.[a-z0-9]{2,5}$/i.test(lastPart)) {
-            return lastPart;
-          }
-        }
-        // Then check 'name' param as fallback (often just title, not filename)
-        const nameVal = url.searchParams.get('name');
-        if (nameVal && nameVal.trim()) {
-          return decodeURIComponent(nameVal.trim().split('/').pop());
-        }
-        // Last resort: return pathname last part even without extension
-        if (parts.length) {
-          return decodeURIComponent(parts[parts.length - 1]);
-        }
-        return '';
-      } catch (_) {
-        return '';
-      }
-    }
+    ${streamFilenameSelectorClientScript()}
 
     function normalizeVideoIdCandidate(value) {
       if (!value) return '';
@@ -3815,7 +3785,7 @@ async function generateEmbeddedSubtitlePage(configStr, videoId, filename) {
     }
 
     function deriveStreamHashFromUrl(streamUrl, fallback = {}) {
-      const filename = extractStreamFilename(streamUrl) || fallback.filename || fallback.streamFilename || '';
+      const filename = selectStreamFilename(streamUrl, fallback.filename || fallback.streamFilename || '');
       const streamVideoId = extractStreamVideoId(streamUrl) || fallback.videoId || '';
       const hash = deriveVideoHashFromParts(filename, streamVideoId);
       return {
@@ -6223,7 +6193,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
   const assemblyEnabled = Boolean(config.providers?.assemblyai?.apiKey || config.assemblyAiApiKey);
   const assemblyApiKey = config.providers?.assemblyai?.apiKey || config.assemblyAiApiKey || '';
 
-  function autoSubsRuntime(copy) {
+  function autoSubsRuntime(copy, selectStreamFilename) {
     (function () {
       const els = {
         startBtn: document.getElementById('startAutoSubs'),
@@ -6743,39 +6713,6 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
         return md5hex(base).substring(0, 16);
       }
 
-      function extractStreamFilename(streamUrl) {
-        try {
-          const url = new URL(streamUrl);
-          // First, check for explicit filename-type params (these are reliable)
-          const explicitParams = ['filename', 'file', 'download', 'dn'];
-          for (const key of explicitParams) {
-            const val = url.searchParams.get(key);
-            if (val && val.trim()) return decodeURIComponent(val.trim().split('/').pop());
-          }
-          // Next, check pathname for a real filename (has extension)
-          const parts = (url.pathname || '').split('/').filter(Boolean);
-          if (parts.length) {
-            const lastPart = decodeURIComponent(parts[parts.length - 1]);
-            // If it looks like a real filename (has extension), use it
-            if (/\.[a-z0-9]{2,5}$/i.test(lastPart)) {
-              return lastPart;
-            }
-          }
-          // Then check 'name' param as fallback (often just title, not filename)
-          const nameVal = url.searchParams.get('name');
-          if (nameVal && nameVal.trim()) {
-            return decodeURIComponent(nameVal.trim().split('/').pop());
-          }
-          // Last resort: return pathname last part even without extension
-          if (parts.length) {
-            return decodeURIComponent(parts[parts.length - 1]);
-          }
-          return '';
-        } catch (_) {
-          return '';
-        }
-      }
-
       function extractStreamVideoId(streamUrl) {
         try {
           const url = new URL(streamUrl);
@@ -6794,7 +6731,7 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
       }
 
       function deriveStreamHashFromUrl(streamUrl, fallback = {}) {
-        const filename = extractStreamFilename(streamUrl) || fallback.filename || '';
+        const filename = selectStreamFilename(streamUrl, fallback.filename || '');
         const streamVideoId = extractStreamVideoId(streamUrl) || fallback.videoId || '';
         const hash = deriveVideoHashFromParts(filename, streamVideoId);
         return { hash, filename, videoId: streamVideoId, source: 'stream-url' };
@@ -10081,7 +10018,8 @@ async function generateAutoSubtitlePage(configStr, videoId, filename, config = {
 
     window.__SUBMAKER_REQUIRED_XSYNC_VERSION = ${JSON.stringify(REQUIRED_XSYNC_VERSION)};
     const copy = ${safeJsonSerialize(copy)};
-    (${autoSubsRuntime.toString()})(copy);
+    ${streamFilenameSelectorClientScript()}
+    (${autoSubsRuntime.toString()})(copy, selectStreamFilename);
 
     if (window.ComboBox && typeof window.ComboBox.enhanceAll === 'function') {
       window.ComboBox.enhanceAll(document);

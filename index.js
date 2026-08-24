@@ -71,6 +71,7 @@ const { generateSmdbPage } = require('./src/utils/smdbPageGenerator');
 const { generateConfigurePage } = require('./src/utils/configurePageGenerator');
 const smdbCache = require('./src/utils/smdbCache');
 const { deriveVideoHash } = require('./src/utils/videoHash');
+const { deriveStreamHashFromUrl } = require('./src/utils/streamUrlIdentity');
 const { registerFileUploadRoutes } = require('./src/routes/fileUploadRoutes');
 const {
     getProviderAuthFailureCacheKey,
@@ -392,73 +393,7 @@ function cleanupCachesOnStartup() {
 }
 
 function deriveStreamHashFromUrlServer(streamUrl, fallback = {}) {
-    let filename = (fallback.filename || fallback.streamFilename || '').trim();
-    let streamVideoId = (fallback.videoId || '').trim();
-    if (streamUrl) {
-        try {
-            const url = new URL(streamUrl);
-            // First, check for explicit filename-type params (these are reliable)
-            const explicitParams = ['filename', 'file', 'download', 'dn'];
-            let foundFilename = '';
-            for (const key of explicitParams) {
-                const val = url.searchParams.get(key);
-                if (val && val.trim()) {
-                    foundFilename = decodeURIComponent(val.trim().split('/').pop());
-                    break;
-                }
-            }
-            // Next, check pathname for a real filename (has extension)
-            if (!foundFilename) {
-                const parts = (url.pathname || '').split('/').filter(Boolean);
-                if (parts.length) {
-                    const lastPart = decodeURIComponent(parts[parts.length - 1]);
-                    // If it looks like a real filename (has extension), use it
-                    if (/\.[a-z0-9]{2,5}$/i.test(lastPart)) {
-                        foundFilename = lastPart;
-                    }
-                }
-            }
-            // Then check 'name' param as fallback (often just title, not filename)
-            if (!foundFilename) {
-                const nameVal = url.searchParams.get('name');
-                if (nameVal && nameVal.trim()) {
-                    foundFilename = decodeURIComponent(nameVal.trim().split('/').pop());
-                }
-            }
-            // Last resort: use pathname last part even without extension
-            if (!foundFilename) {
-                const parts = (url.pathname || '').split('/').filter(Boolean);
-                if (parts.length) {
-                    foundFilename = decodeURIComponent(parts[parts.length - 1]);
-                }
-            }
-            if (foundFilename) {
-                filename = foundFilename;
-            }
-            const idKeys = ['videoId', 'video', 'id', 'mediaid', 'imdb', 'tmdb', 'kitsu', 'anidb', 'mal', 'myanimelist', 'anilist', 'tvdb', 'simkl', 'livechart', 'anisearch'];
-            for (const key of idKeys) {
-                const val = url.searchParams.get(key);
-                if (val && val.trim()) {
-                    streamVideoId = val.trim();
-                    break;
-                }
-            }
-            if (!streamVideoId) {
-                const parts = (url.pathname || '').split('/').filter(Boolean);
-                const directId = parts.find((p) => /^tt\d+/i.test(p) || p.includes(':'));
-                if (directId) streamVideoId = directId.trim();
-            }
-        } catch (_) {
-            /* ignore parse errors */
-        }
-    }
-    const hash = deriveVideoHash(filename, streamVideoId);
-    return {
-        hash,
-        filename,
-        videoId: streamVideoId,
-        source: 'stream-url'
-    };
+    return deriveStreamHashFromUrl(streamUrl, fallback);
 }
 
 
@@ -2609,6 +2544,26 @@ sessionManager.waitUntilReady().then(() => {
     sessionManagerReady = true;
 });
 
+const SESSION_READINESS_REQUEST_TIMEOUT_MS = (() => {
+    const parsed = parseInt(process.env.SESSION_READINESS_REQUEST_TIMEOUT_MS || '5000', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 5000;
+})();
+
+function waitForSessionReadinessRequest() {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            const error = new Error(`Session manager readiness timed out after ${SESSION_READINESS_REQUEST_TIMEOUT_MS}ms`);
+            error.code = 'SESSION_READINESS_TIMEOUT';
+            reject(error);
+        }, SESSION_READINESS_REQUEST_TIMEOUT_MS);
+        timeoutId.unref?.();
+    });
+
+    return Promise.race([sessionManager.waitUntilReady(), timeout])
+        .finally(() => clearTimeout(timeoutId));
+}
+
 // Middleware: Wait for session manager to be ready (for production use)
 // Skip for localhost to allow local testing without session persistence
 if (process.env.FORCE_SESSION_READY !== 'false') {
@@ -2628,9 +2583,18 @@ if (process.env.FORCE_SESSION_READY !== 'false') {
         // For other routes, ensure sessions are ready
         if (!sessionManagerReady) {
             try {
-                await sessionManager.waitUntilReady();
+                await waitForSessionReadinessRequest();
                 sessionManagerReady = true;
             } catch (err) {
+                if (err?.code === 'SESSION_READINESS_TIMEOUT') {
+                    const t = res.locals?.t || getTranslatorFromRequest(req, res);
+                    setNoStore(res);
+                    res.setHeader('Retry-After', '5');
+                    return res.status(503).json({
+                        error: t('server.errors.serviceInitializing', {}, 'SubMaker is still initializing. Please retry shortly.'),
+                        retryable: true
+                    });
+                }
                 log.error(() => ['[SessionReadiness] Failed to wait for session manager:', err.message]);
                 sessionManagerReady = true;
             }

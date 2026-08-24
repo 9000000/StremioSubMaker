@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.90
+
+**Improvements:**
+
+- **Updated and secured the complete npm dependency tree:** All direct dependencies are now at their newest compatible releases, with validated major upgrades to dotenv 17, Express 5, gpt-tokenizer 4, ioredis 6, and rate-limit-redis 6. The unused direct `node-fetch` dependency was removed, scoped compatible overrides patch the stale `path-to-regexp` and `tmp` versions still requested by the current Stremio Addon SDK without replacing Express 5's modern router, and npm's strict install-script allowlist approves the pinned optional macOS watcher while explicitly blocking an obsolete Node.js 0.11-era binary downloader buried in the 7-Zip compatibility tree. The resulting production and development trees report zero `npm audit` vulnerabilities, down from 27 advisories including 14 high-severity findings.
+
+- **Moved the supported runtime to maintained Node.js releases:** The production image now uses Node.js 24 Alpine instead of the end-of-life Node.js 20 line, package metadata declares Node.js 22.9 or newer with the pinned npm 11.17 package manager, and Docker installs production dependencies with the current `--omit=dev` option.
+
+- **Reduced Docker build overhead:** Image creation no longer recursively changes ownership across the complete production dependency tree; application files remain read-only while `/app` and the cache, data, log, and key paths retain the ownership and permissions needed at runtime.
+
+- **Modernized the Docker publishing workflow:** Checkout and every Docker action now use their current Node.js 24-based major releases, removing the GitHub Actions Node.js 20 deprecation warning while preserving the existing multi-platform image tags and registry cache behavior.
+
+- **Added automated Node.js compatibility and security checks:** Pushes and pull requests now use the project-pinned npm version to run the complete regression suite on Node.js 22 and 24, and fail on high-severity production dependency advisories before changes reach a release.
+
+- **Added routine dependency maintenance:** Dependabot now checks npm packages, GitHub Actions, and the Docker base image weekly, grouping compatible npm and Actions minor/patch updates to keep review noise manageable.
+
+**Bug Fixes:**
+
+- **Stopped Redis-backed routes and saved configuration pages from hanging during startup:** The isolation-derived fallback prefix previously made full cross-prefix migration appear enabled even when a stable `REDIS_KEY_PREFIX` was configured, causing every replica to perform unbounded Redis `SCAN` walks before storage initialization completed. Explicit-prefix deployments now skip those startup-wide scans unless `REDIS_PREFIX_MIGRATION=true` is deliberately set, while deterministic per-key recovery from legacy prefix variants remains available on cache misses so existing sessions are not lost. Session, manifest, and saved-config requests now return a retryable `503` after a bounded readiness wait instead of hanging behind the reverse proxy, and normal configuration-page service-worker startup takes its version from the rendered page rather than waiting on Redis-backed session statistics.
+
+- **Fixed negative Redis cache-size metrics for session storage:** Deleting session entries no longer decrements a size counter that unlimited caches never increment, and health checks automatically repair negative counters left by older releases.
+
+- **Fixed Stremio local and private-LAN stream URLs being falsely rejected across Sub Toolbox:** Embedded Subtitles, Automatic Subtitles, and Subtitle Sync no longer mistake opaque Stremio streaming-server route segments such as the torrent file index in `http://127.0.0.1:11470/<info-hash>/0` for a media filename. Their shared URL identity check now trusts explicit or extension-bearing filenames, retains the linked Stremio filename when a URL only exposes an opaque route, and prefers that linked metadata over weak resolver `name` or extensionless-path hints. The AutoSubs server-side cache/delivery guard uses the same rule, so a successful xSync fetch from localhost or a LAN streaming server is no longer suppressed as a hash mismatch.
+
 ## SubMaker v1.4.89
 
 **Improvements:**
