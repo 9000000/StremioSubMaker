@@ -4,27 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## SubMaker v1.4.94
 
-**Performance:**
+**Performance Improvements:**
 
-- **Fixed freezing Config-page:** The page no longer waits for Redis or the saved profile before enabling the language flags, Token Vault, Toolbox, and form controls. It displays the local profile or a new draft immediately, loads the server copy in the background, and does not overwrite edits made while it loads. Version labels and the cached Toolbox button also appear immediately.
+- **Removed blocking profile requests during startup:** The Config page now renders the language flags, Token Vault, Toolbox, and form controls without waiting for Redis or remote profile retrieval. It initializes immediately from local data or a new draft, loads the saved profile in the background, and preserves edits made while that profile is loading. Version information and the cached Toolbox button are also available immediately.
 
-- **Made Config-page load sooner:** `config.js` now loads directly instead of waiting for another script to start it. Duplicate locale and language requests were removed, and the logo is downloaded only once.
+- **Streamlined configuration initialization:** `config.js` now loads directly from the page instead of waiting for a separate bootstrap script. Duplicate locale and language requests have been consolidated, and the logo is fetched only once.
 
-- **Kept the flags without the slow font download:** All language flags still appear, but they now use small built-in SVG images instead of downloading the 1.47 MB `Twemoji.ttf` file. This prevents a failed font request from holding the page open for several seconds.
+- **Replaced the external flag font with built-in SVG assets:** Language flags no longer depend on the 1.47 MB `Twemoji.ttf` download, removing a slow and failure-prone request while preserving the complete flag set.
 
-- **Fixed Config-page caching:** Versioned CSS and JavaScript are now cached between visits. Old asset links redirect to the current version, language data uses a short cache, and the service worker no longer downloads the page and its files a second time during installation.
+- **Improved asset caching on the Config page:** Versioned CSS and JavaScript are now reused between visits, outdated asset URLs redirect to the current release, and language data uses a short cache lifetime. Service-worker installation also no longer downloads the page and its assets a second time.
 
-- **Reduced first-load compression time:** Gzip now uses level 6 instead of level 9, reducing server work with almost no increase in download size.
-
-- **Added Config-page loading tests:** Tests now cover early version and button rendering, background profile loading, shared language requests, caching, and removal of the font and service-worker download delays.
+- **Reduced response-compression overhead:** The gzip compression level has been adjusted from 9 to 6, reducing server CPU usage with negligible impact on download size.
 
 **Bug Fixes:**
 
-- **Fixed incorrect Gemini location errors:** When Google blocks the server's location, SubMaker now reports that error directly instead of replacing it with a generic HTTP 400 error.
+- **Reported Gemini location restrictions accurately:** When Google rejects the server's location, SubMaker now reports the upstream location restriction instead of replacing it with a generic HTTP 400 error.
 
-- **Fixed Gemini errors behind Cloudflare:** Model-loading errors now reach Config-page as readable messages instead of being replaced by a Cloudflare HTML error or incorrectly blaming the API key.
+- **Retained Gemini model-loading errors through Cloudflare:** Model-discovery failures now reach the Config page as readable messages instead of being replaced by a Cloudflare HTML response or incorrectly attributed to the API key.
 
-- **Fixed saved providers in File Translation and Toolbox:** Providers that do not use DeepL's `modelType` setting are no longer rejected when that saved field is empty.
+- **Accepted saved providers without `modelType`:** File Translation and Toolbox no longer reject providers that do not use DeepL's `modelType` setting when the saved field is empty.
+
+**Testing:**
+
+- **Expanded configuration startup regression coverage:** Tests now cover immediate version and button rendering, background profile loading, shared language requests, asset caching, SVG-based flags, and the removal of redundant service-worker downloads.
 
 ## SubMaker v1.4.93
 
