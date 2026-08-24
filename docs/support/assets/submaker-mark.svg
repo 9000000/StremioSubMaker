@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">SubMaker</title>
+  <desc id="desc">A play button above two subtitle lines</desc>
+  <defs>
+    <linearGradient id="surface" x1="36" y1="24" x2="220" y2="232" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#35c9ef"/>
+      <stop offset="0.55" stop-color="#08a4d5"/>
+      <stop offset="1" stop-color="#0878ba"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#001d35" flood-opacity=".3"/>
+    </filter>
+  </defs>
+  <rect x="18" y="18" width="220" height="220" rx="58" fill="url(#surface)" filter="url(#shadow)"/>
+  <path d="M101 70.5c0-7.1 7.8-11.5 14-7.8l65.5 39.5c5.9 3.6 5.9 12.2 0 15.8L115 157.5c-6.2 3.7-14-0.7-14-7.8V70.5Z" fill="#fff"/>
+  <rect x="69" y="178" width="118" height="12" rx="6" fill="#fff" opacity=".95"/>
+  <rect x="89" y="201" width="78" height="10" rx="5" fill="#fff" opacity=".72"/>
+  <path d="m200 45 3.5 9.5L213 58l-9.5 3.5L200 71l-3.5-9.5L187 58l9.5-3.5L200 45Z" fill="#fff6a7"/>
+</svg>

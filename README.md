@@ -22,6 +22,7 @@
   <a href="#-features">Features</a> •
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-how-it-works">How It Works</a> •
+  <a href="#-support-submaker">Support</a> •
   <a href="#-troubleshooting">Troubleshooting</a>
 </p>
 
@@ -220,6 +221,18 @@ Click the **Reset** button at the bottom of the config page.
 
 ---
 
+## 💙 Support SubMaker
+
+SubMaker is free and open source, and [ElfHosted](https://elfhosted.com/?utm_source=github&utm_medium=readme&utm_campaign=stremiosubmaker-readme) generously sponsors the public instance's hosting. Optional contributions help with the parts hosting does not cover: AI/API credits, RD/TB test access, maintenance tools, and time for fixes.
+
+Nothing is paywalled, and support does not buy priority or promise a release schedule. Using SubMaker, reporting useful bugs, and sharing the project already helps.
+
+### **[Help keep SubMaker in sync →](https://xtremexq.github.io/StremioSubMaker/support/)**
+
+The support page includes one-time, recurring, and privacy-friendly options plus an opt-in public thank-you list.
+
+---
+
 ## 🙏 Acknowledgments
 
 **Built With**
@@ -244,6 +257,7 @@ Click the **Reset** button at the bottom of the config page.
 | **Issues & Bugs** | [Open an issue](https://github.com/xtremexq/StremioSubMaker/issues) |
 | **Documentation** | Open `/configure` for the live interactive config/help page |
 | **Community** | [Stremio Discord](https://discord.gg/stremio) • [r/StremioAddons](https://reddit.com/r/StremioAddons) |
+| **Support the Project** | [Support page](https://xtremexq.github.io/StremioSubMaker/support/) |
 
 ---
 
@@ -255,5 +269,6 @@ Click the **Reset** button at the bottom of the config page.
 <p align="center">
   <a href="https://github.com/xtremexq/StremioSubMaker">⭐ Star this repo</a> •
   <a href="https://github.com/xtremexq/StremioSubMaker/issues">🐛 Report Bug</a> •
-  <a href="https://github.com/xtremexq/StremioSubMaker/issues">✨ Request Feature</a>
+  <a href="https://github.com/xtremexq/StremioSubMaker/issues">✨ Request Feature</a> •
+  <a href="https://xtremexq.github.io/StremioSubMaker/support/">💙 Support</a>
 </p>

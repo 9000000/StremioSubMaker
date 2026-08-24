@@ -1,0 +1,52 @@
+{
+  "project": {
+    "repositoryUrl": "https://github.com/xtremexq/StremioSubMaker",
+    "publicInstanceUrl": "https://submaker.elfhosted.com",
+    "hostingSponsorName": "ElfHosted",
+    "hostingSponsorUrl": "https://elfhosted.com"
+  },
+  "settings": {
+    "currency": "USD",
+    "locale": "en-US",
+    "suggestedAmounts": [3, 5, 10, 25],
+    "defaultAmount": 5,
+    "minimumAmount": 1,
+    "maximumAmount": 1000,
+    "recognitionFormUrl": "https://forms.example.com/REPLACE_WITH_YOUR_FORM",
+    "recognitionUsernameParameter": "username",
+    "anonymousSupportCount": 0
+  },
+  "paymentMethods": [
+    {
+      "id": "github",
+      "label": "GitHub Sponsors",
+      "shortLabel": "GitHub",
+      "description": "One-time or monthly",
+      "badge": "Recommended",
+      "enabled": true,
+      "url": "https://github.com/sponsors/xtremexq",
+      "amountMode": "provider"
+    },
+    {
+      "id": "paypal",
+      "label": "PayPal",
+      "shortLabel": "PayPal",
+      "description": "Quick one-time support",
+      "badge": "",
+      "enabled": false,
+      "url": "https://www.paypal.com/ncp/payment/YOUR_PAYMENT_LINK_ID",
+      "amountMode": "provider"
+    },
+    {
+      "id": "crypto",
+      "label": "Crypto",
+      "shortLabel": "Crypto",
+      "description": "BTC, XMR & 300+ assets",
+      "badge": "Low fees",
+      "enabled": false,
+      "url": "https://nowpayments.io/donation/YOUR_DONATION_ID",
+      "amountMode": "provider"
+    }
+  ],
+  "supporters": []
+}
