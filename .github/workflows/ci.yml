@@ -14,12 +14,18 @@ concurrency:
 
 jobs:
   test:
-    name: Node.js ${{ matrix.node-version }}
+    name: Node.js ${{ matrix.node-version }} / npm ${{ matrix.npm-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22, 24]
+        include:
+          - node-version: 20.20.2
+            npm-version: 10.8.2
+          - node-version: 22
+            npm-version: 11.17.0
+          - node-version: 24
+            npm-version: 11.17.0
 
     steps:
       - name: Check out the repo
@@ -31,8 +37,8 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
-      - name: Use the project npm version
-        run: npm install --global npm@11.17.0
+      - name: Use the tested npm version
+        run: npm install --global npm@${{ matrix.npm-version }}
 
       - name: Install dependencies
         run: npm ci

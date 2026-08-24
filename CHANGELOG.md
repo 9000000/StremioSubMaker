@@ -10,6 +10,8 @@ All notable changes to this project will be documented in this file.
 
 **Bug Fixes:**
 
+- **Restored ElfHosted image builds and deployment promotion:** Dependency metadata now accepts the Node.js 20.18/npm 10.8 compatibility baseline used by ElfHosted's private patched image builder while the official SubMaker image remains on Node.js 24/npm 11. The security override for the legacy `router@1.3.8` dependency is now scoped to that subtree, allowing npm 10 to validate the lockfile and install patched `path-to-regexp` 0.1.13 without changing Express 5's modern `path-to-regexp` 8 dependency. CI now verifies the exact ElfHosted Node.js 20.20.2/npm 10.8.2 pair alongside the maintained Node.js 22 and 24 targets so downstream image promotion cannot regress silently again.
+
 - **Stopped stale authentication failures from keeping new Gemini `AQ.` keys marked invalid:** The explicit Gemini API-key Test action now always rechecks Google's live `v1beta` model endpoint with the runtime `x-goog-api-key` authentication path. A rejection cached by an older SubMaker release or during a newly issued key's provisioning window can no longer force every manual retry to fail for the full 10-minute negative-cache lifetime; successful validation clears the stale entry, while background model discovery and translation traffic keep the existing invalid-key suppression.
 
 - **Removed retiring and legacy-access Gemini models from new selections:** Gemini 2.5 and Gemini 3 Flash Preview choices are no longer offered to new configurations because newly provisioned Google projects can list those models even when generation is unavailable. Existing saved selections are migrated to Google's current recommended replacements before translation, including advanced model overrides.
