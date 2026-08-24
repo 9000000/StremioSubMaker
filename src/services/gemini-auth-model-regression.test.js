@@ -69,8 +69,13 @@ test('AQ authorization keys bypass stale auth failures during explicit validatio
     assert.deepEqual(models.map(model => model.name), ['gemini-3.7-flash']);
 
     const serverSource = fs.readFileSync(path.join(projectRoot, 'index.js'), 'utf8');
+    const configUiSource = fs.readFileSync(path.join(projectRoot, 'public', 'config.js'), 'utf8');
     assert.match(serverSource, /new GeminiService\(geminiApiKey\)[\s\S]{0,400}bypassAuthFailureCache: true/);
     assert.match(serverSource, /getGeminiPublicError\(apiError, t\)/);
+    assert.match(serverSource, /function getGeminiPublicErrorStatus\(errorType\)[\s\S]{0,400}return 424/);
+    assert.doesNotMatch(serverSource, /publicError\.errorType === 'authentication' \? 401 : 502/);
+    assert.match(configUiSource, /const failure = await response\.json\(\)/);
+    assert.match(configUiSource, /statusDiv\.textContent = `✗ \$\{message\}`/);
     assert.doesNotMatch(serverSource, /apiError\.response\?\.status === 400[\s\S]{0,500}invalidApiKey/);
     assert.doesNotMatch(serverSource, /generativelanguage\.googleapis\.com\/v1\/models/);
   } finally {
@@ -178,6 +183,66 @@ test('Gemini location errors reach translation as a specific actionable failure'
       }
     );
   } finally {
+    axios.post = originalPost;
+    if (originalFallback === undefined) delete process.env.GEMINI_API_FALLBACK_BASE;
+    else process.env.GEMINI_API_FALLBACK_BASE = originalFallback;
+  }
+});
+
+test('Gemini model-limit location rejection reaches translation before a generic generation 400 can replace it', async () => {
+  const originalGet = axios.get;
+  const originalPost = axios.post;
+  const originalFallback = process.env.GEMINI_API_FALLBACK_BASE;
+  delete process.env.GEMINI_API_FALLBACK_BASE;
+  let generationRequests = 0;
+
+  axios.get = async () => {
+    throw Object.assign(new Error('Request failed with status code 400'), {
+      response: {
+        status: 400,
+        data: {
+          error: {
+            code: 400,
+            message: 'User location is not supported for the API use.',
+            status: 'FAILED_PRECONDITION'
+          }
+        }
+      }
+    });
+  };
+  axios.post = async () => {
+    generationRequests += 1;
+    throw Object.assign(new Error('Request failed with status code 400'), {
+      response: {
+        status: 400,
+        data: {
+          error: {
+            code: 400,
+            message: 'A later generic generation error must not win.',
+            status: 'INVALID_ARGUMENT'
+          }
+        }
+      }
+    });
+  };
+
+  try {
+    const service = new GeminiService('AQ.location-preflight-test-key', 'gemini-3.6-flash', {
+      maxRetries: 0
+    });
+
+    await assert.rejects(
+      service.translateSubtitle('Hello', 'English', 'Portuguese'),
+      error => {
+        assert.equal(error.type, 'unsupported_location');
+        assert.equal(error.translationErrorType, 'GEMINI_UNSUPPORTED_LOCATION');
+        assert.match(error.message, /server network location/i);
+        return true;
+      }
+    );
+    assert.equal(generationRequests, 0);
+  } finally {
+    axios.get = originalGet;
     axios.post = originalPost;
     if (originalFallback === undefined) delete process.env.GEMINI_API_FALLBACK_BASE;
     else process.env.GEMINI_API_FALLBACK_BASE = originalFallback;

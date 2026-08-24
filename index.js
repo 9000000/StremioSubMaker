@@ -102,6 +102,26 @@ const { loadChangelog } = require('./src/utils/changelog');
 // Default to current package version so it auto-advances on releases
 const CACHE_BUSTER_VERSION = process.env.CACHE_BUSTER_VERSION || version;
 const CACHE_BUSTER_PATH = `/v${CACHE_BUSTER_VERSION}`;
+const CONFIG_UI_VERSIONED_ASSET_PATHS = new Set([
+    '/config.js',
+    '/css/configure.css',
+    '/css/combobox.css',
+    '/css/quick-setup.css',
+    '/js/init.js',
+    '/js/combobox.js',
+    '/js/combobox-init.js',
+    '/js/config-page-state.js',
+    '/js/config-loader.js',
+    '/js/theme-toggle.js',
+    '/js/sw-register.js',
+    '/js/quick-setup.js',
+    '/js/subtitle-menu.js',
+    '/partials/main.html',
+    '/partials/footer.html',
+    '/partials/overlays.html',
+    '/partials/quick-setup.html',
+    '/fonts/Twemoji.ttf'
+]);
 
 log.info(() => `[Startup] Cache buster active: ${CACHE_BUSTER_PATH}`);
 
@@ -1453,6 +1473,24 @@ function setNoStore(res) {
     res.setHeader('X-Cache-Buster', Date.now().toString());
 }
 
+// Configuration UI files contain application code only (never user/session data).
+// Their release-version query makes them safe to retain indefinitely while a new
+// release automatically selects a new URL.
+function setImmutableVersionedAssetCache(res) {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('CDN-Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Cloudflare-CDN-Cache-Control', 'public, max-age=31536000, immutable');
+    res.removeHeader('Pragma');
+    res.removeHeader('Expires');
+    res.removeHeader('Surrogate-Control');
+    res.removeHeader('X-Cache-Buster');
+}
+
+function setPublicUiDataCache(res) {
+    res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=86400');
+    res.setHeader('CDN-Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+}
+
 // Helper: caching policy for subtitle payloads
 // - loading/partial/error responses stay no-store to avoid caching placeholders
 // - final subtitle payloads also stay no-store to avoid stale subtitle reuse on some clients
@@ -2189,12 +2227,11 @@ const validationLimiter = rateLimit({
     }
 });
 
-// Enable gzip compression for all responses
-// SRT files compress extremely well (typically 5-10x reduction)
-// Use maximum compression (level 9) for best bandwidth savings
+// Enable gzip compression for all responses. Level 6 keeps nearly all of level
+// 9's size reduction without making cold UI requests contend for the zlib pool.
 app.use(compression({
     threshold: 512, // Compress responses larger than 512 bytes (was 1KB)
-    level: 9, // Maximum compression for SRT files (10-15x reduction)
+    level: 6,
     filter: (req, res) => {
         const accept = req.headers?.accept || '';
         const contentTypeHeader = res.getHeader('content-type') || '';
@@ -2458,54 +2495,31 @@ app.use('/addon/:config', (req, res, next) => {
 
 // Custom caching middleware for different file types
 app.use((req, res, next) => {
-    // Config UI assets must always be fresh to avoid stale layouts across hosts
-    const configUiAssets = [
-        '/css/configure.css',
-        '/css/combobox.css',
-        '/css/quick-setup.css',
-        '/js/init.js',
-        '/js/combobox.js',
-        '/js/combobox-init.js',
-        '/js/config-page-state.js',
-        '/js/config-loader.js',
-        '/js/theme-toggle.js',
-        '/js/sw-register.js',
-        '/js/quick-setup.js',
-        '/js/subtitle-menu.js',
-        '/sw.js'
-    ];
-    const configUiPartials = [
-        '/partials/main.html',
-        '/partials/footer.html',
-        '/partials/overlays.html',
-        '/partials/quick-setup.html'
-    ];
-    const configUiFonts = [
-        '/fonts/Twemoji.ttf'
-    ];
-    const isConfigUiAsset =
-        configUiAssets.includes(req.path) ||
-        configUiPartials.includes(req.path) ||
-        configUiFonts.includes(req.path);
+    if (CONFIG_UI_VERSIONED_ASSET_PATHS.has(req.path)) {
+        const query = req.query || {};
+        const versionParam = Object.prototype.hasOwnProperty.call(query, '_cb')
+            ? '_cb'
+            : (Object.prototype.hasOwnProperty.call(query, 'v') ? 'v' : '_cb');
+        const requestedVersion = query[versionParam];
 
-    if (isConfigUiAsset) {
-        // Force a cache-busting query so stale CDN copies (e.g. elfhosted) are bypassed
-        if (!Object.prototype.hasOwnProperty.call(req.query || {}, '_cb')) {
+        // Unversioned and stale URLs redirect to the current release key. Do not
+        // cache the redirect itself or it could pin a browser to an older release.
+        if (String(requestedVersion || '') !== String(CACHE_BUSTER_VERSION)) {
             try {
                 const url = new URL(req.originalUrl, `http://${req.headers.host || 'localhost'}`);
-                url.searchParams.set('_cb', CACHE_BUSTER_VERSION);
+                url.searchParams.set(versionParam, CACHE_BUSTER_VERSION);
+                setNoStore(res);
                 return res.redirect(307, url.pathname + url.search);
             } catch (err) {
                 log.warn(() => ['[Cache] Failed to build cache-buster redirect:', err.message]);
             }
+        } else {
+            setImmutableVersionedAssetCache(res);
         }
-        // Even with a cache-busted URL, mark the response as no-store to prevent future staleness
-        setNoStore(res);
     }
 
-    // Never cache session/config endpoints or configure assets (prevents cross-user bleed)
+    // Never cache user/session-dependent endpoints or generated application pages.
     const noStorePaths = [
-        '/config.js',
         '/configure.html',
         '/configure',
         '/api/get-session',
@@ -2531,8 +2545,7 @@ app.use((req, res, next) => {
         '/embedded-subtitles',
         '/auto-subtitles',
         '/smdb',
-        '/api/smdb',
-        ...configUiAssets
+        '/api/smdb'
     ];
 
     if (noStorePaths.some(p => req.path === p || req.path.startsWith(`${p}/`))) {
@@ -2590,7 +2603,7 @@ app.use(express.static('public', {
             return;
         }
         if (res.getHeader('Cache-Control')) return; // Preserve explicit no-store
-        res.setHeader('Cache-Control', 'public, max-age=31536000000, immutable');
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     }
 }));
 
@@ -2828,6 +2841,7 @@ app.get('/api/changelog', (req, res) => {
 app.get('/api/languages', (req, res) => {
     try {
         const languages = getAllLanguages();
+        setPublicUiDataCache(res);
         res.json(languages);
     } catch (error) {
         log.error(() => '[API] Error getting languages:', error);
@@ -2841,6 +2855,7 @@ app.get('/api/languages', (req, res) => {
 app.get('/api/languages/translation', (req, res) => {
     try {
         const languages = getAllTranslationLanguages();
+        setPublicUiDataCache(res);
         res.json(languages);
     } catch (error) {
         log.error(() => '[API] Error getting translation languages:', error);
@@ -2852,10 +2867,14 @@ app.get('/api/languages/translation', (req, res) => {
 // API endpoint to fetch UI locale messages
 app.get('/api/locale', async (req, res) => {
     try {
-        setNoStore(res);
         const requestedLang = (req.query.lang || '').toString().trim().toLowerCase();
         let lang = requestedLang || DEFAULT_LANG;
         const configStr = req.query.config;
+        if (configStr) {
+            setNoStore(res);
+        } else {
+            setPublicUiDataCache(res);
+        }
         let t = res.locals?.t || getTranslatorFromRequest(req, res);
 
         // If config token is provided, prefer explicit lang param; otherwise fall back to saved uiLanguage
@@ -3016,6 +3035,17 @@ function getGeminiPublicError(error, t) {
     };
 }
 
+function getGeminiPublicErrorStatus(errorType) {
+    if (errorType === 'authentication') return 401;
+    if (errorType === 'rate_limit') return 429;
+    if (errorType === 'invalid_request') return 400;
+
+    // A reverse proxy may replace an origin 502 response with its own HTML
+    // error page. 424 keeps the safe structured dependency error intact for
+    // unsupported locations and other Gemini upstream/discovery failures.
+    return 424;
+}
+
 async function resolveModelDiscoveryConfig(req, res, contextLabel) {
     let t = res.locals?.t || getTranslatorFromRequest(req, res);
     const configStr = typeof req.body?.configStr === 'string' ? req.body.configStr.trim() : '';
@@ -3104,7 +3134,7 @@ app.post('/api/gemini-models', validationLimiter, async (req, res) => {
         const t = res.locals?.t || getTranslatorFromRequest(req, res);
         const publicError = getGeminiPublicError(error, t);
         log.warn(() => `[API] Gemini model discovery failed (${publicError.errorType})`);
-        res.status(publicError.errorType === 'authentication' ? 401 : 502).json(publicError);
+        res.status(getGeminiPublicErrorStatus(publicError.errorType)).json(publicError);
     }
 });
 
@@ -3264,7 +3294,7 @@ app.post('/api/models/:provider', validationLimiter, async (req, res) => {
         if (String(req.params.provider || '').toLowerCase() === 'gemini') {
             const publicError = getGeminiPublicError(error, t);
             log.warn(() => `[API] Gemini provider model discovery failed (${publicError.errorType})`);
-            return res.status(publicError.errorType === 'authentication' ? 401 : 502).json(publicError);
+            return res.status(getGeminiPublicErrorStatus(publicError.errorType)).json(publicError);
         }
         log.error(() => ['[API] Error fetching provider models:', error]);
         const message = error?.response?.data?.error || error?.response?.data?.message || error.message || 'Failed to fetch models';

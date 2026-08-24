@@ -109,15 +109,6 @@ html {
     --glow: rgba(8, 164, 213, 0.45);
 }
 
-/* Ship emoji/flag font so desktop renders regional indicators as flags */
-@font-face {
-    font-family: 'Twemoji';
-    src: url('../fonts/Twemoji.ttf') format('truetype');
-    font-weight: normal;
-    font-style: normal;
-    font-display: swap;
-}
-
 /* Dark mode specific overrides */
 [data-theme="dark"] body {
     background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 60%, var(--bg-primary) 100%);
@@ -403,6 +394,18 @@ html[data-theme="blackhole"] .ui-language-dock {
     display: none;
 }
 
+.ui-language-flag-row[data-preboot] .ui-lang-flag {
+    display: none;
+}
+
+html[data-ui-lang="en"] .ui-language-flag-row[data-preboot] .ui-lang-flag[data-lang="en"],
+html[data-ui-lang="es"] .ui-language-flag-row[data-preboot] .ui-lang-flag[data-lang="es"],
+html[data-ui-lang="pt-br"] .ui-language-flag-row[data-preboot] .ui-lang-flag[data-lang="pt-br"],
+html[data-ui-lang="pt-pt"] .ui-language-flag-row[data-preboot] .ui-lang-flag[data-lang="pt-pt"],
+html[data-ui-lang="ar"] .ui-language-flag-row[data-preboot] .ui-lang-flag[data-lang="ar"] {
+    display: grid;
+}
+
 .ui-lang-flag {
     width: 38px;
     height: 38px;
@@ -412,9 +415,7 @@ html[data-theme="blackhole"] .ui-language-dock {
     font-size: 1.2rem;
     font-weight: 800;
     color: var(--text-primary);
-    /* Force emoji-capable fonts so regional indicators render as flags on desktop too */
-    font-family: 'Twemoji', 'Twemoji Color', 'Twemoji Mozilla', 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Noto Emoji', 'Segoe UI Symbol', 'Inter', sans-serif;
-    font-variant-emoji: emoji;
+    font-family: inherit;
     background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7)),
         linear-gradient(145deg, rgba(8, 164, 213, 0.14), rgba(51, 185, 225, 0.12));
     border: 1px solid rgba(0, 0, 0, 0.08);
@@ -422,6 +423,35 @@ html[data-theme="blackhole"] .ui-language-dock {
     cursor: pointer;
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
+
+.ui-lang-flag-icon {
+    display: block;
+    width: 24px;
+    height: 17px;
+    overflow: hidden;
+    border-radius: 3px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.16);
+}
+
+.ui-lang-flag-icon svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.preboot-flag {
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font: 700 0.55rem/1 system-ui, sans-serif;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+
+.preboot-flag-en { background: linear-gradient(135deg, #3c3b6e 0 42%, #b22234 42% 70%, #fff 70%); }
+.preboot-flag-es { background: linear-gradient(#aa151b 0 25%, #f1bf00 25% 75%, #aa151b 75%); }
+.preboot-flag-pt-br { background: #009b3a; color: #ffdf00; }
+.preboot-flag-pt-pt { background: linear-gradient(90deg, #046a38 0 40%, #da291c 40%); }
+.preboot-flag-ar { background: #006c35; }
 
 html[data-theme="dark"] .ui-lang-flag {
     color: #e5f6ff;

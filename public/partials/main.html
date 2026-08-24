@@ -2,19 +2,34 @@
     <div class="ui-language-dock" id="uiLanguageDock" role="group" aria-label="UI language"
         data-i18n="config.uiLanguageAria" data-i18n-attr="aria-label">
         <div class="ui-language-glow" aria-hidden="true"></div>
-        <div class="ui-language-flag-row" id="uiLanguageFlags">
-            <!-- Flags are rendered dynamically -->
+        <div class="ui-language-flag-row" id="uiLanguageFlags" data-preboot>
+            <button type="button" class="ui-lang-flag" data-lang="en" aria-label="English">
+                <span class="ui-lang-flag-icon preboot-flag preboot-flag-en" aria-hidden="true">EN</span>
+            </button>
+            <button type="button" class="ui-lang-flag" data-lang="es" aria-label="Spanish">
+                <span class="ui-lang-flag-icon preboot-flag preboot-flag-es" aria-hidden="true">ES</span>
+            </button>
+            <button type="button" class="ui-lang-flag" data-lang="pt-br" aria-label="Portuguese (Brazil)">
+                <span class="ui-lang-flag-icon preboot-flag preboot-flag-pt-br" aria-hidden="true">BR</span>
+            </button>
+            <button type="button" class="ui-lang-flag" data-lang="pt-pt" aria-label="Portuguese (Portugal)">
+                <span class="ui-lang-flag-icon preboot-flag preboot-flag-pt-pt" aria-hidden="true">PT</span>
+            </button>
+            <button type="button" class="ui-lang-flag" data-lang="ar" aria-label="Arabic">
+                <span class="ui-lang-flag-icon preboot-flag preboot-flag-ar" aria-hidden="true">AR</span>
+            </button>
         </div>
     </div>
 
     <div class="header">
         <div class="logo">
-            <img src="/logo.png" alt="SubMaker Logo" style="width: 80px; height: 80px; border-radius: 18px;">
+            <img src="/logo.png?v=__APP_VERSION_QUERY__" alt="SubMaker Logo" width="80" height="80"
+                style="width: 80px; height: 80px; border-radius: 18px;">
         </div>
         <h1 id="heroTitle" data-i18n="config.heroTitle">SubMaker</h1>
         <div class="version-badge-wrapper">
             <p class="subtitle" id="heroSubtitle" data-i18n="config.heroSubtitle">AI-Powered Subtitle Translation</p>
-            <span id="version-badge" class="version-badge" style="display:none;"></span>
+            <span id="version-badge" class="version-badge" style="display:inline-flex;">v__APP_VERSION_QUERY__</span>
         </div>
     </div>
 
@@ -77,6 +92,33 @@
     <button class="help-button mario" id="configHelp" title="Help" aria-label="Help" data-i18n="config.quickActionHelp"
         data-i18n-attr="title,aria-label">?</button>
 
+    <script>
+        // Paint locally-known shell controls as soon as they enter the DOM.
+        // The full initializer validates and replaces this optimistic state.
+        (function () {
+            try {
+                var urlToken = new URL(window.location.href).searchParams.get('config') || '';
+                var storedToken = localStorage.getItem('submaker_session_token') || '';
+                var intendedToken = /^[a-f0-9]{32}$/i.test(urlToken) ? urlToken : storedToken;
+                var cachedToken = localStorage.getItem('submaker_config_cache_token') || '';
+                if (!/^[a-f0-9]{32}$/i.test(intendedToken) || cachedToken !== intendedToken) return;
+                var cachedConfig = JSON.parse(localStorage.getItem('submaker_config_cache') || 'null');
+                var toolboxEnabled = cachedConfig && (
+                    cachedConfig.subToolboxEnabled === true ||
+                    cachedConfig.fileTranslationEnabled === true ||
+                    cachedConfig.syncSubtitlesEnabled === true
+                );
+                if (!toolboxEnabled) return;
+                var launcher = document.getElementById('subToolboxLauncher');
+                if (launcher) {
+                    launcher.style.display = 'flex';
+                    launcher.classList.add('show');
+                    launcher.dataset.configRef = intendedToken;
+                }
+            } catch (_) { }
+        })();
+    </script>
+
     <!-- Disable native HTML validation: we run all validation in config.js and hidden inputs (provider advanced sliders) can trip browser validity when collapsed -->
     <form id="configForm" autocomplete="off" spellcheck="false" novalidate>
 
@@ -105,7 +147,7 @@
                     <div class="portal-header-left">
                         <span class="portal-icon">✨</span>
                         <span class="portal-title">What's New</span>
-                        <span class="portal-version-badge" id="portalVersionBadge"></span>
+                        <span class="portal-version-badge" id="portalVersionBadge">v__APP_VERSION_QUERY__</span>
                     </div>
                     <div class="portal-header-right">
                         <span class="portal-new-dot" id="portalNewDot" style="display:none;"

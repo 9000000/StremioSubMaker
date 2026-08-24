@@ -485,7 +485,15 @@ class GeminiService {
       this._modelLimits = limits;
       return limits;
     } catch (error) {
-      logGeminiFailure(error, 'Fetch model limits');
+      const info = logGeminiFailure(error, 'Fetch model limits');
+      // A hosted-location rejection is authoritative for the same Gemini API
+      // origin used by generation. Do not swallow it and continue to a second
+      // request that Google may report as a generic 400; propagating the
+      // decorated error preserves the actionable Stremio subtitle added in
+      // v1.4.93.
+      if (info.type === 'unsupported_location') {
+        throw error;
+      }
       log.warn(() => '[Gemini] Using conservative model limits after metadata lookup failure');
       const limits = {
         inputTokenLimit: undefined,

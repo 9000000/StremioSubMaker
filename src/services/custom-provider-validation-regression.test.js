@@ -7,6 +7,7 @@ const path = require('node:path');
 const { Readable } = require('node:stream');
 const axios = require('axios');
 const OpenAICompatibleProvider = require('./providers/openaiCompatible');
+const { fileTranslationBodySchema } = require('../utils/validation');
 const { MAX_AI_RESPONSE_BYTES } = require('../utils/resourceLimits');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
@@ -44,6 +45,36 @@ test('custom provider validation sends a minimal request with the entered URL, k
   } finally {
     axios.post = originalPost;
   }
+});
+
+test('file translation accepts the saved empty modelType used by non-DeepL providers', () => {
+  const payload = {
+    content: '1\n00:00:01,000 --> 00:00:02,000\nHello\n',
+    sourceLanguage: 'eng',
+    targetLanguage: 'pob',
+    configStr: '0123456789abcdef0123456789abcdef',
+    overrides: {
+      provider: 'openai',
+      providerModel: 'gpt-4.1-nano',
+      providerParameters: {
+        openai: {
+          temperature: 0.4,
+          maxOutputTokens: 512,
+          translationTimeout: 45,
+          maxRetries: 0,
+          modelType: ''
+        }
+      }
+    }
+  };
+
+  const { error, value } = fileTranslationBodySchema.validate(payload, {
+    abortEarly: false,
+    stripUnknown: true
+  });
+
+  assert.equal(error, undefined);
+  assert.equal(value.overrides.providerParameters.openai.modelType, '');
 });
 
 test('custom provider streaming responses use the same hard byte ceiling', async () => {

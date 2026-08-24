@@ -62,27 +62,27 @@ const NON_CACHEABLE_PATH_PREFIXES = [
     '/addon/'
 ];
 const NON_CACHEABLE_ASSETS = new Set([
-    '/css/configure.css',
-    '/css/combobox.css',
-    '/css/quick-setup.css',
-    '/js/init.js',
-    '/js/combobox.js',
-    '/js/combobox-init.js',
-    '/js/config-page-state.js',
-    '/js/config-loader.js',
-    '/js/theme-toggle.js',
-    '/js/sw-register.js',
-    '/js/quick-setup.js',
-    '/config.js',
     '/sw.js'
 ]);
 
-// Treat all API requests as sensitive to avoid any chance of cached responses
-// leaking configuration or credentials between users (especially on shared
-// hosting/CDN layers). We simply skip caching altogether for /api/* paths.
+// Never put API responses in the service worker Cache API. A small allowlist of
+// configuration-page catalogs can still use their ordinary browser/CDN HTTP
+// cache; every user/session-dependent API request explicitly bypasses it.
 function isSensitiveApiRequest(urlLike) {
     const url = urlLike instanceof URL ? urlLike : new URL(urlLike, self.location.origin);
     return url.pathname.startsWith('/api/');
+}
+
+function isPublicUiApiRequest(urlLike) {
+    const url = urlLike instanceof URL ? urlLike : new URL(urlLike, self.location.origin);
+    if (url.pathname === '/api/languages' ||
+        url.pathname === '/api/languages/translation' ||
+        url.pathname === '/api/changelog') {
+        return true;
+    }
+    return url.pathname === '/api/locale' &&
+        url.searchParams.has('lang') &&
+        !url.searchParams.has('config');
 }
 
 // Honor server cache directives (no-store/private) when deciding to cache
@@ -155,18 +155,10 @@ async function purgeSensitiveApiCacheEntries() {
     }
 }
 
-// Assets to cache on install
-const ASSET_URLS = [
-    '/',
-    '/configure',
-    '/config.js',
-    '/configure.html',
-    '/favicon.svg',
-    '/fonts/Twemoji.ttf'
-];
-
 /**
- * Install event: Cache static assets
+ * Install event: initialize the release cache. Assets populate it on demand;
+ * prefetching here used to duplicate the page, config bundle, and font while a
+ * first visit was already downloading them.
  */
 self.addEventListener('install', (event) => {
 
@@ -174,28 +166,7 @@ self.addEventListener('install', (event) => {
         getAppVersion().then(version => {
             APP_VERSION = version;
             const cacheName = getVersionedCacheName(version);
-
-            return caches.open(cacheName).then(cache => {
-                return Promise.all(ASSET_URLS.map(async (assetUrl) => {
-                    try {
-                        const response = await fetch(assetUrl, { cache: 'no-store' });
-                        if (response && response.ok) {
-                            // Skip caching if upstream adds Vary: *
-                            if (responseHasVaryStar(response)) {
-                                return;
-                            }
-                            try {
-                                await safeCachePut(cache, assetUrl, response.clone());
-                            } catch (err) {
-                                // Avoid unhandled rejections when upstream sets Vary: *
-                                console.warn('Skipping cache put for install asset due to error', assetUrl, err);
-                            }
-                        }
-                    } catch (err) {
-                        // Ignore individual asset failures to keep install resilient
-                    }
-                }));
-            });
+            return caches.open(cacheName);
         })
     );
 
@@ -298,7 +269,7 @@ self.addEventListener('fetch', (event) => {
  */
 async function handleApiRequest(request) {
     const url = new URL(request.url);
-    const isSensitiveRequest = isSensitiveApiRequest(url);
+    const isSensitiveRequest = !isPublicUiApiRequest(url) && isSensitiveApiRequest(url);
 
     try {
         // Always prefer fresh network data

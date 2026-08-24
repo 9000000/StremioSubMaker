@@ -7,6 +7,65 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function () {
     'use strict';
 
+    let languageCatalogPromise = null;
+
+    function loadLanguageCatalogs(options = {}) {
+        if (languageCatalogPromise && options.force !== true) {
+            return languageCatalogPromise;
+        }
+
+        const fetchImpl = options.fetch || (typeof globalThis !== 'undefined' ? globalThis.fetch : null);
+        if (typeof fetchImpl !== 'function') {
+            return Promise.reject(new Error('Fetch is unavailable'));
+        }
+
+        const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+            ? options.timeoutMs
+            : 10000;
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timeoutId = controller
+            ? setTimeout(() => controller.abort(), timeoutMs)
+            : null;
+        const requestOptions = {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            ...(controller ? { signal: controller.signal } : {})
+        };
+
+        const pending = Promise.all([
+            fetchImpl('/api/languages', requestOptions),
+            fetchImpl('/api/languages/translation', requestOptions)
+        ]).then(async ([providerResponse, translationResponse]) => {
+            if (!providerResponse.ok) {
+                throw new Error(`HTTP ${providerResponse.status}: ${providerResponse.statusText || 'Language request failed'}`);
+            }
+            if (!translationResponse.ok) {
+                throw new Error(`HTTP ${translationResponse.status}: ${translationResponse.statusText || 'Translation-language request failed'}`);
+            }
+
+            const [providerLanguages, translationLanguages] = await Promise.all([
+                providerResponse.json(),
+                translationResponse.json()
+            ]);
+            if (!Array.isArray(providerLanguages) || !Array.isArray(translationLanguages)) {
+                throw new Error('Language endpoint returned an invalid payload');
+            }
+            return { providerLanguages, translationLanguages };
+        }).finally(() => {
+            if (timeoutId) clearTimeout(timeoutId);
+        });
+
+        let sharedPromise;
+        sharedPromise = pending.catch((error) => {
+            if (languageCatalogPromise === sharedPromise) {
+                languageCatalogPromise = null;
+            }
+            throw error;
+        });
+        languageCatalogPromise = sharedPromise;
+        return sharedPromise;
+    }
+
     function configHasSubToolboxEnabled(config) {
         return !!(config && (
             config.subToolboxEnabled === true
@@ -436,6 +495,7 @@
 
     return {
         configHasSubToolboxEnabled,
+        loadLanguageCatalogs,
         buildFreshDraftConfig,
         buildConfigInstructionsPreferenceWrite,
         buildCurrentTokenExportEntry,

@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## SubMaker v1.4.94
+
+**Performance:**
+
+- **Fixed freezing Config-page:** The page no longer waits for Redis or the saved profile before enabling the language flags, Token Vault, Toolbox, and form controls. It displays the local profile or a new draft immediately, loads the server copy in the background, and does not overwrite edits made while it loads. Version labels and the cached Toolbox button also appear immediately.
+
+- **Made Config-page load sooner:** `config.js` now loads directly instead of waiting for another script to start it. Duplicate locale and language requests were removed, and the logo is downloaded only once.
+
+- **Kept the flags without the slow font download:** All language flags still appear, but they now use small built-in SVG images instead of downloading the 1.47 MB `Twemoji.ttf` file. This prevents a failed font request from holding the page open for several seconds.
+
+- **Fixed Config-page caching:** Versioned CSS and JavaScript are now cached between visits. Old asset links redirect to the current version, language data uses a short cache, and the service worker no longer downloads the page and its files a second time during installation.
+
+- **Reduced first-load compression time:** Gzip now uses level 6 instead of level 9, reducing server work with almost no increase in download size.
+
+- **Added Config-page loading tests:** Tests now cover early version and button rendering, background profile loading, shared language requests, caching, and removal of the font and service-worker download delays.
+
+**Bug Fixes:**
+
+- **Fixed incorrect Gemini location errors:** When Google blocks the server's location, SubMaker now reports that error directly instead of replacing it with a generic HTTP 400 error.
+
+- **Fixed Gemini errors behind Cloudflare:** Model-loading errors now reach Config-page as readable messages instead of being replaced by a Cloudflare HTML error or incorrectly blaming the API key.
+
+- **Fixed saved providers in File Translation and Toolbox:** Providers that do not use DeepL's `modelType` setting are no longer rejected when that saved field is empty.
+
 ## SubMaker v1.4.93
 
 **Improvements:**

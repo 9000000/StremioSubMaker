@@ -27,6 +27,16 @@
                 theme = 'dark';
             }
             html.setAttribute('data-theme', theme);
+
+            var uiLang = '';
+            try { uiLang = localStorage.getItem('submaker_ui_language') || ''; } catch (_) { }
+            uiLang = String(uiLang || (navigator.language || 'en')).toLowerCase().replace(/_/g, '-');
+            if (uiLang === 'pt' || uiLang.indexOf('pt-br') === 0) uiLang = 'pt-br';
+            else if (uiLang.indexOf('pt-pt') === 0) uiLang = 'pt-pt';
+            else if (uiLang.indexOf('es') === 0) uiLang = 'es';
+            else if (uiLang.indexOf('ar') === 0) uiLang = 'ar';
+            else uiLang = 'en';
+            html.setAttribute('data-ui-lang', uiLang);
         })();
     </script>
     <link rel="stylesheet" href="/css/configure.css?_cb=__APP_VERSION_QUERY__">
@@ -104,9 +114,9 @@
     <script src="/js/combobox.js?_cb=__APP_VERSION_QUERY__" defer></script>
     <script src="/js/combobox-init.js?_cb=__APP_VERSION_QUERY__" defer></script>
     <script src="/js/config-page-state.js?_cb=__APP_VERSION_QUERY__" defer></script>
-    <script src="/js/config-loader.js?_cb=__APP_VERSION_QUERY__" defer></script>
     <script src="/js/theme-toggle.js?_cb=__APP_VERSION_QUERY__" defer></script>
     <script src="/js/sw-register.js?_cb=__APP_VERSION_QUERY__" defer></script>
+    <script src="/config.js?v=__APP_VERSION_QUERY__" defer></script>
     <script src="/js/quick-setup.js?_cb=__APP_VERSION_QUERY__" defer></script>
 </body>
 

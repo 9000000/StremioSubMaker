@@ -1266,22 +1266,14 @@
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                const [providerResponse, translationResponse] = await Promise.all([
-                    fetch('/api/languages', {
-                        method: 'GET',
-                        headers: { 'Accept': 'application/json' }
-                    }),
-                    fetch('/api/languages/translation', {
-                        method: 'GET',
-                        headers: { 'Accept': 'application/json' }
-                    })
-                ]);
-
-                if (!providerResponse.ok) throw new Error(`HTTP ${providerResponse.status}`);
-                if (!translationResponse.ok) throw new Error(`HTTP ${translationResponse.status}`);
-
-                const providerPayload = await providerResponse.json();
-                const translationPayload = await translationResponse.json();
+                const catalogLoader = window.SubMakerConfigPageState?.loadLanguageCatalogs;
+                if (typeof catalogLoader !== 'function') {
+                    throw new Error('Language catalog loader is unavailable');
+                }
+                const {
+                    providerLanguages: providerPayload,
+                    translationLanguages: translationPayload
+                } = await catalogLoader();
 
                 providerLanguages = dedupeLanguagesForUI(providerPayload.filter(lang => !lang.code.startsWith('___')));
                 translationLanguages = dedupeLanguagesForUI(translationPayload.filter(lang => !lang.code.startsWith('___')));
